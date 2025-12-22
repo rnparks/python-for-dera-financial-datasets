@@ -36,3 +36,34 @@ BEGIN
     ORDER BY vp.value_date DESC;
 END;
 $$;
+
+
+
+CREATE OR REPLACE FUNCTION sec_silver.get_financials_by_ticker(p_ticker TEXT)
+RETURNS TABLE (
+    value_date DATE,
+    filed_date DATE,
+    metric TEXT,
+    value_billions NUMERIC
+) 
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_cik INTEGER;
+BEGIN
+    -- 1. Look up the CIK in the OFFICIAL table
+    SELECT cik INTO v_cik
+    FROM sec_silver.ticker_map
+    WHERE ticker = upper(p_ticker)
+    LIMIT 1; -- specific tickers might map to same CIK, take first
+
+    -- 2. Handle invalid tickers
+    IF v_cik IS NULL THEN
+        RAISE EXCEPTION 'Ticker % not found in mapping table.', p_ticker;
+    END IF;
+
+    -- 3. Return the data
+    RETURN QUERY
+    SELECT * FROM sec_silver.get_pit_financials(v_cik);
+END;
+$$;
