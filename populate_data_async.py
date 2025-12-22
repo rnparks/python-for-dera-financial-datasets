@@ -2,7 +2,7 @@
 """
 Async script to download SEC Financial Statement Data Sets.
 Updates:
-1. Downloads 2020q1 through 2025q3.
+1. Downloads 2012q1 through 2025q3.
 2. Uses asyncio/aiohttp for concurrency.
 3. Checks if files exist to avoid re-downloading.
 4. ROBUSTNESS: Retries failed downloads (IncompleteRead, disconnects) automatically.
