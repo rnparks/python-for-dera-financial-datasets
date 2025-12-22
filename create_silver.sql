@@ -1,11 +1,10 @@
--- create_silver.sql (Fixed)
+-- create_silver.sql (The "Quant Standard" Version)
 
 -- 1. CLEAN SLATE
 DROP SCHEMA IF EXISTS sec_silver CASCADE;
 CREATE SCHEMA sec_silver;
 
 -- 2. SUB_SILVER (Company Metadata)
--- No changes needed here, just removed the RAISE command
 CREATE TABLE sec_silver.sub_silver AS
 SELECT
     adsh,
@@ -30,8 +29,7 @@ ALTER TABLE sec_silver.sub_silver ADD PRIMARY KEY (adsh);
 CREATE INDEX idx_sub_cik ON sec_silver.sub_silver (cik);
 
 
--- 3. TAG_SILVER (Taxonomy Definitions)
--- FIX: Added DISTINCT ON to handle duplicates in the raw data
+-- 3. TAG_SILVER (Taxonomy)
 CREATE TABLE sec_silver.tag_silver AS
 SELECT DISTINCT ON (tag, version)
     tag,
@@ -47,8 +45,7 @@ ORDER BY tag, version;
 ALTER TABLE sec_silver.tag_silver ADD PRIMARY KEY (tag, version);
 
 
--- 4. NUM_SILVER (The Master Fact Table)
--- Removed RAISE command. Logic remains the same.
+-- 4. NUM_SILVER (The Master Fact Table with DOUBLE RANKING)
 CREATE TABLE sec_silver.num_silver AS
 WITH raw_typed AS (
     SELECT
@@ -86,31 +83,49 @@ SELECT
     r.footnote,
     r.filed_date,
     r.form,
-    -- POINT IN TIME RANKING
+
+    -- RANK 1: POINT-IN-TIME (First time we ever saw this number)
+    -- Great for Backtesting (No Look-Ahead Bias)
+    ROW_NUMBER() OVER (
+        PARTITION BY r.cik, r.tag, r.value_date, r.qtrs, r.uom, r.coreg, r.segments
+        ORDER BY r.filed_date ASC, r.adsh ASC
+    ) as rank_pit,
+
+    -- RANK 2: LATEST / RESTATED (Most recent confirmation of this number)
+    -- Great for Fundamental Analysis (Most Accurate History)
     ROW_NUMBER() OVER (
         PARTITION BY r.cik, r.tag, r.value_date, r.qtrs, r.uom, r.coreg, r.segments
         ORDER BY r.filed_date DESC, r.adsh DESC
-    ) as point_in_time_rank
+    ) as rank_latest
+
 FROM raw_typed r
 LEFT JOIN sec_silver.tag_silver t 
     ON r.tag = t.tag AND r.version = t.version;
 
--- 5. INDEXING
+-- 5. INDEXING (Crucial for performance)
 CREATE INDEX idx_num_cik_tag ON sec_silver.num_silver (cik, tag);
-CREATE INDEX idx_num_rank ON sec_silver.num_silver (point_in_time_rank) WHERE point_in_time_rank = 1;
+CREATE INDEX idx_num_rank_pit ON sec_silver.num_silver (rank_pit);
+CREATE INDEX idx_num_rank_latest ON sec_silver.num_silver (rank_latest);
 
 
--- 6. GOLD VIEW
-CREATE OR REPLACE VIEW sec_silver.view_financials_consolidated AS
+-- ========================================================
+-- 6. THE TOGGLE VIEWS
+-- ========================================================
+
+-- VIEW A: POINT IN TIME (Original Data)
+CREATE VIEW sec_silver.view_financials_pit AS
 SELECT 
-    cik,
-    tlabel as metric,
-    tag,
-    value_date,
-    qtrs,
-    value,
-    filed_date
+    cik, tlabel as metric, tag, value_date, qtrs, value, filed_date
 FROM sec_silver.num_silver
-WHERE point_in_time_rank = 1
+WHERE rank_pit = 1
+  AND segments IS NULL
+  AND coreg IS NULL;
+
+-- VIEW B: RESTATED (Best Available Data)
+CREATE VIEW sec_silver.view_financials_latest AS
+SELECT 
+    cik, tlabel as metric, tag, value_date, qtrs, value, filed_date
+FROM sec_silver.num_silver
+WHERE rank_latest = 1
   AND segments IS NULL
   AND coreg IS NULL;
