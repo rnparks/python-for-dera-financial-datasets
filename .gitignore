@@ -1,18 +1,34 @@
+# Python
 __pycache__/
 *.py[cod]
 *.so
 .Python
 venv/
 ENV/
-.venv
+.venv/
+
+# Editors
 .vscode/
 .idea/
-.ipynb_checkpoints
+.ipynb_checkpoints/
+
+# Env / secrets
 .env
-*.csv
-*.txt
-*.zip
-data/
-datasets/
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# SEC raw quarterly dumps — too large for git; regenerate with `uv run dera download`
+data/raw/
+
+# Legacy raw-data location (pre-refactor)
+examples/data/
+
+# Downloaded archives
+*.zip
