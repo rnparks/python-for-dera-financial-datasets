@@ -39,6 +39,13 @@ def _find_column(columns: list[str], *needles: str) -> str:
     raise KeyError(f"no column matching {needles!r} in {columns!r}")
 
 
+def _find_column_or_none(columns: list[str], *needles: str) -> str | None:
+    try:
+        return _find_column(columns, *needles)
+    except KeyError:
+        return None
+
+
 def scrape_index(name: str, url: str, headers: dict[str, str]) -> pd.DataFrame:
     print(f"Fetching {name}...")
     request = Request(url, headers=headers)
@@ -46,12 +53,31 @@ def scrape_index(name: str, url: str, headers: dict[str, str]) -> pd.DataFrame:
         html = response.read().decode("utf-8")
     tables = pd.read_html(StringIO(html))
     df = tables[0]
-    ticker_col = _find_column(list(df.columns), "Symbol", "Ticker")
-    name_col = _find_column(list(df.columns), "Security", "Company")
-    subset = df[[ticker_col, name_col]].copy()
-    subset.columns = ["ticker", "name"]
+    cols = list(df.columns)
+    ticker_col     = _find_column(cols, "Symbol", "Ticker")
+    name_col       = _find_column(cols, "Security", "Company")
+    sector_col     = _find_column_or_none(cols, "GICS Sector")
+    sub_ind_col    = _find_column_or_none(cols, "GICS Sub")
+    keep_cols = [ticker_col, name_col]
+    rename = {ticker_col: "ticker", name_col: "name"}
+    if sector_col:
+        keep_cols.append(sector_col)
+        rename[sector_col] = "gics_sector"
+    if sub_ind_col:
+        keep_cols.append(sub_ind_col)
+        rename[sub_ind_col] = "gics_sub_industry"
+    subset = df[keep_cols].copy().rename(columns=rename)
+    if "gics_sector" not in subset.columns:
+        subset["gics_sector"] = None
+    if "gics_sub_industry" not in subset.columns:
+        subset["gics_sub_industry"] = None
     subset["index_name"] = name
-    print(f"  {name}: {len(subset)} companies")
+    subset = subset[["ticker", "name", "index_name", "gics_sector", "gics_sub_industry"]]
+    missing_sector = subset["gics_sector"].isna().sum()
+    print(
+        f"  {name}: {len(subset)} companies "
+        f"({len(subset) - missing_sector} with GICS)"
+    )
     return subset
 
 

@@ -20,24 +20,39 @@ from . import config
 
 def load_sp1500_universe(conn: psycopg.Connection, csv_path: Path) -> int:
     """Load data/reference/sp1500_universe.csv → sec_silver.universe_sp1500.
-    Returns the number of unique tickers inserted.
+
+    Expects columns ``ticker, name, index_name, gics_sector,
+    gics_sub_industry``. Older CSVs without the GICS columns still load
+    cleanly — missing columns are stored as NULL.
     """
-    seen: dict[str, tuple[str, str, str]] = {}
+    seen: dict[str, tuple[str, str, str, str | None, str | None]] = {}
     with open(csv_path, "r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             ticker = row["ticker"].replace(".", "-")
-            if ticker not in seen:
-                seen[ticker] = (ticker, row["name"], row["index_name"])
+            if ticker in seen:
+                continue
+            gics_sector = (row.get("gics_sector") or None) or None
+            gics_sub = (row.get("gics_sub_industry") or None) or None
+            # Empty strings from the CSV read become None so Postgres
+            # stores a true NULL rather than a blank string.
+            if gics_sector == "":
+                gics_sector = None
+            if gics_sub == "":
+                gics_sub = None
+            seen[ticker] = (
+                ticker, row["name"], row["index_name"], gics_sector, gics_sub
+            )
 
     with conn.cursor() as cur:
         cur.execute("TRUNCATE TABLE sec_silver.universe_sp1500")
         with cur.copy(
-            "COPY sec_silver.universe_sp1500 (ticker, name, index_name) "
+            "COPY sec_silver.universe_sp1500 "
+            "(ticker, name, index_name, gics_sector, gics_sub_industry) "
             "FROM STDIN WITH (FORMAT CSV, DELIMITER E'\\t')"
         ) as cp:
-            for ticker, name, index_name in seen.values():
-                cp.write_row((ticker, name, index_name))
+            for row_tuple in seen.values():
+                cp.write_row(row_tuple)
     return len(seen)
 
 
