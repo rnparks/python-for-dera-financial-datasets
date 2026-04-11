@@ -1,0 +1,2 @@
+DROP SCHEMA IF EXISTS sec_gold CASCADE;
+CREATE SCHEMA sec_gold;

@@ -22,7 +22,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from . import config, db, downloader, loader
+from . import config, db, downloader, loader, reference
 
 
 def _add_range_args(p: argparse.ArgumentParser) -> None:
@@ -97,6 +97,8 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
         db.run_sql_dir(conn, silver_dir)
         if ref_dir.exists():
             db.run_sql_dir(conn, ref_dir)
+            print("Loading reference data...")
+            reference.load_all_reference(conn)
     return 0
 
 
