@@ -117,8 +117,11 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
 
 -- Capex ------------------------------------------------------------
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
-    ('capex', 'PaymentsToAcquirePropertyPlantAndEquipment',      1, 'Most common capex tag (1031 S&P 1500 companies)'),
-    ('capex', 'PaymentsForProceedsFromProductiveAssets',         2, 'Fallback for some industrials');
+    ('capex', 'PaymentsToAcquirePropertyPlantAndEquipment', 1, 'Most common capex tag (~1008 S&P 1500 companies)'),
+    ('capex', 'PaymentsToAcquireProductiveAssets',          2, 'Industrials and utilities fallback (~210 companies)');
+-- Note: a few hundred S&P 1500 issuers (NVDA is a notable example) use
+-- custom company-extension capex tags not covered here. features.md
+-- tracks "long tail tag coverage" as a Tier-3 follow-up.
 
 -- free_cash_flow is 'derived' fact_type and has no tags — clients compute
 -- it from operating_cash_flow minus capex. Documented via description.
