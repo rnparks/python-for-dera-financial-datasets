@@ -58,14 +58,19 @@ TARGET_TABLES: dict[str, str] = {
 # Chunk size for streamed reads during COPY. 1 MiB is a sensible default.
 _CHUNK_BYTES = 1 << 20
 
-# CSV format is used because DERA files include a HEADER line we want
-# COPY to skip. Tabs are the delimiter; NULL is the empty string. QUOTE
-# and ESCAPE are set to a non-printing byte (STX, 0x02) that does not
-# appear in SEC text so literal double quotes inside free-text columns
-# (tlabel, doc, plabel) are treated as data rather than CSV quotes.
+# SEC DERA files use standard CSV quoting: fields that contain embedded
+# tabs (e.g. num.txt's `segments` column when it holds a multi-segment
+# axis description with commas and tabs) are wrapped in double quotes.
+# We use default QUOTE and ESCAPE so those rows parse correctly.
+#
+# The legacy load_sec_data procedure used QUOTE=E'\x01' to disable
+# quoting entirely, then compensated with `cut -f 1-N` shelling — which
+# silently truncated everything after the first embedded tab and lost
+# most of the segments value. Using real CSV quoting here preserves the
+# full field.
 _COPY_OPTIONS = (
     "FORMAT CSV, HEADER true, DELIMITER E'\\t', NULL '', "
-    "ENCODING 'LATIN1', QUOTE E'\\x02', ESCAPE E'\\x02'"
+    "ENCODING 'LATIN1'"
 )
 
 
