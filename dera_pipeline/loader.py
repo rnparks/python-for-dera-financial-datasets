@@ -131,9 +131,13 @@ def load_all(
     """Load every ``<year>q<n>/`` subdirectory of *data_dir*.
 
     With ``incremental=True`` (default), quarters already listed in
-    ``sec_raw.load_log`` are skipped.
+    ``sec_raw.load_log`` are skipped. Each quarter is committed as its
+    own transaction so progress is visible from other sessions via
+    ``sec_raw.load_log`` and a mid-run failure keeps everything loaded
+    up to the last successful quarter.
     """
     _ensure_load_log(conn)
+    conn.commit()  # persist load_log creation before the per-quarter loop
     already = loaded_quarters(conn) if incremental else set()
     quarter_dirs = sorted(
         p for p in data_dir.iterdir()
@@ -145,7 +149,12 @@ def load_all(
             print(f"Skipping {qdir.name} — already loaded.")
             continue
         print(f"Loading {qdir.name}")
-        result[qdir.name] = load_quarter(conn, qdir)
+        try:
+            result[qdir.name] = load_quarter(conn, qdir)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return result
 
 
