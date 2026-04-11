@@ -57,12 +57,14 @@ CREATE INDEX idx_concept_tag_map_concept ON sec_gold.concept_tag_map (concept, p
 -- Revenue ----------------------------------------------------------
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
     ('revenue', 'RevenueFromContractWithCustomerExcludingAssessedTax', 1, 'ASC 606 standard, used by most non-financial issuers'),
-    ('revenue', 'Revenues',                                            2, 'Pre-ASC 606 fallback and used by some financials'),
-    ('revenue', 'RevenueFromContractWithCustomerIncludingAssessedTax', 3, 'ASC 606 variant that includes sales taxes');
--- Banks (SIC 60) — interest + noninterest income is the headline, not Revenues alone
+    ('revenue', 'Revenues',                                            2, 'Pre-ASC 606 fallback and used by some financials (BAC, C, PNC)'),
+    ('revenue', 'RevenuesNetOfInterestExpense',                        3, 'Large-bank headline revenue tag (JPM, WFC, others)'),
+    ('revenue', 'RevenueFromContractWithCustomerIncludingAssessedTax', 4, 'ASC 606 variant that includes sales taxes');
+-- Banks (SIC 60) — prefer Revenues or RevenuesNetOfInterestExpense over the non-financial default
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes) VALUES
-    ('revenue', 'Revenues',                   1, '60', 'Banks report "Total revenue net of interest expense" via Revenues'),
-    ('revenue', 'InterestAndDividendIncomeOperating', 2, '60', 'Fallback: gross interest income');
+    ('revenue', 'Revenues',                            1, '60', 'Some banks file plain Revenues'),
+    ('revenue', 'RevenuesNetOfInterestExpense',        2, '60', 'Large-bank headline revenue (JPM, WFC)'),
+    ('revenue', 'InterestAndDividendIncomeOperating',  3, '60', 'Fallback: gross interest income');
 
 -- Gross profit -----------------------------------------------------
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
