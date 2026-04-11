@@ -103,10 +103,17 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
 
 
 def cmd_build_gold(args: argparse.Namespace) -> int:
+    """Build (or refresh) the gold layer.
+
+    On first build, ``sql/03_gold/030_tradable_financials.sql`` creates
+    the matviews with ``CREATE MATERIALIZED VIEW ... AS SELECT`` which
+    populates them immediately — no separate REFRESH is needed. On a
+    rebuild against an existing gold schema, pass ``--refresh`` to run
+    ``REFRESH MATERIALIZED VIEW`` *instead of* re-running the DDL.
+    """
     with db.get_conn() as conn:
         gold_dir = config.SQL_DIR / "03_gold"
-        db.run_sql_dir(conn, gold_dir)
-        if args.refresh:
+        if args.refresh_only:
             print("Refreshing materialized views...")
             with conn.cursor() as cur:
                 cur.execute(
@@ -115,6 +122,8 @@ def cmd_build_gold(args: argparse.Namespace) -> int:
                 cur.execute(
                     "REFRESH MATERIALIZED VIEW sec_gold.tradable_financials_pit"
                 )
+        else:
+            db.run_sql_dir(conn, gold_dir)
     return 0
 
 
@@ -157,8 +166,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_gold = sub.add_parser("build-gold", help="build the gold layer")
     p_gold.add_argument(
-        "--no-refresh", dest="refresh", action="store_false", default=True,
-        help="skip REFRESH MATERIALIZED VIEW at the end",
+        "--refresh-only", action="store_true", default=False,
+        help="skip the DDL and only REFRESH existing matviews",
     )
     p_gold.set_defaults(func=cmd_build_gold)
 
@@ -166,7 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_range_args(p_all)
     p_all.add_argument("--truncate", action="store_true")
     p_all.add_argument("--full", action="store_true")
-    p_all.add_argument("--no-refresh", dest="refresh", action="store_false", default=True)
+    p_all.add_argument("--refresh-only", action="store_true", default=False)
     p_all.add_argument("--quarter", default=None)
     p_all.set_defaults(func=cmd_run_all)
 

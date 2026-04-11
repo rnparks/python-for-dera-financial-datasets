@@ -5,6 +5,14 @@
 --
 -- Partition includes coreg and segments so restatements at the entity
 -- level are ranked independently from subsidiary/segment filings.
+--
+-- Work-mem sized for the two big window-function sorts over ~180M num_raw
+-- rows. At default 4MB postgres spills to 90+GB of temp files and the
+-- build takes hours; at 2GB each sort stays mostly in memory and the
+-- build finishes in minutes. SET LOCAL reverts at transaction end.
+SET LOCAL work_mem             = '2GB';
+SET LOCAL maintenance_work_mem = '2GB';
+
 CREATE TABLE sec_silver.num_silver AS
 WITH raw_typed AS (
     SELECT
