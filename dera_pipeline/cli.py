@@ -117,6 +117,16 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
             print("Loading reference data...")
             reference.load_all_reference(conn)
 
+        # The company spine is its own stage, deliberately last. It
+        # reads universe_sp1500 to decide which ticker is primary for a
+        # multi-class company, and that table is only populated by the
+        # Python loader above — run_sql_dir executes an entire directory
+        # before any of it. Inside 04_reference the spine would see an
+        # empty universe and pick the wrong primary every time.
+        spine_dir = config.SQL_DIR / "05_spine"
+        if spine_dir.exists():
+            db.run_sql_dir(conn, spine_dir)
+
         # Gold's matview joins plan catastrophically against a
         # statistics-less 181M-row table (observed: 9 hours instead of
         # ~1 minute). This was documented but lived in no code path.

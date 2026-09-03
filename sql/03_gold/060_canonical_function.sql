@@ -1,3 +1,8 @@
+-- Default mode is 'pit', not 'latest'. A caller who omits p_mode is
+-- most often writing research code, and silently handing them restated
+-- figures is the most damaging default available. 'latest' now requires
+-- asking for it. Note that 'pit' is still not availability-correct:
+-- it has no knowledge date. Use sec_gold.as_of_* for backtests.
 -- get_canonical(p_cik, p_concept, p_value_date, p_qtrs, p_mode)
 --
 -- Resolves a canonical concept to a single numeric value by walking
@@ -15,7 +20,7 @@ CREATE OR REPLACE FUNCTION sec_gold.get_canonical(
     p_concept     TEXT,
     p_value_date  DATE,
     p_qtrs        INTEGER DEFAULT 4,
-    p_mode        TEXT    DEFAULT 'latest'
+    p_mode        TEXT    DEFAULT 'pit'
 ) RETURNS NUMERIC
 LANGUAGE sql STABLE AS $$
     SELECT n.value * m.sign_multiplier
@@ -53,7 +58,7 @@ CREATE OR REPLACE FUNCTION sec_gold.get_canonical_by_ticker(
     p_concept     TEXT,
     p_value_date  DATE,
     p_qtrs        INTEGER DEFAULT 4,
-    p_mode        TEXT    DEFAULT 'latest'
+    p_mode        TEXT    DEFAULT 'pit'
 ) RETURNS NUMERIC
 LANGUAGE sql STABLE AS $$
     SELECT sec_gold.get_canonical(

@@ -1,0 +1,186 @@
+-- As-of accessors. The knowledge date has NO default anywhere in this
+-- file, deliberately: omitting it must be a call-site error, not a
+-- silent look-ahead. Every other accessor in gold defaults to something
+-- convenient, and that is exactly how a backtest quietly reads the
+-- future.
+--
+-- Numbered 065 rather than 045 because these resolve canonical
+-- concepts, and concept_tag_map / canonical_concepts are not created
+-- until 050. run_sql_dir executes a directory in lexical order, so an
+-- earlier number fails outright on a fresh build.
+--
+-- p_buffer_sessions is the safety margin, expressed in trading sessions
+-- rather than calendar days so a Friday close plus one lands on Monday.
+-- It defaults to 0, meaning "the earliest session an investor could
+-- genuinely have acted". Re-run a strategy at 1, 2 and 5 to see how
+-- fast the edge decays; one that dies at a single extra session was
+-- never an edge.
+
+-- ---------------------------------------------------------------
+-- Every fact for one company as it stood on a given date.
+-- ---------------------------------------------------------------
+DROP FUNCTION IF EXISTS sec_gold.as_of_facts(INTEGER, DATE, INTEGER);
+
+CREATE FUNCTION sec_gold.as_of_facts(
+    p_cik              INTEGER,
+    p_asof             DATE,
+    p_buffer_sessions  INTEGER DEFAULT 0
+)
+RETURNS TABLE (
+    tag            TEXT,
+    metric         TEXT,
+    value_date     DATE,
+    qtrs           INTEGER,
+    uom            TEXT,
+    value          NUMERIC,
+    adsh           TEXT,
+    filed_date     DATE,
+    known_at       TIMESTAMPTZ,
+    tradable_from  DATE,
+    vintage_seq    BIGINT,
+    is_original_disclosure BOOLEAN
+)
+LANGUAGE sql STABLE AS $$
+    SELECT f.tag, f.metric, f.value_date, f.qtrs, f.uom, f.value,
+           f.adsh, f.filed_date, f.known_at, f.tradable_from,
+           f.vintage_seq, f.is_original_disclosure
+    FROM sec_gold.fact_asof f,
+         LATERAL (SELECT sec_gold.shift_sessions(p_asof, p_buffer_sessions) AS d) k
+    WHERE f.cik = p_cik
+      AND f.tradable_from <= k.d
+      AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL);
+$$;
+
+-- ---------------------------------------------------------------
+-- One canonical concept for one company/period, as of a date.
+-- ---------------------------------------------------------------
+DROP FUNCTION IF EXISTS sec_gold.as_of_canonical(INTEGER, TEXT, DATE, INTEGER, DATE, INTEGER);
+
+CREATE FUNCTION sec_gold.as_of_canonical(
+    p_cik              INTEGER,
+    p_concept          TEXT,
+    p_value_date       DATE,
+    p_qtrs             INTEGER,
+    p_asof             DATE,
+    p_buffer_sessions  INTEGER DEFAULT 0
+)
+RETURNS NUMERIC
+LANGUAGE sql STABLE AS $$
+    SELECT f.value * m.sign_multiplier
+    FROM sec_gold.concept_tag_map m
+    JOIN sec_gold.fact_asof      f ON f.tag = m.tag
+    LEFT JOIN sec_reference.company c ON c.cik = f.cik,
+    LATERAL (SELECT sec_gold.shift_sessions(p_asof, p_buffer_sessions) AS d) k
+    WHERE m.concept = p_concept
+      AND f.cik = p_cik
+      AND f.value_date = p_value_date
+      AND f.qtrs = p_qtrs
+      AND f.value IS NOT NULL
+      AND f.tradable_from <= k.d
+      AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
+      AND (m.sic_prefix = '' OR c.sic_latest::TEXT LIKE m.sic_prefix || '%')
+    ORDER BY m.sic_prefix <> '' DESC, m.priority ASC
+    LIMIT 1;
+$$;
+
+-- ---------------------------------------------------------------
+-- Most recent annual observation as of a date, fiscal-year aware.
+-- ---------------------------------------------------------------
+DROP FUNCTION IF EXISTS sec_gold.as_of_latest_annual(INTEGER, TEXT, DATE, INTEGER);
+
+CREATE FUNCTION sec_gold.as_of_latest_annual(
+    p_cik              INTEGER,
+    p_concept          TEXT,
+    p_asof             DATE,
+    p_buffer_sessions  INTEGER DEFAULT 0
+)
+RETURNS TABLE (
+    value_date     DATE,
+    tradable_from  DATE,
+    value          NUMERIC,
+    tag            TEXT
+)
+LANGUAGE sql STABLE AS $$
+    WITH concept_type AS (
+        SELECT fact_type FROM sec_gold.canonical_concepts WHERE concept = p_concept
+    ),
+    k AS (SELECT sec_gold.shift_sessions(p_asof, p_buffer_sessions) AS d)
+    SELECT f.value_date, f.tradable_from, f.value * m.sign_multiplier, f.tag
+    FROM sec_gold.concept_tag_map m
+    JOIN sec_gold.fact_asof      f ON f.tag = m.tag
+    LEFT JOIN sec_reference.company c ON c.cik = f.cik
+    CROSS JOIN concept_type ct
+    CROSS JOIN k
+    WHERE m.concept = p_concept
+      AND f.cik = p_cik
+      AND f.qtrs = CASE WHEN ct.fact_type = 'balance' THEN 0 ELSE 4 END
+      AND f.value IS NOT NULL
+      AND f.tradable_from <= k.d
+      AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
+      AND (m.sic_prefix = '' OR c.sic_latest::TEXT LIKE m.sic_prefix || '%')
+    ORDER BY f.value_date DESC,
+             m.sic_prefix <> '' DESC,
+             m.priority ASC
+    LIMIT 1;
+$$;
+
+-- ---------------------------------------------------------------
+-- Ticker wrappers. The ticker is resolved AS OF the same date, because
+-- symbols are recycled between unrelated companies.
+-- ---------------------------------------------------------------
+DROP FUNCTION IF EXISTS sec_gold.as_of_latest_annual_by_ticker(TEXT, TEXT, DATE, INTEGER);
+
+CREATE FUNCTION sec_gold.as_of_latest_annual_by_ticker(
+    p_ticker           TEXT,
+    p_concept          TEXT,
+    p_asof             DATE,
+    p_buffer_sessions  INTEGER DEFAULT 0
+)
+RETURNS TABLE (
+    value_date     DATE,
+    tradable_from  DATE,
+    value          NUMERIC,
+    tag            TEXT
+)
+LANGUAGE sql STABLE AS $$
+    SELECT *
+    FROM sec_gold.as_of_latest_annual(
+        sec_reference.cik_at(p_ticker, p_asof),
+        p_concept, p_asof, p_buffer_sessions
+    );
+$$;
+
+-- ---------------------------------------------------------------
+-- Whole-company snapshot as of a date.
+-- ---------------------------------------------------------------
+DROP FUNCTION IF EXISTS sec_gold.as_of_snapshot(TEXT, DATE, INTEGER);
+
+CREATE FUNCTION sec_gold.as_of_snapshot(
+    p_ticker           TEXT,
+    p_asof             DATE,
+    p_buffer_sessions  INTEGER DEFAULT 0
+)
+RETURNS TABLE (
+    concept        TEXT,
+    display_name   TEXT,
+    fact_type      TEXT,
+    value_date     DATE,
+    tradable_from  DATE,
+    value          NUMERIC,
+    tag            TEXT
+)
+LANGUAGE sql STABLE AS $$
+    SELECT c.concept, c.display_name, c.fact_type,
+           la.value_date, la.tradable_from, la.value, la.tag
+    FROM sec_gold.canonical_concepts c
+    LEFT JOIN LATERAL sec_gold.as_of_latest_annual(
+        sec_reference.cik_at(p_ticker, p_asof),
+        c.concept, p_asof, p_buffer_sessions
+    ) la ON TRUE
+    WHERE c.fact_type <> 'derived'
+    ORDER BY c.concept;
+$$;
+
+COMMENT ON FUNCTION sec_gold.as_of_snapshot(TEXT, DATE, INTEGER) IS
+    'Every canonical concept for a company as it was knowable on '
+    'p_asof. The knowledge date is required, by design.';

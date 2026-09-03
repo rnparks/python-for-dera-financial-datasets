@@ -1,3 +1,8 @@
+-- Default mode is 'pit', not 'latest'. A caller who omits p_mode is
+-- most often writing research code, and silently handing them restated
+-- figures is the most damaging default available. 'latest' now requires
+-- asking for it. Note that 'pit' is still not availability-correct:
+-- it has no knowledge date. Use sec_gold.as_of_* for backtests.
 -- Fiscal-year-aware "latest annual" lookups.
 --
 -- The canonical filter `value_date = '2024-12-31' AND qtrs = 4` only
@@ -17,7 +22,7 @@
 CREATE OR REPLACE FUNCTION sec_gold.latest_annual(
     p_cik     INTEGER,
     p_concept TEXT,
-    p_mode    TEXT DEFAULT 'latest'
+    p_mode    TEXT DEFAULT 'pit'
 ) RETURNS TABLE (
     value_date  DATE,
     filed_date  DATE,
@@ -71,7 +76,7 @@ $$;
 CREATE OR REPLACE FUNCTION sec_gold.latest_annual_by_ticker(
     p_ticker  TEXT,
     p_concept TEXT,
-    p_mode    TEXT DEFAULT 'latest'
+    p_mode    TEXT DEFAULT 'pit'
 ) RETURNS TABLE (
     value_date  DATE,
     filed_date  DATE,
@@ -96,7 +101,7 @@ DROP FUNCTION IF EXISTS sec_gold.company_snapshot(TEXT, TEXT);
 
 CREATE OR REPLACE FUNCTION sec_gold.company_snapshot(
     p_ticker  TEXT,
-    p_mode    TEXT DEFAULT 'latest'
+    p_mode    TEXT DEFAULT 'pit'
 ) RETURNS TABLE (
     concept       TEXT,
     display_name  TEXT,

@@ -11,7 +11,13 @@
 -- `ticker_observation` into validity intervals. Ticker is a
 -- human-readable label hanging off the spine, never an identifier.
 --
--- Runs after 02_silver because the spine reads `sub_silver`.
+-- Ordering: this runs as its own stage AFTER `04_reference` and after
+-- reference.load_all_reference() has populated universe_sp1500 and
+-- ticker_map. It cannot live in 04_reference, because run_sql_dir
+-- executes that whole directory before the Python loader fills those
+-- tables, and the is_primary rule below reads universe_sp1500. Built a
+-- stage too early it would silently see an empty universe and pick the
+-- wrong primary ticker for every multi-class company.
 
 -- ---------------------------------------------------------------
 -- 1. Identity spine: one row per CIK that has ever filed.
@@ -72,23 +78,74 @@ collapsed AS (
            MAX(sn)          AS last_sn
     FROM runs
     GROUP BY cik, ticker, run_key
+),
+intervals AS (
+    SELECT
+        c.cik,
+        c.ticker,
+        c.valid_from,
+        -- The first snapshot in which the pair was absent. That is the
+        -- earliest date we can prove it was gone. NULL means it was
+        -- still present in the most recent snapshot.
+        nxt.observed_on AS valid_to
+    FROM collapsed c
+    LEFT JOIN snap nxt ON nxt.sn = c.last_sn + 1
+),
+-- A CIK can hold several tickers at once: share classes (GOOG and
+-- GOOGL), preferred lines, exchange-traded debt. 26,724 pairs of
+-- intervals overlap this way. Joining facts to this table on cik alone
+-- would therefore multiply rows -- every Alphabet figure counted twice.
+--
+-- Rather than drop the extra tickers, which are real and worth keeping,
+-- flag exactly one as primary per overlapping run so callers have a
+-- safe default. Disjoint runs each get their own primary, so a genuine
+-- ticker change over time (TRTC then UNRV on one CIK) keeps a primary
+-- in both eras.
+merged AS (
+    SELECT i.*,
+           MAX(COALESCE(i.valid_to, DATE '9999-12-31')) OVER (
+               PARTITION BY i.cik ORDER BY i.valid_from
+               ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+           ) AS prior_run_end
+    FROM intervals i
+),
+grouped AS (
+    SELECT m.*,
+           SUM(CASE WHEN m.prior_run_end IS NULL
+                      OR m.valid_from >= m.prior_run_end
+                    THEN 1 ELSE 0 END)
+               OVER (PARTITION BY m.cik ORDER BY m.valid_from
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+               AS overlap_run
+    FROM merged m
 )
 SELECT
-    c.cik,
-    c.ticker,
-    c.valid_from,
-    -- The first snapshot in which the pair was absent. That is the
-    -- earliest date we can prove it was gone. NULL means it was still
-    -- present in the most recent snapshot.
-    nxt.observed_on AS valid_to
-FROM collapsed c
-LEFT JOIN snap nxt ON nxt.sn = c.last_sn + 1;
+    g.cik,
+    g.ticker,
+    g.valid_from,
+    g.valid_to,
+    -- Deterministic and documented rather than editorially "right":
+    -- prefer a ticker still current, then one that appears in the
+    -- tracked universe, then the longest-lived, then alphabetical.
+    (ROW_NUMBER() OVER (
+        PARTITION BY g.cik, g.overlap_run
+        ORDER BY
+            (g.valid_to IS NULL) DESC,
+            EXISTS (SELECT 1 FROM sec_silver.universe_sp1500 u
+                     WHERE u.ticker = g.ticker) DESC,
+            (COALESCE(g.valid_to, CURRENT_DATE) - g.valid_from) DESC,
+            g.ticker ASC
+    ) = 1) AS is_primary
+FROM grouped g;
 
 ALTER TABLE sec_reference.company_ticker
     ADD PRIMARY KEY (cik, ticker, valid_from);
 CREATE INDEX idx_compticker_cik    ON sec_reference.company_ticker (cik);
 CREATE INDEX idx_compticker_ticker ON sec_reference.company_ticker (ticker);
 CREATE INDEX idx_compticker_range  ON sec_reference.company_ticker (valid_from, valid_to);
+-- Partial index: the safe single-row lookup path.
+CREATE INDEX idx_compticker_primary ON sec_reference.company_ticker (cik, valid_from)
+    WHERE is_primary;
 
 COMMENT ON TABLE sec_reference.company_ticker IS
     'Dated CIK/ticker intervals. Ticker as of date D: '
@@ -115,7 +172,7 @@ SELECT
     (SELECT ct.ticker
        FROM sec_reference.company_ticker ct
       WHERE ct.cik = co.cik
-      ORDER BY ct.valid_to IS NULL DESC, ct.valid_from DESC
+      ORDER BY ct.is_primary DESC, ct.valid_to IS NULL DESC, ct.valid_from DESC
       LIMIT 1)                                   AS ticker_latest,
     EXISTS (SELECT 1 FROM sec_reference.company_ticker ct
              WHERE ct.cik = co.cik AND ct.valid_to IS NULL) AS ticker_is_current
@@ -124,3 +181,42 @@ FROM sec_reference.company co;
 COMMENT ON VIEW sec_reference.company_label IS
     'Human-readable label for a CIK. ticker_latest is for display only; '
     'use company_ticker with a date for any as-of join.';
+
+
+-- ---------------------------------------------------------------
+-- 4. As-of resolvers. Both return at most one row, so they can be
+--    used inline without any risk of fanning out a fact join.
+-- ---------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION sec_reference.ticker_at(p_cik INTEGER, p_asof DATE)
+RETURNS TEXT
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT ct.ticker
+    FROM sec_reference.company_ticker ct
+    WHERE ct.cik = p_cik
+      AND ct.valid_from <= p_asof
+      AND (ct.valid_to > p_asof OR ct.valid_to IS NULL)
+    ORDER BY ct.is_primary DESC, ct.valid_from DESC
+    LIMIT 1;
+$$;
+
+COMMENT ON FUNCTION sec_reference.ticker_at(INTEGER, DATE) IS
+    'The ticker to display for this company on this date, or NULL if '
+    'none is known. Single-valued: safe to call inline.';
+
+CREATE OR REPLACE FUNCTION sec_reference.cik_at(p_ticker TEXT, p_asof DATE)
+RETURNS INTEGER
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT ct.cik
+    FROM sec_reference.company_ticker ct
+    WHERE ct.ticker = REPLACE(UPPER(TRIM(p_ticker)), '.', '-')
+      AND ct.valid_from <= p_asof
+      AND (ct.valid_to > p_asof OR ct.valid_to IS NULL)
+    ORDER BY ct.is_primary DESC, ct.valid_from DESC
+    LIMIT 1;
+$$;
+
+COMMENT ON FUNCTION sec_reference.cik_at(TEXT, DATE) IS
+    'Which company held this ticker on this date. Tickers are recycled '
+    'between unrelated companies, so resolving without a date is unsafe '
+    'for any historical query.';
