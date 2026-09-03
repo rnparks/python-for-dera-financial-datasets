@@ -91,6 +91,110 @@ def load_ticker_map(conn: psycopg.Connection, csv_path: Path) -> int:
     return len(seen)
 
 
+def load_trading_calendar(conn: psycopg.Connection, csv_path: Path) -> int:
+    """Load data/reference/trading_calendar.csv → sec_reference.trading_calendar.
+
+    Expects a header row and columns ``session_seq, session_date,
+    close_time_et``. Must run *before* the silver build, because
+    `sub_silver` needs these rows to resolve `tradable_from`.
+    """
+    rows: list[tuple[str, int, str, str]] = []
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            rows.append(
+                (
+                    row["session_date"],
+                    int(row["session_seq"]),
+                    row["close_time_et"],
+                    row["close_at"],
+                )
+            )
+
+    if not rows:
+        raise ValueError(f"{csv_path} contained no sessions")
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE TABLE sec_reference.trading_calendar")
+        with cur.copy(
+            "COPY sec_reference.trading_calendar "
+            "(session_date, session_seq, close_time_et, close_at) "
+            "FROM STDIN WITH (FORMAT CSV, DELIMITER E'\\t')"
+        ) as cp:
+            for row_tuple in rows:
+                cp.write_row(row_tuple)
+    return len(rows)
+
+
+def load_ticker_history(conn: psycopg.Connection, csv_path: Path) -> int:
+    """Load data/reference/ticker_history.csv → sec_reference.ticker_observation.
+
+    Raw dated sightings of CIK/ticker pairs across snapshots of SEC's
+    company_tickers.json. Deliberately append-only evidence; the
+    validity intervals are derived from it in
+    `sql/04_reference/030_company_spine.sql`.
+
+    A pair can legitimately appear in many snapshots, and the same
+    snapshot day can be reached by more than one probe, so the primary
+    key collision is expected and skipped rather than treated as an
+    error.
+    """
+    seen: set[tuple[int, str, str]] = set()
+    rows: list[tuple[int, str, str, str, str]] = []
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            try:
+                cik = int(row["cik"])
+            except (KeyError, ValueError):
+                continue
+            ticker = row["ticker"].strip().upper()
+            observed = row["observed_on"]
+            if not ticker or (cik, ticker, observed) in seen:
+                continue
+            seen.add((cik, ticker, observed))
+            rows.append((cik, ticker, row.get("title") or None, observed,
+                         row.get("source") or "unknown"))
+
+    if not rows:
+        raise ValueError(f"{csv_path} contained no observations")
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE TABLE sec_reference.ticker_observation")
+        with cur.copy(
+            "COPY sec_reference.ticker_observation "
+            "(cik, ticker, title, observed_on, source) "
+            "FROM STDIN WITH (FORMAT CSV, DELIMITER E'\\t')"
+        ) as cp:
+            for row_tuple in rows:
+                cp.write_row(row_tuple)
+    return len(rows)
+
+
+def load_calendar_only(conn: psycopg.Connection) -> int:
+    """Load just the trading calendar. Called before the silver build."""
+    calendar = config.REFERENCE_DIR / "trading_calendar.csv"
+    if not calendar.exists():
+        raise FileNotFoundError(
+            f"{calendar} missing — generate with "
+            "`uv run python tools/build_calendar.py`"
+        )
+    n = load_trading_calendar(conn, calendar)
+    print(f"  trading_calendar → {n:>6,} sessions")
+
+    # Ticker history is optional: the pipeline still builds without it,
+    # it just falls back to the survivorship-biased current crosswalk.
+    history = config.REFERENCE_DIR / "ticker_history.csv"
+    if history.exists():
+        h = load_ticker_history(conn, history)
+        print(f"  ticker_observation → {h:>6,} dated sightings")
+    else:
+        print(
+            "  ticker_history.csv absent — crosswalk will be "
+            "current-only (survivorship biased). Build it with "
+            "`uv run python tools/fetch_ticker_history.py`."
+        )
+    return n
+
+
 def load_all_reference(conn: psycopg.Connection) -> dict[str, int]:
     """Load every reference table. Called by `dera build-silver`."""
     sp1500 = config.REFERENCE_DIR / "sp1500_universe.csv"

@@ -91,14 +91,39 @@ def cmd_load(args: argparse.Namespace) -> int:
 
 
 def cmd_build_silver(args: argparse.Namespace) -> int:
+    """Build the silver layer.
+
+    Order matters. The trading calendar is created and populated FIRST,
+    before `02_silver` runs, because `sub_silver` resolves
+    `tradable_from` against it during its own CREATE TABLE AS. The
+    calendar lives in `sec_reference` precisely so the
+    `DROP SCHEMA sec_silver CASCADE` at the top of the silver build does
+    not take it out.
+    """
     with db.get_conn() as conn:
+        cal_dir = config.SQL_DIR / "00_reference"
         silver_dir = config.SQL_DIR / "02_silver"
         ref_dir = config.SQL_DIR / "04_reference"
+
+        if cal_dir.exists():
+            db.run_sql_dir(conn, cal_dir)
+            print("Loading trading calendar...")
+            reference.load_calendar_only(conn)
+
         db.run_sql_dir(conn, silver_dir)
+
         if ref_dir.exists():
             db.run_sql_dir(conn, ref_dir)
             print("Loading reference data...")
             reference.load_all_reference(conn)
+
+        # Gold's matview joins plan catastrophically against a
+        # statistics-less 181M-row table (observed: 9 hours instead of
+        # ~1 minute). This was documented but lived in no code path.
+        print("Analyzing sec_silver.num_silver (required before gold)...")
+        with conn.cursor() as cur:
+            cur.execute("ANALYZE sec_silver.num_silver")
+            cur.execute("ANALYZE sec_silver.sub_silver")
     return 0
 
 
