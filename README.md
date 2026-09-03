@@ -53,7 +53,7 @@ uv run dera run-all
 Or run one stage at a time:
 
 ```bash
-uv run dera download --from 2009q1 --to 2025q4    # ~13 GB on disk
+uv run dera download --from 2009q1 --to 2026q2    # ~13 GB on disk
 uv run dera init-db                                # bronze DDL
 uv run dera load                                   # COPY .txt → bronze (incremental by default)
 uv run dera build-silver                           # silver tables + reference data
@@ -63,8 +63,8 @@ uv run dera build-gold                             # gold matviews + helper func
 Common variations:
 
 ```bash
-uv run dera download --from 2025q4 --to 2025q4     # just the latest quarter
-uv run dera load --quarter 2025q4                  # load a specific quarter
+uv run dera download --from 2026q2 --to 2026q2     # just the latest quarter
+uv run dera load --quarter 2026q2                  # load a specific quarter
 uv run dera load --full                            # re-load everything (ignore load_log)
 uv run dera load --truncate                        # wipe bronze first
 uv run dera build-gold --no-refresh                # rebuild DDL but skip REFRESH
