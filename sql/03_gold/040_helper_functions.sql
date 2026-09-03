@@ -43,7 +43,7 @@ DECLARE
 BEGIN
     SELECT cik INTO v_cik
     FROM sec_silver.ticker_map
-    WHERE ticker = upper(p_ticker)
+    WHERE ticker = sec_gold.norm_ticker(p_ticker)
     LIMIT 1;
 
     IF v_cik IS NULL THEN

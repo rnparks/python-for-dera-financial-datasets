@@ -340,9 +340,8 @@ uv run dera build-gold --refresh-only  # just REFRESH the two tradable matviews
 Notes:
 
 - `build-silver` **drops gold's matviews** via `DROP SCHEMA sec_silver CASCADE`, so a full gold rebuild (not `--refresh-only`) is required after every silver rebuild.
-- After a fresh silver rebuild, run `ANALYZE` on `sec_silver.num_silver` before building gold — the matview joins plan catastrophically against a statistics-less 181M-row table (observed: 9 hours instead of ~1 minute).
-- `--refresh-only` does not refresh `peer_zscore_by_sub_industry`; refresh it manually if needed:
-  `REFRESH MATERIALIZED VIEW sec_gold.peer_zscore_by_sub_industry;`
+- `build-silver` now runs `ANALYZE` on `sec_silver.num_silver` and `sub_silver` at the end of the build. Previously this was documented as a manual step and lived in no code path; skipping it made the gold matview joins plan against a statistics-less 181M-row table (observed: 9 hours instead of ~1 minute).
+- `--refresh-only` refreshes all three matviews in dependency order, `peer_zscore_by_sub_industry` last. It previously refreshed only the two `tradable_financials` views, silently leaving the z-scores stale against freshly refreshed inputs.
 
 ## Source files
 

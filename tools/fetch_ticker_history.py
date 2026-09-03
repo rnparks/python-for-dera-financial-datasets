@@ -43,7 +43,7 @@ import urllib.request
 from dera_pipeline import config
 
 SEC_LIVE_URL = "https://www.sec.gov/files/company_tickers.json"
-WAYBACK_AVAIL = "http://archive.org/wayback/available?url=sec.gov/files/company_tickers.json&timestamp={ts}"
+WAYBACK_AVAIL = "https://archive.org/wayback/available?url=sec.gov/files/company_tickers.json&timestamp={ts}"
 WAYBACK_FETCH = "https://web.archive.org/web/{ts}id_/https://www.sec.gov/files/company_tickers.json"
 
 # The archive's first capture is 2019-02. Two probes a year keeps the

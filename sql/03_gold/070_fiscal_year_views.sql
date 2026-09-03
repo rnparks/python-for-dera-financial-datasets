@@ -44,6 +44,10 @@ LANGUAGE sql STABLE AS $$
           AND n.cik = p_cik
           AND n.qtrs = CASE WHEN ct.fact_type = 'balance' THEN 0 ELSE 4 END
           AND n.segments IS NULL AND n.coreg IS NULL
+          -- Same NULL-shadowing guard as get_canonical: a priority-1
+          -- tag with no parseable value must not mask a valid
+          -- lower-priority fallback.
+          AND n.value IS NOT NULL
           AND (
               (p_mode = 'latest' AND n.rank_latest = 1)
            OR (p_mode = 'pit'    AND n.rank_pit    = 1)
@@ -77,7 +81,7 @@ CREATE OR REPLACE FUNCTION sec_gold.latest_annual_by_ticker(
 LANGUAGE sql STABLE AS $$
     SELECT *
     FROM sec_gold.latest_annual(
-        (SELECT cik FROM sec_silver.ticker_map WHERE ticker = upper(p_ticker)),
+        (SELECT cik FROM sec_silver.ticker_map WHERE ticker = sec_gold.norm_ticker(p_ticker)),
         p_concept, p_mode
     );
 $$;

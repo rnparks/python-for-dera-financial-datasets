@@ -127,6 +127,16 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
     return 0
 
 
+# Gold materialized views, in dependency order. peer_zscore_by_sub_industry
+# reads tradable_financials, so it must come after it. Declared once here
+# so --refresh-only cannot drift out of sync with the DDL again.
+GOLD_MATVIEWS = (
+    "sec_gold.tradable_financials",
+    "sec_gold.tradable_financials_pit",
+    "sec_gold.peer_zscore_by_sub_industry",
+)
+
+
 def cmd_build_gold(args: argparse.Namespace) -> int:
     """Build (or refresh) the gold layer.
 
@@ -141,19 +151,62 @@ def cmd_build_gold(args: argparse.Namespace) -> int:
         if args.refresh_only:
             print("Refreshing materialized views...")
             with conn.cursor() as cur:
-                cur.execute(
-                    "REFRESH MATERIALIZED VIEW sec_gold.tradable_financials"
-                )
-                cur.execute(
-                    "REFRESH MATERIALIZED VIEW sec_gold.tradable_financials_pit"
-                )
+                # Order matters: peer_zscore_by_sub_industry is derived
+                # from tradable_financials, so it must refresh last.
+                # It was previously omitted entirely, which left the
+                # z-scores silently stale against freshly refreshed
+                # inputs.
+                for matview in GOLD_MATVIEWS:
+                    print(f"  REFRESH {matview}")
+                    cur.execute(f"REFRESH MATERIALIZED VIEW {matview}")
         else:
             db.run_sql_dir(conn, gold_dir)
     return 0
 
 
+def _bronze_quarters_loaded(conn) -> int:
+    """How many quarters bronze already holds, 0 if it is not built yet."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('sec_raw.load_log') IS NOT NULL")
+        row = cur.fetchone()
+        if not row or not row[0]:
+            return 0
+        cur.execute("SELECT COUNT(*) FROM sec_raw.load_log")
+        return int(cur.fetchone()[0])
+
+
 def cmd_run_all(args: argparse.Namespace) -> int:
-    for step in (cmd_download, cmd_init_db, cmd_load, cmd_build_silver, cmd_build_gold):
+    """Full pipeline, but never silently destroying an existing bronze.
+
+    `cmd_init_db` runs `sql/01_bronze/init_sec.sql`, which opens with
+    `DROP SCHEMA IF EXISTS sec_raw CASCADE`. Calling it unconditionally
+    meant `dera run-all` against a populated database dropped every
+    loaded quarter and re-ingested from scratch, with no prompt and no
+    way back short of re-downloading and re-loading everything.
+
+    Bronze is now initialized only when it is empty, or when the caller
+    explicitly asks with --reinit-bronze.
+    """
+    with db.get_conn() as conn:
+        loaded = _bronze_quarters_loaded(conn)
+
+    if loaded and not getattr(args, "reinit_bronze", False):
+        print(
+            f"Bronze already holds {loaded} quarter(s) — skipping init-db so "
+            "existing data is preserved.\n"
+            "  Pass --reinit-bronze to drop and rebuild sec_raw from scratch."
+        )
+        steps = (cmd_download, cmd_load, cmd_build_silver, cmd_build_gold)
+    else:
+        if loaded:
+            print(
+                f"--reinit-bronze given: DROPPING sec_raw and its "
+                f"{loaded} loaded quarter(s)."
+            )
+        steps = (cmd_download, cmd_init_db, cmd_load, cmd_build_silver,
+                 cmd_build_gold)
+
+    for step in steps:
         rc = step(args)
         if rc:
             return rc
@@ -194,12 +247,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--refresh-only", action="store_true", default=False,
         help="skip the DDL and only REFRESH existing matviews",
     )
+    # README and docs/architecture.md documented --no-refresh for a flag
+    # that never existed, so the documented command failed with
+    # "unrecognized arguments". Accepted as an explicit no-op alias for
+    # the default so those instructions work rather than crash.
+    p_gold.add_argument(
+        "--no-refresh", dest="refresh_only", action="store_false",
+        help="run the full DDL rebuild without REFRESH (this is the default)",
+    )
     p_gold.set_defaults(func=cmd_build_gold)
 
     p_all = sub.add_parser("run-all", help="download + init + load + silver + gold")
     _add_range_args(p_all)
     p_all.add_argument("--truncate", action="store_true")
     p_all.add_argument("--full", action="store_true")
+    p_all.add_argument(
+        "--reinit-bronze", action="store_true", default=False,
+        help="DESTRUCTIVE: drop sec_raw and re-ingest every quarter from "
+             "scratch. Without this, run-all preserves an existing bronze.",
+    )
     p_all.add_argument("--refresh-only", action="store_true", default=False)
     p_all.add_argument("--quarter", default=None)
     p_all.set_defaults(func=cmd_run_all)

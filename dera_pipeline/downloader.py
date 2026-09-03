@@ -37,6 +37,27 @@ def iter_quarters(
             year += 1
 
 
+# The four files every DERA quarter must contain. A previous run that
+# died mid-extract could leave only sub.txt behind, and the old
+# `any(iterdir())` check treated that as complete: the quarter was
+# skipped forever and the failure surfaced much later as a missing-file
+# error during the bronze load. Checking for all four turns a silent
+# corruption into a re-download.
+REQUIRED_FILES = {"sub.txt", "tag.txt", "num.txt", "pre.txt"}
+
+
+def _is_complete(extract_to: Path) -> bool:
+    """True when every required file is present and non-empty."""
+    try:
+        present = {p.name: p for p in extract_to.iterdir() if p.is_file()}
+    except OSError:
+        return False
+    return all(
+        name in present and present[name].stat().st_size > 0
+        for name in REQUIRED_FILES
+    )
+
+
 def quarter_string(year: int, quarter: int) -> str:
     return f"{year}q{quarter}"
 
@@ -59,9 +80,15 @@ async def fetch_quarter(
     success (including skip), or None on permanent failure.
     """
     extract_to = quarter_dir(year, quarter)
-    if extract_to.exists() and any(extract_to.iterdir()):
+    if extract_to.exists() and _is_complete(extract_to):
         print(f"Skipping {extract_to} — already exists.")
         return extract_to
+    if extract_to.exists() and any(extract_to.iterdir()):
+        missing = sorted(REQUIRED_FILES - {p.name for p in extract_to.iterdir()})
+        print(
+            f"Re-downloading {extract_to} — incomplete, missing: "
+            f"{', '.join(missing)}"
+        )
 
     url = quarter_url(year, quarter)
     headers = {

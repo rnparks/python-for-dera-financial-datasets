@@ -27,6 +27,11 @@ LANGUAGE sql STABLE AS $$
       AND n.value_date = p_value_date
       AND n.qtrs = p_qtrs
       AND n.segments IS NULL AND n.coreg IS NULL
+      -- Without this the priority walk can stop on a tag that was
+      -- reported with no parseable value, returning NULL instead of
+      -- falling through to a lower-priority tag that has a real number.
+      -- 48,877 priority-1 rows in num_silver carry a NULL value.
+      AND n.value IS NOT NULL
       AND (
           (p_mode = 'latest' AND n.rank_latest = 1)
        OR (p_mode = 'pit'    AND n.rank_pit    = 1)
@@ -52,7 +57,7 @@ CREATE OR REPLACE FUNCTION sec_gold.get_canonical_by_ticker(
 ) RETURNS NUMERIC
 LANGUAGE sql STABLE AS $$
     SELECT sec_gold.get_canonical(
-        (SELECT cik FROM sec_silver.ticker_map WHERE ticker = upper(p_ticker)),
+        (SELECT cik FROM sec_silver.ticker_map WHERE ticker = sec_gold.norm_ticker(p_ticker)),
         p_concept, p_value_date, p_qtrs, p_mode
     );
 $$;
