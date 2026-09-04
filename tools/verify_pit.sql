@@ -310,3 +310,90 @@ FROM sec_reference.share_class
 WHERE NOT is_excluded
   AND (class_label ILIKE '%preferred%' OR class_label ILIKE '%treasury%'
        OR class_label LIKE '%=%');
+
+-- ============================================================
+-- Historical universe: survivorship and future-existence bias.
+-- Checks 22-27 cover the four tests in the universe specification.
+-- These run against the Phase 0 slice; they are written to hold for the
+-- full population too, so scaling the ingest should not change them.
+-- ============================================================
+
+\echo '=== 22. Test A: a company that failed stays in past universes ==='
+-- SVB Financial was an S&P 500 member until it collapsed. It must be a
+-- member in 2015 and 2016, gone after its 25-NSE of 2023-05-02, and
+-- carry a delisting_event -- not vanish as if it never existed.
+SELECT CASE WHEN in_2015 AND in_2016 AND NOT in_2024 AND has_event
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       in_2015, in_2016, in_2024, has_event, delisting_date
+FROM (
+    SELECT
+      EXISTS (SELECT 1 FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30') WHERE cik=719739) AS in_2015,
+      EXISTS (SELECT 1 FROM sec_reference.universe_at('filers_10k_15m', DATE '2016-06-30') WHERE cik=719739) AS in_2016,
+      EXISTS (SELECT 1 FROM sec_reference.universe_at('filers_10k_15m', DATE '2024-06-30') WHERE cik=719739) AS in_2024,
+      EXISTS (SELECT 1 FROM sec_reference.delisting_event de
+              JOIN sec_reference.security s USING (security_id) WHERE s.cik=719739) AS has_event,
+      (SELECT delisting_date FROM sec_reference.security WHERE cik=719739) AS delisting_date
+) t;
+
+\echo '=== 23. Test A (cont.): other failures are retained, not erased ==='
+SELECT CASE WHEN COUNT(*) FILTER (WHERE was_member) = COUNT(*)
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       COUNT(*) AS failures_checked,
+       COUNT(*) FILTER (WHERE was_member) AS present_in_past_universe
+FROM (
+    SELECT s.cik,
+           EXISTS (SELECT 1 FROM sec_reference.universe_at('filers_10k_15m',
+                     (s.delisting_date - INTERVAL '1 year')::date) u
+                   WHERE u.cik = s.cik) AS was_member
+    FROM sec_reference.security s
+    WHERE s.delisting_date IS NOT NULL AND NOT s.is_provisional
+) t;
+
+\echo '=== 24. Test B: no security is in a universe before it could trade ==='
+-- Future-existence bias, asserted globally rather than per name. The
+-- eligibility CHECK constraints make this structurally impossible, so a
+-- failure here means a constraint was dropped.
+SELECT CASE WHEN COUNT(*)=0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       COUNT(*) AS intervals_starting_before_first_trade
+FROM sec_reference.eligibility e
+JOIN sec_reference.security s USING (security_id)
+WHERE e.valid_from < s.first_trade_date;
+
+\echo '=== 25. Test B (cont.): recent IPOs absent from pre-IPO universes ==='
+-- Palantir (2020), Coinbase (2021) and Rivian (2021) must not appear in
+-- a 2015 universe merely because they are successful companies today.
+SELECT CASE WHEN COUNT(*)=0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       COUNT(*) AS ipos_leaking_into_2015
+FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30')
+WHERE cik IN (1321655, 1679788, 1874178);
+
+\echo '=== 26. Test D: a ticker change preserves one security identity ==='
+-- Unrivaled Brands traded as TRTC and later UNRV on one CIK. One
+-- security, two listing intervals, and the as-of ticker must differ by
+-- era rather than both resolving to today's symbol.
+SELECT CASE WHEN n_securities=1 AND n_listings>1 THEN 'PASS' ELSE 'FAIL' END AS status,
+       n_securities, n_listings
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_reference.security WHERE cik=1451512) AS n_securities,
+           (SELECT COUNT(*) FROM sec_reference.listing l
+            JOIN sec_reference.security s USING (security_id)
+            WHERE s.cik=1451512) AS n_listings
+) t;
+
+\echo '=== 27. Delisted securities carry an outcome row, never silence ==='
+-- A delisting is an investment event. delisting_return stays NULL until
+-- a price source exists -- NULL, not 0, because zero would assert a
+-- total loss and that is wrong for an acquisition.
+SELECT CASE WHEN missing_event=0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       total_delisted, missing_event, awaiting_return
+FROM (
+    SELECT COUNT(*) AS total_delisted,
+           COUNT(*) FILTER (WHERE NOT EXISTS (
+               SELECT 1 FROM sec_reference.delisting_event de
+               WHERE de.security_id = s.security_id)) AS missing_event,
+           COUNT(*) FILTER (WHERE EXISTS (
+               SELECT 1 FROM sec_reference.delisting_event de
+               WHERE de.security_id = s.security_id
+                 AND de.delisting_return IS NULL)) AS awaiting_return
+    FROM sec_reference.security s WHERE s.delisting_date IS NOT NULL
+) t;
