@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import subprocess
 import sys
 from pathlib import Path
 
@@ -179,6 +180,51 @@ def cmd_build_gold(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_verify(args: argparse.Namespace) -> int:
+    r"""Run the point-in-time verification suite.
+
+    `tools/verify_pit.sql` had 15 passing checks and was invoked from
+    nothing: no test runner, no CI, no CLI path. A correctness suite
+    nobody runs is documentation, not a guard. This gives it a command.
+
+    It shells out to psql rather than going through psycopg because the
+    file uses \echo and \pset meta-commands, which psycopg cannot
+    execute. Rewriting them to avoid the dependency would cost the
+    readable section headers that make a failure legible.
+    """
+    suite = config.PROJECT_ROOT / "tools" / "verify_pit.sql"
+    if not suite.exists():
+        print(f"error: {suite} not found", file=sys.stderr)
+        return 1
+
+    dsn = config.pg_dsn()
+    print(f"Running {suite.name} ...\n")
+    proc = subprocess.run(
+        ["psql", dsn, "-v", "ON_ERROR_STOP=1", "-f", str(suite)],
+        capture_output=True, text=True,
+    )
+    sys.stdout.write(proc.stdout)
+    if proc.stderr.strip():
+        sys.stderr.write(proc.stderr)
+
+    if proc.returncode != 0:
+        print("\nSuite did not complete.", file=sys.stderr)
+        return proc.returncode
+
+    # Each check prints PASS or FAIL in its status column, so the exit
+    # code can reflect the result rather than merely whether psql ran.
+    failures = sum(
+        1 for line in proc.stdout.splitlines()
+        if line.strip().startswith("FAIL") or " FAIL " in line
+    )
+    passes = sum(
+        1 for line in proc.stdout.splitlines()
+        if line.strip().startswith("PASS") or " PASS " in line
+    )
+    print(f"\n{passes} passed, {failures} failed.")
+    return 1 if failures else 0
+
+
 def _bronze_quarters_loaded(conn) -> int:
     """How many quarters bronze already holds, 0 if it is not built yet."""
     with conn.cursor() as cur:
@@ -271,6 +317,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the full DDL rebuild without REFRESH (this is the default)",
     )
     p_gold.set_defaults(func=cmd_build_gold)
+
+    p_verify = sub.add_parser(
+        "verify", help="run the point-in-time verification suite")
+    p_verify.set_defaults(func=cmd_verify)
 
     p_all = sub.add_parser("run-all", help="download + init + load + silver + gold")
     _add_range_args(p_all)

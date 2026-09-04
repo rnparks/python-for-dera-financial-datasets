@@ -89,15 +89,44 @@ LANGUAGE sql STABLE AS $$
     ),
     -- Sum the share classes only where no consolidated row exists for
     -- that tag and period.
+    --
+    -- THE EQUIVALENT TRAP. Summing assumes the class rows are disjoint
+    -- parts of one whole. For a handful of issuers they are not: they
+    -- publish the SAME total twice, converted into each class's units.
+    -- Berkshire is the case that exposed it:
+    --
+    --   ClassOfStock=EquivalentClassA        1,438,223
+    --   ClassOfStock=EquivalentClassB    2,157,335,139
+    --   ratio exactly 1500.0  (BRK.A converts to 1,500 BRK.B)
+    --
+    -- Adding those double counts the entire company. The error happened
+    -- to be only 0.067% because A shares are tiny expressed in B units,
+    -- which is precisely why it went unnoticed: it looked plausible and
+    -- was wrong in principle.
+    --
+    -- So the aggregate branches on the label. Where the segments say
+    -- "Equivalent" the rows are alternative expressions of one total and
+    -- the largest is taken, that being the finest unit. Everywhere else
+    -- they are genuine separate classes and are summed. `method`
+    -- records which, because the two mean different things to a caller
+    -- computing market cap.
     by_class AS (
-        SELECT SUM(v.value) AS shares, v.value_date,
-               MAX(v.tradable_from) AS tradable_from, v.tag AS source_tag,
-               'class_sum'::TEXT AS method,
-               CASE v.tag
-                   WHEN 'CommonStockSharesOutstanding' THEN 4
-                   WHEN 'CommonStockSharesIssued'      THEN 5
-                   ELSE 9
-               END AS rung
+        SELECT
+            CASE WHEN bool_or(v.segments ILIKE '%Equivalent%')
+                 THEN MAX(v.value)
+                 ELSE SUM(v.value)
+            END AS shares,
+            v.value_date,
+            MAX(v.tradable_from) AS tradable_from, v.tag AS source_tag,
+            CASE WHEN bool_or(v.segments ILIKE '%Equivalent%')
+                 THEN 'class_equivalent'::TEXT
+                 ELSE 'class_sum'::TEXT
+            END AS method,
+            CASE v.tag
+                WHEN 'CommonStockSharesOutstanding' THEN 4
+                WHEN 'CommonStockSharesIssued'      THEN 5
+                ELSE 9
+            END AS rung
         FROM visible v
         WHERE v.segments LIKE 'ClassOfStock=%'
           AND v.segments NOT ILIKE '%treasury%'
@@ -120,7 +149,8 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 COMMENT ON FUNCTION sec_gold.shares_outstanding_at(INTEGER, DATE, INTEGER) IS
-    'Share count knowable on p_asof, resolved by priority ladder with '
-    'share-class summation. `method` says whether the figure came from '
-    'a consolidated tag or a sum across classes; `source_tag` names the '
-    'tag, so a weighted-average fallback is always visible.';
+    'Share count knowable on p_asof, by priority ladder with share-class '
+    'handling. method: consolidated | class_sum | class_equivalent. '
+    'NOT sufficient for market cap on multi-class issuers - that needs '
+    'each class priced separately, and 329 of 1,504 issuers have more '
+    'than one class.';

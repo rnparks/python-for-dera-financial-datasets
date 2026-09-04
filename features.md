@@ -2,33 +2,38 @@
 
 A living document that tracks what exists, what's partial, and what's planned. The goal: any future session can pick an item and execute it without re-deriving context.
 
-**Last updated**: 2026-04-11
-**Branch**: `refactor/medallion-cleanup`
+**Last updated**: 2026-09-03
+**Branch**: `db_update`
 **Maintainer**: Ryan Parks
 
 ---
 
 ## Status snapshot
 
-The platform is a Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold`) over SEC DERA Financial Statement Data Sets, 2009q1 → 2025q4, 177M num rows.
+Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
+`sec_reference`) over SEC DERA Financial Statement Data Sets,
+2009q1 → 2026q2, 185M num rows, 138 GB.
 
 **Usable today**:
-- Bronze/silver/gold end-to-end (`dera init-db → load → build-silver → build-gold`)
-- Point-in-time correctness via `rank_pit` / `rank_latest` (verified against GE FY2022 restatement — $76.5B original → $29.1B restated, both preserved)
-- GICS Sector + Sub-Industry on every S&P 1500 ticker (sourced from Wikipedia, 100% coverage)
-- Canonical concept layer: `sec_gold.canonical_concepts` (12 concepts) + `concept_tag_map` (~28 rows) + `get_canonical(cik, concept, date, qtrs, mode)` — verified to match 10-K dollar-for-dollar against Nike/Apple/BAC/Meta/UNP
-- Fiscal-year-aware: `sec_gold.latest_annual_by_ticker(ticker, concept)` handles non-December FYEs (NVDA/Jan, Nike/May, MSFT/June, AAPL/Sep, ...)
-- Peer z-scores: `sec_gold.peer_zscore_by_sub_industry` — pre-computed cross-sectional z-scores per (concept, fiscal_year, gics_sub_industry), 174K rows
-- Company snapshot: `sec_gold.company_snapshot(ticker)` returns every canonical metric at the most recent fiscal year
+- Bronze/silver/gold end-to-end. `run-all` no longer destroys a populated bronze; that needs `--reinit-bronze`.
+- **Bitemporal point-in-time correctness.** `sec_gold.fact_asof` keeps every vintage of every fact with `known_at`, `tradable_from` and `superseded_tradable`. An as-of slice is an indexed interval scan returning exactly one row per fact. Verified on GE fiscal 2022 revenue, which has **four** vintages, not two: $76.555B as first filed 2023-02-10, restated to $58.100B by an 8-K on 2023-04-25, reaffirmed 2024-02-02, then $29.139B on 2025-02-03.
+- **Availability, not filing date.** `tradable_from` is derived from the EDGAR acceptance timestamp against a real NYSE calendar. 48% of filings are accepted after the close yet stamped that same `filed_date`; all 247,216 now roll to a later session.
+- **As-of accessors** where the knowledge date has no default, so omitting it is an error rather than a silent leak: `as_of_facts`, `as_of_canonical`, `as_of_latest_annual`, `as_of_snapshot`. `p_buffer_sessions` applies a safety margin in trading sessions.
+- **Survivorship-free company spine.** `sec_reference.company` holds every CIK that ever filed; `company_ticker` gives dated ticker intervals with `is_primary`. Recovered 2013 10-K filer coverage from 36% to 80%.
+- **Derived concepts.** `concept_formula` computes `gross_profit`, `free_cash_flow` and `total_debt` from other concepts. `total_debt` no longer understates.
+- **Peer stats at two GICS levels** in one table tagged by `peer_level`; sector scores all 1,569 companies where sub-industry dropped 147.
+- 15-check verification suite in `tools/verify_pit.sql`.
 
 **Missing for serious research**:
-- **Price / market cap data** — the biggest gap. yfinance doesn't scale. Needs Polygon.io or Tiingo.
-- Factor library (value, quality, momentum, size) — requires prices
-- QoQ/YoY/TTM derived metrics
-- Incremental silver rebuild (currently full-rebuild, ~32 min)
-- Form 13F / Form 4 data
-- Python research SDK and parquet exports
-- Long-tail XBRL tag coverage for the 10% of facts filed under company-extension namespaces
+- **Prices.** Still the biggest gap and nothing else is testable without it. The share-count denominator already exists (`shares_outstanding_at`, availability-correct) — prices are the only missing input.
+- **Point-in-time universe.** `universe_sp1500` is today's membership with no dates, so the PIT fact layer still joins to a look-ahead universe. The largest remaining correctness hole.
+- **Multi-class market cap.** 329 of 1,504 issuers report more than one share class. Market cap needs each class priced separately; `is_primary` collapses to one. Do this before prices, since the price schema depends on it.
+- Scale-free metrics: margins, ROIC, FCF yield, growth. `concept_formula` is the mechanism; nothing uses it for ratios yet.
+- Factor library — requires prices.
+- Incremental silver rebuild. Full rebuild is now ~39 min and is a single transaction, so a late failure discards everything.
+- No test runner or CI. `verify_pit.sql` is invoked from nothing.
+- Form 13F / Form 4, research SDK, parquet exports.
+- Long-tail XBRL tag coverage for company-extension namespaces.
 
 ---
 
@@ -63,7 +68,25 @@ In reverse chronological order on `refactor/medallion-cleanup`:
 
 **Alternative**: Tiingo EOD API ($10-30/mo, adjusted daily bars, broader history than free tiers). Less bulk-friendly but cheaper.
 
-**Proposed schema**:
+> **WARNING — do not build the matview below as written.** It has three
+> defects, all fixed by work that landed after this section was drafted:
+>
+> 1. `rank_latest = 1` is the *restated* share count, pulled from a future
+>    filing. This is precisely the look-ahead the bitemporal work removed.
+>    Use `sec_gold.fact_asof` with the `tradable_from` / `superseded_tradable`
+>    interval, or simply call `sec_gold.shares_outstanding_at(cik, asof)`.
+> 2. It hardcodes `EntityCommonStockSharesOutstanding`, which covers 69%.
+>    `shares_outstanding_at` already ladders five tags to 99.5%.
+> 3. It joins `ticker_map`, which is survivorship-biased. Use
+>    `sec_reference.cik_at(ticker, asof)`.
+>
+> And a fourth that no existing code fixes: **multi-class issuers**. 329 of
+> 1,504 report more than one share class, and market cap needs each class
+> priced separately. Berkshire publishes one total twice in different units,
+> so summing double counts it. Settle the per-class share model before
+> writing the price loader, because the schema depends on it.
+
+**Proposed schema** (superseded — see warning above):
 ```sql
 CREATE TABLE sec_gold.prices (
     ticker       TEXT NOT NULL,
@@ -137,7 +160,7 @@ JOIN LATERAL (
 CREATE MATERIALIZED VIEW sec_gold.fundamentals_growth AS
 WITH base AS (
     SELECT ticker, cik, concept, fiscal_year, value_date, value
-    FROM sec_gold.peer_zscore_by_sub_industry  -- already has canonical rollup
+    FROM sec_gold.peer_stats  -- renamed; filter peer_level
 )
 SELECT
     b.*,
@@ -214,7 +237,7 @@ FROM ...;
 
 ### Revenue from components (for banks without single-tag revenue)
 
-**Problem**: Some large banks (USB, TFC in S&P 500) don't file a single `Revenues`, `RevenuesNetOfInterestExpense`, or similar headline revenue tag. They file only decomposed components: `InterestIncomeExpenseNet` + `NoninterestIncome`. Today those banks are missing from `sec_gold.peer_zscore_by_sub_industry` for the revenue concept.
+**Problem**: Some large banks (USB, TFC in S&P 500) don't file a single `Revenues`, `RevenuesNetOfInterestExpense`, or similar headline revenue tag. They file only decomposed components: `InterestIncomeExpenseNet` + `NoninterestIncome`. Today those banks are missing from `sec_gold.peer_stats` for the revenue concept. NOTE: `concept_formula` now exists and is the mechanism for this — bank revenue can be declared as a sum of its components rather than needing new code.
 
 **Fix**: Add a "derived revenue" computed as `InterestIncomeExpenseNet + NoninterestIncome` when no headline tag is available. Priority 5 in concept_tag_map, or a separate fact_type='derived_bank_revenue' concept.
 
@@ -279,7 +302,7 @@ print(aapl.history('revenue', years=10))
 
 **Problem**: Some research workflows are pandas/polars-native and want data in parquet files, not Postgres connections.
 
-**Approach**: `dera export --matview peer_zscore_by_sub_industry --output s3://bucket/path` — dumps a gold matview to a partitioned parquet file using psycopg + pyarrow.
+**Approach**: `dera export --matview peer_stats --output s3://bucket/path` — dumps a gold matview to a partitioned parquet file using psycopg + pyarrow.
 
 **Effort**: 2-3 hours.
 

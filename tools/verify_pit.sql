@@ -165,3 +165,48 @@ FROM (
            COUNT(DISTINCT cik)        FILTER (WHERE peer_level='sub_industry') AS sub_cos
     FROM sec_gold.peer_stats
 ) t;
+
+\echo ''
+\echo '=== 13. Concept coverage floors ==='
+-- Guards the tag-map work. total_debt was 826 companies and understated;
+-- gross_profit 598. A future tag change that silently drops companies
+-- should fail here rather than quietly shrink a factor's universe.
+WITH cov AS (
+    SELECT concept, COUNT(DISTINCT cik) AS n
+    FROM sec_gold.peer_stats
+    WHERE peer_level='sector' AND fiscal_year=2024
+    GROUP BY concept
+)
+SELECT CASE WHEN
+            COALESCE((SELECT n FROM cov WHERE concept='total_debt'),0)   >= 1050
+        AND COALESCE((SELECT n FROM cov WHERE concept='gross_profit'),0) >=  830
+        AND COALESCE((SELECT n FROM cov WHERE concept='revenue'),0)      >= 1470
+       THEN 'PASS' ELSE 'FAIL' END AS status,
+       (SELECT n FROM cov WHERE concept='total_debt')     AS total_debt,
+       (SELECT n FROM cov WHERE concept='gross_profit')   AS gross_profit,
+       (SELECT n FROM cov WHERE concept='revenue')        AS revenue,
+       (SELECT n FROM cov WHERE concept='free_cash_flow') AS free_cash_flow;
+
+\echo ''
+\echo '=== 14. Derived mechanism actually computes ==='
+-- free_cash_flow was declared and excluded everywhere for months. If
+-- this resolves, the concept_formula path works end to end.
+SELECT CASE WHEN fcf IS NOT NULL AND ocf IS NOT NULL
+                 AND abs(fcf - (ocf - COALESCE(cap,0))) < 1
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       ROUND(ocf/1e9,2) AS ocf_bn, ROUND(cap/1e9,2) AS capex_bn,
+       ROUND(fcf/1e9,2) AS derived_fcf_bn
+FROM (
+    SELECT sec_gold.get_canonical(320193,'operating_cash_flow',DATE '2025-09-30',4) AS ocf,
+           sec_gold.get_canonical(320193,'capex',              DATE '2025-09-30',4) AS cap,
+           sec_gold.get_canonical(320193,'free_cash_flow',     DATE '2025-09-30',4) AS fcf
+) t;
+
+\echo ''
+\echo '=== 15. Equivalent share classes are not double counted ==='
+-- Berkshire publishes one total twice, converted into each class's
+-- units. Summing them double counts the company.
+SELECT CASE WHEN method = 'class_equivalent' AND shares < 2.2e9
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       to_char(shares/1e9,'FM990.000')||'B' AS brk_shares, method, source_tag
+FROM sec_gold.shares_outstanding_at(1067983, CURRENT_DATE);

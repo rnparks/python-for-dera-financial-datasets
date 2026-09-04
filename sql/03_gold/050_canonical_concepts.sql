@@ -40,7 +40,12 @@ INSERT INTO sec_gold.canonical_concepts VALUES
     ('total_debt',           'Total Debt',              'balance', 'USD',       'Best-effort total interest-bearing debt from the dominant XBRL tag'),
     ('operating_cash_flow',  'Cash from Operations',    'flow',    'USD',       'Net cash provided by operating activities'),
     ('capex',                'Capital Expenditures',    'flow',    'USD',       'Payments to acquire property, plant and equipment'),
-    ('free_cash_flow',       'Free Cash Flow',          'derived', 'USD',       'Operating cash flow minus capex (computed client-side)');
+    ('free_cash_flow',       'Free Cash Flow',          'derived', 'USD',       'Operating cash flow minus capex'),
+    -- Components. Useful alone, and they are the operands the formulas
+    -- in concept_formula are assembled from.
+    ('cost_of_revenue',      'Cost of Revenue',         'flow',    'USD',       'Cost of goods and services sold'),
+    ('debt_noncurrent',      'Long-Term Debt',          'balance', 'USD',       'Debt due beyond one year, excluding the current portion'),
+    ('debt_current',         'Current Debt',            'balance', 'USD',       'Current portion of long-term debt plus short-term borrowings');
 
 CREATE TABLE sec_gold.concept_tag_map (
     concept          TEXT NOT NULL REFERENCES sec_gold.canonical_concepts (concept) ON DELETE CASCADE,
@@ -65,10 +70,22 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes)
     ('revenue', 'Revenues',                            1, '60', 'Some banks file plain Revenues'),
     ('revenue', 'RevenuesNetOfInterestExpense',        2, '60', 'Large-bank headline revenue (JPM, WFC)'),
     ('revenue', 'InterestAndDividendIncomeOperating',  3, '60', 'Fallback: gross interest income');
+-- Regulated utilities (SIC 49) — 11 S&P 1500 issuers including NextEra
+-- report only this tag, so they resolved to no revenue at all before.
+INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes) VALUES
+    ('revenue', 'RegulatedAndUnregulatedOperatingRevenue', 1, '49', 'Standard regulated-utility revenue line'),
+    ('revenue', 'Revenues',                                2, '49', 'Utility fallback');
 
 -- Gross profit -----------------------------------------------------
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
     ('gross_profit', 'GrossProfit', 1, 'Direct XBRL tag — companies that file a gross profit line');
+
+-- Cost of revenue --------------------------------------------------
+-- Only exists so gross_profit can be derived where GrossProfit is not
+-- filed. 641 issuers file CostOfGoodsAndServicesSold, 208 CostOfRevenue.
+INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
+    ('cost_of_revenue', 'CostOfGoodsAndServicesSold', 1, 'ASC 606-era standard cost line'),
+    ('cost_of_revenue', 'CostOfRevenue',              2, 'Older/alternate cost line');
 
 -- Operating income -------------------------------------------------
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
@@ -103,15 +120,33 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
     ('total_equity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest', 2, 'Alternate for consolidated groups with minority interest');
 
 -- Total debt -------------------------------------------------------
--- No single XBRL tag captures "total interest-bearing debt" cleanly.
--- This is a best-effort rollup: prefer a combined total tag, fall back
--- to the most common long-term-debt tags. features.md tracks a Tier-2
--- item to compute proper total_debt as sum of current + long-term +
--- short-term borrowings.
+-- No single XBRL tag captures "total interest-bearing debt" cleanly, so
+-- this resolves in two stages: a combined tag when the issuer files one,
+-- otherwise the formula in concept_formula sums the noncurrent and
+-- current components.
+--
+-- `LongTermDebtNoncurrent` was previously priority 3 HERE, which was the
+-- real defect. It resolved for most issuers and excludes the current
+-- portion, so total_debt was not merely sparse at 53% coverage, it was
+-- silently UNDERSTATED wherever it did resolve. A leverage ratio built
+-- on it is wrong, which is worse than missing. It now lives on
+-- debt_noncurrent, where it belongs, and total_debt falls through to the
+-- sum.
+--
+-- Deliberately NOT mapped here: RepaymentsOfLongTermDebt (579 issuers)
+-- and ProceedsFromIssuanceOfLongTermDebt (516). Both rank high in any
+-- tag-frequency scan and both are cash-flow movements, not balances.
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
     ('total_debt', 'DebtLongtermAndShorttermCombinedAmount', 1, 'Cleanest roll-up but only filed by ~17 companies'),
-    ('total_debt', 'LongTermDebt',                           2, 'Older single-tag usage'),
-    ('total_debt', 'LongTermDebtNoncurrent',                 3, 'Most commonly filed but excludes current portion and short-term borrowings');
+    ('total_debt', 'LongTermDebt',                           2, 'Older single-tag usage; already a total');
+
+-- Debt components --------------------------------------------------
+INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
+    ('debt_noncurrent', 'LongTermDebtNoncurrent',                        1, 'Most commonly filed long-term debt line'),
+    ('debt_noncurrent', 'LongTermDebtAndCapitalLeaseObligations',        2, 'Issuers that fold finance leases into debt'),
+    ('debt_current',    'LongTermDebtCurrent',                           1, 'Current portion of long-term debt'),
+    ('debt_current',    'LongTermDebtAndCapitalLeaseObligationsCurrent', 2, 'Current portion including finance leases'),
+    ('debt_current',    'DebtCurrent',                                   3, 'Short-term borrowings');
 
 -- Operating cash flow ---------------------------------------------
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
@@ -125,5 +160,59 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
 -- custom company-extension capex tags not covered here. features.md
 -- tracks "long tail tag coverage" as a Tier-3 follow-up.
 
--- free_cash_flow is 'derived' fact_type and has no tags — clients compute
--- it from operating_cash_flow minus capex. Documented via description.
+-- Derived concepts -------------------------------------------------
+--
+-- Until now `fact_type` allowed 'derived' and 'ratio' and nothing ever
+-- computed either. free_cash_flow had been declared with no tags and
+-- then explicitly excluded from every consumer, so the enum was pure
+-- forward-declaration. This table makes it real.
+--
+-- A derived concept is a linear combination of OTHER concepts. Keeping
+-- it declarative rather than burying arithmetic in the resolver means a
+-- new derived metric is an INSERT, not a code change, and the same
+-- mechanism serves the growth metrics and factor work later.
+--
+-- Deliberately one level deep: every operand must itself resolve from
+-- tags, never from another formula. That rules out recursion, cycles and
+-- the ordering questions they bring, at the cost of writing
+-- `revenue - cost_of_revenue` rather than chaining. Worth it.
+--
+-- `required` controls what a missing operand means:
+--   TRUE  — the result is NULL without it. Gross profit is meaningless
+--           if you know revenue but not cost.
+--   FALSE — treat as zero. A company that reports no capex still has a
+--           free cash flow, and one with only long-term debt still has
+--           a total debt.
+-- At least one operand must resolve either way, so a company with no
+-- debt at all yields NULL rather than a misleading zero.
+
+CREATE TABLE sec_gold.concept_formula (
+    concept      TEXT     NOT NULL REFERENCES sec_gold.canonical_concepts (concept) ON DELETE CASCADE,
+    operand      TEXT     NOT NULL REFERENCES sec_gold.canonical_concepts (concept),
+    coefficient  SMALLINT NOT NULL CHECK (coefficient IN (-1, 1)),
+    required     BOOLEAN  NOT NULL DEFAULT TRUE,
+    notes        TEXT,
+    PRIMARY KEY (concept, operand),
+    CHECK (concept <> operand)
+);
+
+INSERT INTO sec_gold.concept_formula (concept, operand, coefficient, required, notes) VALUES
+    -- Recovers 253 issuers that file cost but no gross profit line,
+    -- taking coverage from 604 to 857. The ceiling is structural: banks,
+    -- REITs and insurers do not report a gross profit line at all, so
+    -- 857 of 1,569 is as far as this can go.
+    ('gross_profit',   'revenue',             1, TRUE,  'Revenue minus cost of revenue'),
+    ('gross_profit',   'cost_of_revenue',    -1, TRUE,  NULL),
+    -- Both operands already resolved; this proves the mechanism on a
+    -- concept that has been declared and uncomputed for months.
+    ('free_cash_flow', 'operating_cash_flow', 1, TRUE,  'Operating cash flow minus capex'),
+    ('free_cash_flow', 'capex',              -1, FALSE, 'A company with no capex still has FCF'),
+    -- Fires only when no combined debt tag resolves. Fixes the
+    -- understatement described above, and recovers 266 issuers.
+    ('total_debt',     'debt_noncurrent',     1, FALSE, 'Sum of the two components when no combined tag exists'),
+    ('total_debt',     'debt_current',        1, FALSE, NULL);
+
+COMMENT ON TABLE sec_gold.concept_formula IS
+    'Derived concepts as linear combinations of other concepts. One '
+    'level deep by design: operands must resolve from tags, never from '
+    'another formula. Consulted only when direct tags fail.';

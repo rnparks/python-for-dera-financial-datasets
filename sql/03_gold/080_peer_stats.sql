@@ -46,7 +46,7 @@ DROP MATERIALIZED VIEW IF EXISTS sec_gold.peer_zscore_by_sub_industry CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS sec_gold.peer_stats                  CASCADE;
 
 CREATE MATERIALIZED VIEW sec_gold.peer_stats AS
-WITH resolved AS (
+WITH direct AS (
     -- One value per (company, concept, fiscal year), picking the
     -- best-priority tag. Industry-specific tag rows are eligible and
     -- preferred where the company's SIC matches; excluding them used to
@@ -67,7 +67,6 @@ WITH resolved AS (
     JOIN sec_gold.canonical_concepts   c ON c.concept = m.concept
     LEFT JOIN sec_reference.company    co ON co.cik = tf.cik
     WHERE tf.qtrs = CASE WHEN c.fact_type = 'balance' THEN 0 ELSE 4 END
-      AND c.fact_type <> 'derived'
       AND tf.value IS NOT NULL
       AND (m.sic_prefix = '' OR co.sic_latest::TEXT LIKE m.sic_prefix || '%')
       -- DERA publishes filer typos as-is, spanning 1980 to 2031. Left
@@ -79,6 +78,47 @@ WITH resolved AS (
         m.sic_prefix <> '' DESC,
         m.priority ASC,
         tf.value_date DESC
+),
+-- Derived concepts, assembled from what the tag walk just resolved.
+--
+-- peer_stats is tag-driven, so a concept with no tags could never appear
+-- here no matter what the resolver did. That is why free_cash_flow has
+-- been invisible in every screen since it was declared. Computing the
+-- formulas against `direct` fixes that, and it also picks up the debt
+-- and gross-profit recoveries, since both fall back to a formula.
+--
+-- Only fires where the direct walk produced nothing for that
+-- company-year: an issuer filing GrossProfit outright keeps its filed
+-- figure rather than a reconstruction.
+derived AS (
+    SELECT
+        d.cik,
+        max(d.ticker)            AS ticker,
+        max(d.gics_sector)       AS gics_sector,
+        max(d.gics_sub_industry) AS gics_sub_industry,
+        f.concept,
+        max(c.fact_type)         AS fact_type,
+        d.fiscal_year,
+        max(d.value_date)        AS value_date,
+        max(d.tradable_from)     AS tradable_from,
+        sum(f.coefficient * d.value) AS value
+    FROM sec_gold.concept_formula   f
+    JOIN direct                     d ON d.concept = f.operand
+    JOIN sec_gold.canonical_concepts c ON c.concept = f.concept
+    WHERE NOT EXISTS (
+        SELECT 1 FROM direct d2
+        WHERE d2.cik = d.cik AND d2.concept = f.concept
+          AND d2.fiscal_year = d.fiscal_year
+    )
+    GROUP BY d.cik, f.concept, d.fiscal_year
+    HAVING count(*) FILTER (WHERE f.required)
+         = (SELECT count(*) FROM sec_gold.concept_formula f2
+             WHERE f2.concept = f.concept AND f2.required)
+),
+resolved AS (
+    SELECT * FROM direct
+    UNION ALL
+    SELECT * FROM derived
 ),
 -- Fan the same resolved population out across both grouping levels.
 -- `peer_group` carries whichever label applies, so every downstream

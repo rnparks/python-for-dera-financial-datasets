@@ -69,12 +69,56 @@ LANGUAGE sql STABLE AS $$
            OR s.sic::TEXT LIKE m.sic_prefix || '%'
           )
     )
-    SELECT r.value_date, r.filed_date, r.value, r.tag
-    FROM resolved r
-    ORDER BY
-      r.value_date   DESC,            -- most recent fiscal year first
-      r.sic_prefix <> '' DESC,        -- industry-specific beats generic
-      r.priority     ASC
+    -- Direct tags first. If nothing resolved, and the concept has a
+    -- formula, compute it at the most recent period where its required
+    -- operands are available. Sourcing the date from the operands
+    -- rather than guessing keeps the components on the same statement:
+    -- a gross profit assembled from this year's revenue and last year's
+    -- cost would be worse than no answer at all.
+    SELECT * FROM (
+        SELECT r.value_date, r.filed_date, r.value, r.tag
+        FROM resolved r
+        ORDER BY
+          r.value_date   DESC,        -- most recent fiscal year first
+          r.sic_prefix <> '' DESC,    -- industry-specific beats generic
+          r.priority     ASC
+        LIMIT 1
+    ) direct_hit
+    UNION ALL
+    SELECT d.value_date, d.filed_date,
+           sec_gold.get_canonical(p_cik, p_concept, d.value_date,
+               CASE WHEN (SELECT fact_type FROM concept_type) = 'balance'
+                    THEN 0 ELSE 4 END, p_mode),
+           NULL::TEXT AS tag        -- derived: no single source tag
+    FROM (
+        -- Operand dates resolved inline rather than by calling
+        -- latest_annual recursively: a SQL function body is validated at
+        -- CREATE time, so a self-reference fails outright on a fresh
+        -- build. Inlining also guarantees the one-level rule holds here
+        -- exactly as it does in get_canonical.
+        SELECT n.value_date, n.filed_date
+        FROM sec_gold.concept_formula f
+        JOIN sec_gold.concept_tag_map m ON m.concept = f.operand
+        JOIN sec_silver.num_silver    n ON n.tag = m.tag
+        LEFT JOIN sec_silver.sub_silver s ON s.adsh = n.adsh
+        CROSS JOIN concept_type ct
+        WHERE f.concept = p_concept AND f.required
+          AND n.cik = p_cik
+          AND n.qtrs = CASE WHEN ct.fact_type = 'balance' THEN 0 ELSE 4 END
+          AND n.segments IS NULL AND n.coreg IS NULL
+          AND n.value IS NOT NULL
+          AND (
+              (p_mode = 'latest' AND n.rank_latest = 1)
+           OR (p_mode = 'pit'    AND n.rank_pit    = 1)
+          )
+          AND (m.sic_prefix = '' OR s.sic::TEXT LIKE m.sic_prefix || '%')
+        ORDER BY n.value_date DESC
+        LIMIT 1
+    ) d
+    WHERE NOT EXISTS (SELECT 1 FROM resolved)
+      AND sec_gold.get_canonical(p_cik, p_concept, d.value_date,
+              CASE WHEN (SELECT fact_type FROM concept_type) = 'balance'
+                   THEN 0 ELSE 4 END, p_mode) IS NOT NULL
     LIMIT 1;
 $$;
 
@@ -129,6 +173,5 @@ LANGUAGE sql STABLE AS $$
         la.tag
     FROM sec_gold.canonical_concepts c
     LEFT JOIN LATERAL sec_gold.latest_annual_by_ticker(p_ticker, c.concept, p_mode) la ON TRUE
-    WHERE c.fact_type <> 'derived'
     ORDER BY c.concept;
 $$;

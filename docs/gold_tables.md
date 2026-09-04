@@ -15,9 +15,12 @@ The gold layer is the query-facing top of the medallion pipeline: SEC DERA funda
 | [`tradable_financials_pit`](#tradable_financials_pit) | matview | 11.8M | As-first-seen twin of the above |
 | [`peer_stats`](#peer_stats) | matview | ~220K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level` |
 | [`canonical_concepts`](#canonical_concepts) | table | 12 | Research-meaningful metric definitions (revenue, capex, …) |
-| [`concept_tag_map`](#concept_tag_map) | table | 27 | Priority-ordered XBRL tag resolution rules per concept |
+| [`concept_tag_map`](#concept_tag_map) | table | ~40 | Priority-ordered XBRL tag resolution rules per concept |
+| `concept_formula` | table | 6 | Derived concepts as linear combinations of other concepts |
 | [`metric_aliases`](#metric_aliases) | table | 4 | Legacy display-name remap for `get_pit_financials` |
-| [`get_canonical()`](#get_canonical) | function | — | Resolve (cik, concept, date) → one numeric value |
+| [`get_canonical()`](#get_canonical) | function | — | Resolve (cik, concept, date) → one value: tags first, then formula |
+| `resolve_direct()` | function | — | Tag-walk only, no formula. Operand resolver for derived concepts |
+| `as_of_resolve_direct()` | function | — | Same, against `fact_asof` at a knowledge date |
 | [`get_canonical_by_ticker()`](#get_canonical_by_ticker) | function | — | Ticker wrapper for `get_canonical` |
 | [`latest_annual()`](#latest_annual) | function | — | Most recent annual value, fiscal-year-end aware |
 | [`latest_annual_by_ticker()`](#latest_annual_by_ticker) | function | — | Ticker wrapper for `latest_annual` |
@@ -354,6 +357,59 @@ Notes:
 - `build-silver` now runs `ANALYZE` on `sec_silver.num_silver` and `sub_silver` at the end of the build. Previously this was documented as a manual step and lived in no code path; skipping it made the gold matview joins plan against a statistics-less 181M-row table (observed: 9 hours instead of ~1 minute).
 - `--refresh-only` refreshes all four matviews in dependency order, `peer_stats` last. `fact_asof` was previously missing from that list, which left the availability-correct table stale behind every `as_of_*` function.
 
+## Derived concepts
+
+`canonical_concepts.fact_type` has always permitted `'derived'` and `'ratio'`.
+Until now nothing computed either: `free_cash_flow` was declared with no tags
+and then explicitly excluded from every consumer, so the enum was pure
+forward-declaration.
+
+`sec_gold.concept_formula` makes it real. A derived concept is a linear
+combination of other concepts:
+
+| Concept | Formula | Why |
+|---|---|---|
+| `gross_profit` | `revenue - cost_of_revenue` | Recovers 253 issuers that file cost but no gross profit line |
+| `free_cash_flow` | `operating_cash_flow - capex` | Was declared and uncomputed for months |
+| `total_debt` | `debt_noncurrent + debt_current` | Fires only when no combined debt tag resolves |
+
+Two rules make this safe.
+
+**One level deep.** Operands must resolve from tags, never from another
+formula. This is enforced by construction rather than convention: the formula
+branch calls `resolve_direct()`, which knows nothing about formulas, so
+recursion is impossible. The cost is writing `revenue - cost_of_revenue`
+instead of chaining; the benefit is no cycles and no ordering questions.
+
+**`required` says what a missing operand means.** When true, the result is
+NULL without it, because gross profit from revenue alone is not gross profit.
+When false, the operand is treated as zero, because a company reporting no
+capex still has a free cash flow. At least one operand must resolve either
+way, so a company with no debt at all yields NULL rather than a confident zero.
+
+Direct tags always win. An issuer that files `GrossProfit` outright is never
+handed a reconstruction.
+
+### The total_debt fix
+
+`LongTermDebtNoncurrent` used to sit at priority 3 on `total_debt` itself. It
+resolves for most issuers and **excludes the current portion**, so `total_debt`
+was not merely sparse at 53% coverage, it was silently understated wherever it
+did resolve. A leverage ratio built on it was wrong, which is worse than
+missing. That tag now lives on `debt_noncurrent`, and `total_debt` falls
+through to the sum of the two components.
+
+Deliberately not mapped: `RepaymentsOfLongTermDebt` and
+`ProceedsFromIssuanceOfLongTermDebt`. Both rank high in any tag-frequency scan
+and both are cash-flow movements, not balances.
+
+### Coverage ceilings are sometimes structural
+
+`gross_profit` reaches 857 of 1,569 companies, not 90%. Banks, REITs and
+insurers do not report a gross profit line at all, so the remainder is not a
+mapping failure and no amount of tag work will close it. Any screen using gross
+margin should say so rather than quietly dropping half the book.
+
 ## Source files
 
 | File | Creates |
@@ -366,12 +422,12 @@ Notes:
 | `030_tradable_financials.sql` | `tradable_financials`, `tradable_financials_pit` |
 | `035_fact_asof.sql` | `fact_asof` |
 | `040_helper_functions.sql` | `get_pit_financials()`, `get_financials_by_ticker()` |
-| `050_canonical_concepts.sql` | `canonical_concepts`, `concept_tag_map` |
+| `050_canonical_concepts.sql` | `canonical_concepts`, `concept_tag_map`, `concept_formula` |
 | `055_shares_outstanding.sql` | `shares_outstanding_at()` |
-| `060_canonical_function.sql` | `get_canonical()`, `get_canonical_by_ticker()` |
+| `060_canonical_function.sql` | `resolve_direct()`, `get_canonical()`, `get_canonical_by_ticker()` |
 | `065_asof_functions.sql` | the five `as_of_*` functions |
 | `070_fiscal_year_views.sql` | `latest_annual()`, `latest_annual_by_ticker()`, `company_snapshot()` |
-| `080_peer_stats.sql` | `peer_stats` |
+| `080_peer_stats.sql` | `peer_stats` (resolves derived concepts too) |
 
 Files run in lexical order within the directory, so the numeric prefix is
 load-bearing. `065_asof_functions.sql` sits after `050` because it resolves

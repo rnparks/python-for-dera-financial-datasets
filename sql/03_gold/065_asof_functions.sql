@@ -54,9 +54,14 @@ $$;
 -- ---------------------------------------------------------------
 -- One canonical concept for one company/period, as of a date.
 -- ---------------------------------------------------------------
-DROP FUNCTION IF EXISTS sec_gold.as_of_canonical(INTEGER, TEXT, DATE, INTEGER, DATE, INTEGER);
+-- Same two-stage split as get_canonical: a direct tag walk, then a
+-- formula fallback that calls the direct resolver on its operands. The
+-- availability predicate lives in the direct function only, so every
+-- operand of a derived concept is filtered by the same knowledge date
+-- and a formula can never mix vintages.
+DROP FUNCTION IF EXISTS sec_gold.as_of_resolve_direct(INTEGER, TEXT, DATE, INTEGER, DATE, INTEGER);
 
-CREATE FUNCTION sec_gold.as_of_canonical(
+CREATE FUNCTION sec_gold.as_of_resolve_direct(
     p_cik              INTEGER,
     p_concept          TEXT,
     p_value_date       DATE,
@@ -82,6 +87,47 @@ LANGUAGE sql STABLE AS $$
     ORDER BY m.sic_prefix <> '' DESC, m.priority ASC
     LIMIT 1;
 $$;
+
+COMMENT ON FUNCTION sec_gold.as_of_resolve_direct(INTEGER, TEXT, DATE, INTEGER, DATE, INTEGER) IS
+    'Tag-map walk against fact_asof, no formula fallback. Operand '
+    'resolver for derived concepts; callers want as_of_canonical.';
+
+DROP FUNCTION IF EXISTS sec_gold.as_of_canonical(INTEGER, TEXT, DATE, INTEGER, DATE, INTEGER);
+
+CREATE FUNCTION sec_gold.as_of_canonical(
+    p_cik              INTEGER,
+    p_concept          TEXT,
+    p_value_date       DATE,
+    p_qtrs             INTEGER,
+    p_asof             DATE,
+    p_buffer_sessions  INTEGER DEFAULT 0
+)
+RETURNS NUMERIC
+LANGUAGE sql STABLE AS $$
+    SELECT COALESCE(
+        sec_gold.as_of_resolve_direct(
+            p_cik, p_concept, p_value_date, p_qtrs, p_asof, p_buffer_sessions),
+        (
+            SELECT CASE
+                WHEN bool_or(fm.required AND v.val IS NULL) THEN NULL
+                WHEN count(v.val) = 0                       THEN NULL
+                ELSE sum(fm.coefficient * COALESCE(v.val, 0))
+            END
+            FROM sec_gold.concept_formula fm
+            CROSS JOIN LATERAL (
+                SELECT sec_gold.as_of_resolve_direct(
+                    p_cik, fm.operand, p_value_date, p_qtrs,
+                    p_asof, p_buffer_sessions) AS val
+            ) v
+            WHERE fm.concept = p_concept
+        )
+    );
+$$;
+
+COMMENT ON FUNCTION sec_gold.as_of_canonical(INTEGER, TEXT, DATE, INTEGER, DATE, INTEGER) IS
+    'Concept value knowable on p_asof: direct tags first, then '
+    'concept_formula. Every operand is filtered by the same knowledge '
+    'date, so a derived value never mixes vintages.';
 
 -- ---------------------------------------------------------------
 -- Most recent annual observation as of a date, fiscal-year aware.
@@ -177,7 +223,6 @@ LANGUAGE sql STABLE AS $$
         sec_reference.cik_at(p_ticker, p_asof),
         c.concept, p_asof, p_buffer_sessions
     ) la ON TRUE
-    WHERE c.fact_type <> 'derived'
     ORDER BY c.concept;
 $$;
 

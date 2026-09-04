@@ -32,3 +32,6 @@ examples/data/
 
 # Downloaded archives
 *.zip
+
+# Build logs
+*.log
