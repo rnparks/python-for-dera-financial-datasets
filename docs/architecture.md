@@ -133,10 +133,14 @@ The crosswalk beneath all of this is built from monthly archive captures of
 SEC's ticker file, and a capture is treated as evidence of presence, never as
 proof of absence on its own: undersized captures are flagged in
 `sec_reference.ticker_capture`, and a silence between two sightings of a pair is
-bridged when it is short or made only of such captures. `data_sources.md`
-records the measured cases. Because the spine is what every gold matview joins
-to, a crosswalk change is applied with `dera rebuild-reference`, which runs
-spine, security model and gold in the only order that works.
+bridged when it is short or made only of such captures. Observed intervals
+start in 2018-12; a company that has only ever had one primary ticker is
+extended back to its first filing (`source = 'extended'`), and every as-of flag
+downstream is true for observed intervals only, so an inferred label never
+passes as a date-correct one. `data_sources.md` records the measured cases.
+Because the spine is what every gold matview joins to, a crosswalk change is
+applied with `dera rebuild-reference`, which runs spine, security model and gold
+in the only order that works.
 
 ## Gold: two sibling matviews
 

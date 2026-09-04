@@ -153,7 +153,7 @@ FROM (
 \echo ''
 \echo '=== 11. Ticker coverage (regression guard) ==='
 -- Resolving the ticker as of each fact's own availability date left
--- 47.6% of rows NULL, because the crosswalk only covers 2019-02 onward.
+-- 47.6% of rows NULL, because observed crosswalk intervals start 2018-12.
 -- The fallback should bring that to near zero, and ticker_is_asof says
 -- how many carry a date-correct label rather than today's symbol.
 SELECT CASE WHEN pct_null < 3 THEN 'PASS' ELSE 'FAIL' END AS status,
@@ -500,6 +500,7 @@ FROM (
               FROM sec_reference.company_ticker a
               JOIN sec_reference.company_ticker b
                 ON a.cik = b.cik AND a.ticker = b.ticker AND a.valid_to IS NOT NULL
+               AND a.source = 'observed' AND b.source = 'observed'
               JOIN sec_reference.ticker_capture s1 ON s1.observed_on = a.valid_to
               JOIN sec_reference.ticker_capture s2 ON s2.sn = s1.sn + 1
                                                    AND s2.observed_on = b.valid_from) AS single_gaps
@@ -526,7 +527,8 @@ FROM (
 SELECT CASE WHEN listed >= candidates AND candidates > 15000 THEN 'PASS' ELSE 'FAIL' END AS status,
        candidates AS in_lifetime_intervals, listed AS listing_rows_from_crosswalk
 FROM (
-    SELECT (SELECT COUNT(*) FROM sec_reference.listing WHERE source = 'company_ticker') AS listed,
+    SELECT (SELECT COUNT(*) FROM sec_reference.listing
+             WHERE source IN ('company_ticker', 'company_ticker_extended')) AS listed,
            (SELECT COUNT(*)
               FROM sec_reference.security s
               JOIN sec_reference.company_ticker ct ON ct.cik = s.cik
@@ -645,7 +647,10 @@ FROM (
 \echo '=== 39. The as-of discipline raises instead of returning nothing ==='
 -- financials(''asof'') with no date returned 0 rows; shift_sessions before
 -- the calendar returned NULL; a ticker before the crosswalk floor gave
--- as_of_snapshot fifteen empty rows. All three must raise now.
+-- as_of_snapshot fifteen empty rows. All three must raise now. Apple's
+-- 2015 label resolves since the back-extension, so the ticker probe is
+-- Meta in 2015: it was FB then, the file only ever shows the change's
+-- result, and no interval covers the date.
 CREATE OR REPLACE FUNCTION pg_temp.raises(p_sql TEXT) RETURNS BOOLEAN
 LANGUAGE plpgsql AS $fn$
 BEGIN
@@ -656,11 +661,11 @@ EXCEPTION WHEN OTHERS THEN
 END
 $fn$;
 SELECT CASE WHEN a AND b AND c THEN 'PASS' ELSE 'FAIL' END AS status,
-       a AS financials_asof_without_date, b AS shift_before_calendar, c AS ticker_before_crosswalk_floor
+       a AS financials_asof_without_date, b AS shift_before_calendar, c AS changed_ticker_before_crosswalk
 FROM (
     SELECT pg_temp.raises($q$SELECT * FROM sec_silver.financials('asof') LIMIT 1$q$)            AS a,
            pg_temp.raises($q$SELECT sec_gold.shift_sessions(DATE '2008-06-30', 1)$q$)            AS b,
-           pg_temp.raises($q$SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2015-06-30')$q$) AS c
+           pg_temp.raises($q$SELECT * FROM sec_gold.as_of_snapshot('FB', DATE '2015-06-30')$q$) AS c
 ) t;
 
 \echo '=== 40. The CIK-keyed snapshot works before the crosswalk floor ==='
@@ -785,4 +790,55 @@ FROM (
            COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM sec_gold.share_class_shares s WHERE s.cik = m.cik)) AS in_denominator,
            COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM sec_gold.share_class_shares s WHERE s.cik = m.cik AND s.method = 'mapped_class')) AS via_mapping
     FROM sec_reference.index_members('SP500', CURRENT_DATE) m
+) t;
+
+\echo '=== 49. Back-extended tickers: single-ticker histories only, never overlapping an observation ==='
+-- An extended interval is an inference (05_spine/010, section 3b). It
+-- must belong to a CIK with exactly one primary ticker ever, end exactly
+-- where that ticker's first sighting begins, and never overlap an
+-- observed interval of the same ticker under any CIK -- the stale-file
+-- cases (Alcoa Inc against AA) are skipped, not guessed.
+SELECT CASE WHEN extended > 6000 AND multi_primary = 0 AND detached = 0 AND overlapping = 0 AND not_primary = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       extended AS extended_intervals, multi_primary AS ciks_with_two_primaries,
+       detached AS not_abutting_first_sighting, overlapping AS overlapping_an_observation, not_primary
+FROM (
+    SELECT COUNT(*) AS extended,
+           COUNT(*) FILTER (WHERE NOT e.is_primary) AS not_primary,
+           COUNT(*) FILTER (WHERE (SELECT COUNT(DISTINCT p.ticker) FROM sec_reference.company_ticker p
+                                    WHERE p.cik = e.cik AND p.is_primary) <> 1) AS multi_primary,
+           COUNT(*) FILTER (WHERE e.valid_to <> (SELECT MIN(o.valid_from) FROM sec_reference.company_ticker o
+                                                  WHERE o.cik = e.cik AND o.ticker = e.ticker
+                                                    AND o.source = 'observed')) AS detached,
+           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM sec_reference.company_ticker o
+                                           WHERE o.ticker = e.ticker AND o.source = 'observed'
+                                             AND o.valid_from < e.valid_to
+                                             AND COALESCE(o.valid_to, DATE '9999-12-31') > e.valid_from)) AS overlapping
+    FROM sec_reference.company_ticker e
+    WHERE e.source = 'extended'
+) t;
+
+\echo '=== 50. Pre-2019 labels: Apple resolves in 2015 and no extended label passes as observed ==='
+-- Before the back-extension cik_at('AAPL', 2015) was NULL and 2,420 of
+-- the 7,298 members of the 2015 universe had no ticker at all. Extended
+-- labels fill most of that, but they are inferences and must never
+-- carry ticker_is_asof = TRUE.
+SELECT CASE WHEN aapl = 320193 AND msft = 789019 AND unlabelled < 1600 AND extended_flagged_asof = 0 AND extended_labels > 3500
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       aapl AS cik_at_aapl_2015, unlabelled AS members_2015_without_ticker,
+       extended_labels AS members_2015_labelled_by_extension, extended_flagged_asof
+FROM (
+    SELECT sec_reference.cik_at('AAPL', DATE '2015-06-30') AS aapl,
+           sec_reference.cik_at('MSFT', DATE '2015-06-30') AS msft,
+           COUNT(*) FILTER (WHERE u.ticker IS NULL) AS unlabelled,
+           COUNT(*) FILTER (WHERE l.source = 'company_ticker_extended') AS extended_labels,
+           COUNT(*) FILTER (WHERE l.source = 'company_ticker_extended' AND u.ticker_is_asof) AS extended_flagged_asof
+    FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30') u
+    LEFT JOIN LATERAL (
+        SELECT l.source FROM sec_reference.listing l
+        WHERE l.security_id = u.security_id
+          AND l.valid_from <= DATE '2015-06-30'
+          AND (l.valid_to IS NULL OR l.valid_to > DATE '2015-06-30')
+        ORDER BY l.valid_from DESC LIMIT 1
+    ) l ON TRUE
 ) t;

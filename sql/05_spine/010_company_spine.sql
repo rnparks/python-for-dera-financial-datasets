@@ -8,8 +8,10 @@
 -- unrelated companies and are therefore unsafe to join on across time.
 --
 -- `sec_reference.company_ticker` turns the discrete dated sightings in
--- `ticker_observation` into validity intervals. Ticker is a
--- human-readable label hanging off the spine, never an identifier.
+-- `ticker_observation` into validity intervals (source = 'observed'),
+-- then carries one safe shape of history back to the company's first
+-- filing (source = 'extended', section 3b). Ticker is a human-readable
+-- label hanging off the spine, never an identifier.
 --
 -- Ordering: this runs as its own stage AFTER `04_reference` and after
 -- reference.load_all_reference() has populated universe_sp1500 and
@@ -232,7 +234,8 @@ SELECT
                      WHERE u.ticker = g.ticker) DESC,
             (COALESCE(g.valid_to, CURRENT_DATE) - g.valid_from) DESC,
             g.ticker ASC
-    ) = 1) AS is_primary
+    ) = 1) AS is_primary,
+    'observed'::TEXT AS source
 FROM grouped g;
 
 ALTER TABLE sec_reference.company_ticker
@@ -244,11 +247,91 @@ CREATE INDEX idx_compticker_range  ON sec_reference.company_ticker (valid_from, 
 CREATE INDEX idx_compticker_primary ON sec_reference.company_ticker (cik, valid_from)
     WHERE is_primary;
 
+-- ---------------------------------------------------------------
+-- 3b. Back-extension before the archive floor.
+-- ---------------------------------------------------------------
+-- The archive's first capture is 2018-12-26 and its first FULL-SIZE
+-- capture is 2019-10-02 (the first holding 85% of the all-time maximum;
+-- the earlier ones are the file being partially indexed, not the world
+-- being smaller). Every pair alive on that floor is left-censored: the
+-- company held the ticker before anything could see it, and every fact
+-- from 2009 to 2019 -- half the panel -- carried a fallback label.
+--
+-- One shape of history is safe enough to publish, flagged:
+--
+--   * the CIK has exactly ONE distinct primary ticker across its whole
+--     observed history. Preferred lines, notes and warrants are
+--     non-primary and do not disqualify it (JPMorgan has seventeen
+--     tickers and one primary; Prudential's PFK and PJH are notes, not
+--     former names). A ticker CHANGE does disqualify it, because the
+--     change cannot be dated from this evidence: Meta is FB then META
+--     and gets nothing before 2018-12;
+--   * that ticker was seen on or before the floor, so its start is the
+--     archive's start, not the company's;
+--   * the company filed with EDGAR before the first sighting. The
+--     extension runs from `company.first_filed` -- a floor on existence,
+--     not a trading date; the listing derivation clips it to
+--     first_trade_date as it does every interval;
+--   * no other CIK was observed holding the same ticker earlier in the
+--     window. 86 candidates fail this, every one a stale-file artefact
+--     (Alcoa Inc still listed against AA in the December 2018 file while
+--     Alcoa Corp had held it since 2016): the extension would have to
+--     start at the other holder's last sighting, which is the floor
+--     itself, so nothing is written and the pre-2019 label stays a
+--     flagged fallback.
+--
+-- Measured 2026-09-04: 6,405 CIKs qualify, 2,108 of them already
+-- delisted when first seen (the file was stale, which is exactly what
+-- makes the inference possible). cik_at('AAPL', DATE '2015-06-30')
+-- resolves because of this block. Every as-of flag downstream
+-- (ticker_is_asof, price_ticker_is_asof, universe_at) stays TRUE only
+-- for observed intervals; an extended label is an inference and says so.
+INSERT INTO sec_reference.company_ticker (cik, ticker, valid_from, valid_to, is_primary, source)
+WITH floor AS (
+    SELECT MIN(observed_on) AS floor_date
+    FROM sec_reference.ticker_capture
+    WHERE n_rows >= 0.85 * (SELECT MAX(n_rows) FROM sec_reference.ticker_capture)
+),
+primaries AS (
+    SELECT ct.cik,
+           COUNT(DISTINCT ct.ticker) AS n_primary,
+           MIN(ct.ticker)            AS ticker,
+           MIN(ct.valid_from)        AS first_seen
+    FROM sec_reference.company_ticker ct
+    WHERE ct.is_primary
+    GROUP BY ct.cik
+),
+candidates AS (
+    SELECT p.cik, p.ticker, p.first_seen,
+           GREATEST(co.first_filed,
+                    (SELECT COALESCE(MAX(COALESCE(o.valid_to, DATE '9999-12-31')), co.first_filed)
+                       FROM sec_reference.company_ticker o
+                      WHERE o.ticker = p.ticker
+                        AND o.cik <> p.cik
+                        AND o.valid_from < p.first_seen)) AS valid_from
+    FROM primaries p
+    CROSS JOIN floor f
+    JOIN sec_reference.company co ON co.cik = p.cik
+    WHERE p.n_primary = 1
+      AND p.first_seen <= f.floor_date
+      AND co.first_filed < p.first_seen
+)
+SELECT c.cik, c.ticker, c.valid_from, c.first_seen, TRUE, 'extended'
+FROM candidates c
+WHERE c.valid_from < c.first_seen;
+
 COMMENT ON TABLE sec_reference.company_ticker IS
     'Dated CIK/ticker intervals. Ticker as of date D: '
     'valid_from <= D AND (valid_to IS NULL OR valid_to > D). '
-    'Coverage begins 2019-02 - the archive has nothing earlier, so '
-    'companies delisted before then have no ticker here.';
+    'Observed intervals begin 2018-12 (the archive has nothing earlier); '
+    'source = ''extended'' rows carry a single-ticker history back to '
+    'the company''s first filing and are inferred, not observed.';
+COMMENT ON COLUMN sec_reference.company_ticker.source IS
+    '''observed'': derived from dated sightings of company_tickers.json. '
+    '''extended'': inferred backwards from the first sighting to the '
+    'company''s first filing, only where the CIK has ever had one primary '
+    'ticker and no other CIK was seen holding it earlier. Every as-of '
+    'flag downstream is TRUE for observed rows only.';
 COMMENT ON COLUMN sec_reference.company_ticker.valid_to IS
     'First capture in which the pair was absent, i.e. the earliest date '
     'it was observed gone. NULL means present in the latest capture. A '
@@ -316,15 +399,18 @@ $$;
 
 COMMENT ON FUNCTION sec_reference.cik_at(TEXT, DATE) IS
     'Which company held this ticker on this date, or NULL if the '
-    'crosswalk has no interval covering it (coverage starts 2019-02). '
+    'crosswalk has no interval covering it (observed from 2018-12, '
+    'extended to the first filing for single-ticker histories). '
     'Tickers are recycled between unrelated companies, so resolving '
     'without a date is unsafe for any historical query.';
 
 -- The strict variant, for callers that would otherwise pass a NULL CIK
 -- straight through and return a full set of empty rows. The README once
 -- showed as_of_snapshot('AAPL', DATE '2015-06-30') as the headline
--- example; it returned fifteen rows and no values, because 2015 is
+-- example; it returned fifteen rows and no values, because 2015 was
 -- before the crosswalk floor and nothing said so. An error says so.
+-- (That example resolves today through the back-extension in 3b; the
+-- guard still matters for every ticker the extension cannot reach.)
 CREATE OR REPLACE FUNCTION sec_reference.cik_at_strict(p_ticker TEXT, p_asof DATE)
 RETURNS INTEGER
 LANGUAGE plpgsql STABLE AS $$
@@ -333,9 +419,10 @@ DECLARE
 BEGIN
     v_cik := sec_reference.cik_at(p_ticker, p_asof);
     IF v_cik IS NULL THEN
-        RAISE EXCEPTION 'No company held ticker % on %. The crosswalk '
-            'covers 2019-02 onward; for earlier dates resolve the CIK '
-            'yourself and call the CIK-keyed function.',
+        RAISE EXCEPTION 'No company held ticker % on %. The crosswalk is '
+            'observed from 2018-12 and extended earlier only for '
+            'single-ticker histories; resolve the CIK yourself and call '
+            'the CIK-keyed function.',
             p_ticker, p_asof
             USING ERRCODE = 'no_data_found';
     END IF;

@@ -79,7 +79,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 48 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 50 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -90,7 +90,7 @@ uv run dera download --from 2009q1 --to 2026q2   # ~29 GB on disk; default --to 
 uv run dera init-db                               # bronze DDL
 uv run dera load                                  # COPY → bronze (incremental; refuses a quarter twice)
 uv run dera build-silver                          # ~39 min
-uv run dera build-gold                            # ~16 min
+uv run dera build-gold                            # ~32 min (was 16 before the per-fact membership lookup)
 ```
 
 The security lifecycle model is a separate, additive path:
@@ -124,10 +124,14 @@ SELECT * FROM sec_gold.latest_annual_by_ticker('NKE', 'revenue');
 -- deliberately — omitting it is an error rather than a silent look-ahead.
 SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2022-06-30');
 
--- The ticker crosswalk starts in 2019; before that, key on the CIK.
--- (The ticker form raises for a date it cannot resolve, rather than
--- returning fifteen empty rows.)
-SELECT * FROM sec_gold.as_of_snapshot(320193, DATE '2015-06-30');
+-- Ticker resolution is dated. Observed crosswalk intervals start in
+-- 2018-12; a company that has only ever had one ticker is extended back
+-- to its first filing, flagged as inferred, so this resolves ...
+SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2015-06-30');
+
+-- ... while a ticker that changed (Meta was FB in 2015) raises rather
+-- than returning fifteen empty rows. Key on the CIK there.
+SELECT * FROM sec_gold.as_of_snapshot(1326801, DATE '2015-06-30');
 
 -- Who was actually investable then, delisted companies included
 SELECT * FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30');
@@ -136,7 +140,7 @@ SELECT * FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30');
 SELECT * FROM sec_reference.index_members('SP500', DATE '2015-06-30');
 ```
 
-The filers query returns 7,293 members, of which **3,012 (41%) have since
+The filers query returns 7,298 members, of which **3,012 (41%) have since
 delisted or deregistered**. A universe built from today's index membership
 returns none of them. The S&P 500 query comes from Wikipedia's page history
 replayed monthly since 2008: SVB Financial is a member from 2018-03-19 to

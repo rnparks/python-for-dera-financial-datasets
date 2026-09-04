@@ -100,7 +100,7 @@ construction: it holds every CIK that ever filed, not the ones that survived.
 | `company_name` | 31,090 | Historical names with validity intervals |
 | `ticker_observation` | 861,755 | Raw dated crosswalk observations: 81 captures, monthly from 2018-12 |
 | `ticker_capture` | 81 | One row per capture with its size and whether it is partial |
-| `company_ticker` | 35,520 | Dated CIK ↔ ticker intervals with `is_primary`; 20,326 CIKs, 12,321 of them absent from SEC's live file |
+| `company_ticker` | 41,925 | Dated CIK ↔ ticker intervals with `is_primary` and `source`: 35,520 observed intervals over 20,326 CIKs (12,321 absent from SEC's live file) plus 6,405 back-extended single-ticker histories reaching the first filing |
 | `index_observation` | 107,555 | Raw S&P 500 constituent sightings: 214 monthly Wikipedia captures, 2008-09 to 2026-08, GICS as the page gave it |
 | `index_capture` | 214 | One row per capture with its size and partial flag (none partial) |
 | `index_observation_resolved` | 107,555 | The same sightings with a CIK from the page (74,743), by continuity (28,851) or by name (3,373); 588 unresolved |
@@ -108,7 +108,7 @@ construction: it holds every CIK that ever filed, not the ones that survived.
 | **`index_membership`** | **2,708** | **Dated membership with GICS as of the interval**: 1,738 replayed S&P 500 intervals over 840 companies (`wikipedia_history`), 970 S&P 400/600 snapshot intervals (`current_snapshot`) |
 | `index_membership_latest` | 1,711 | One row per company: its current or most recent membership, the label gold falls back to |
 | **`security`** | **17,030** | **A tradable instrument, distinct from its issuer.** Listed classes only |
-| `listing` | 21,935 | Security ↔ ticker over time |
+| `listing` | 28,287 | Security ↔ ticker over time; `source` says observed crosswalk (21,844), extended crosswalk (6,352) or share-class map (91) |
 | `eligibility` | 18,559 | Universe membership intervals (`filers_10k_15m` 17,695, `sp500` 864), with reasons in and out |
 | `delisting_event` | 7,119 | Outcomes: 4,498 exchange notices (Form 25), 2,621 deregistrations (Form 15) |
 | `corporate_action` | 0 | Declared, unpopulated |
@@ -150,10 +150,11 @@ Two invariants are enforced by CHECK constraint, not convention: no eligibility
 interval may begin before `first_trade_date` (blocks future-existence bias) or
 outlive `delisting_date` (blocks survivorship bias).
 
-`sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30')` returns 7,293
-members, 3,012 of them (41%) since delisted or deregistered. 2,420 have no
-ticker label at all: they left before the crosswalk's 2019 floor and SEC's file
-never carried them afterwards.
+`sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30')` returns 7,298
+members, 3,012 of them (41%) since delisted or deregistered. 4,058 carry a
+back-extended ticker flagged `ticker_is_asof = false`, and 1,476 have no ticker
+label at all: they left before the first capture in 2018-12 and SEC's file never
+carried them, or their ticker changed before then.
 
 A second universe, `sp500`, is derived from `index_membership` for every listed
 security of a member company, clipped to the security's lifecycle like the
@@ -209,11 +210,11 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 48 checks; exits non-zero on any FAIL
+uv run dera verify     # 50 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 
 Covers restatement preservation, availability correctness, crosswalk capture
 quality, share-class summing, derived-concept resolution, and the survivorship /
-future-existence tests on the universe. Checks 29–48 each name the defect found
-in the 2026-09-04 review that they guard against.
+future-existence tests on the universe. Checks 29–50 each name the defect found
+in the 2026-09-04 review, or the gap closed since, that they guard against.

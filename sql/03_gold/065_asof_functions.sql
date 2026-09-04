@@ -16,12 +16,15 @@
 -- fast the edge decays; one that dies at a single extra session was
 -- never an edge.
 --
--- TICKER WRAPPERS RAISE ON AN UNRESOLVABLE TICKER. The crosswalk starts
--- 2019-02, so sec_reference.cik_at('AAPL', DATE '2015-06-30') is NULL.
--- The wrappers used to pass that NULL straight through, and the README's
+-- TICKER WRAPPERS RAISE ON AN UNRESOLVABLE TICKER. Observed crosswalk
+-- intervals start 2018-12; before the back-extension in 05_spine/010,
+-- sec_reference.cik_at('AAPL', DATE '2015-06-30') was NULL. The
+-- wrappers used to pass that NULL straight through, and the README's
 -- own headline example returned fifteen rows with no values and no
 -- message. They now resolve through cik_at_strict(), which raises, and
--- CIK-keyed overloads exist for dates the crosswalk cannot reach.
+-- CIK-keyed overloads exist for dates the crosswalk still cannot reach
+-- (a ticker that changed before 2019, or a company the file never
+-- carried).
 
 -- ---------------------------------------------------------------
 -- Every fact for one company as it stood on a given date.
@@ -293,7 +296,7 @@ $$;
 COMMENT ON FUNCTION sec_gold.as_of_snapshot(INTEGER, DATE, INTEGER) IS
     'Every canonical concept for a company (by CIK) as it was knowable '
     'on p_asof. The knowledge date is required, by design. Works at any '
-    'date, including before the 2019-02 crosswalk floor.';
+    'date, including where no crosswalk interval exists.';
 
 DROP FUNCTION IF EXISTS sec_gold.as_of_snapshot(TEXT, DATE, INTEGER);
 
@@ -322,5 +325,5 @@ $$;
 COMMENT ON FUNCTION sec_gold.as_of_snapshot(TEXT, DATE, INTEGER) IS
     'Every canonical concept for a ticker as it was knowable on p_asof. '
     'The ticker is resolved as of the same date and the call raises if '
-    'the crosswalk (2019-02 onward) cannot resolve it; use the CIK '
-    'overload for earlier dates.';
+    'the crosswalk cannot resolve it (observed from 2018-12, extended '
+    'earlier for single-ticker histories); use the CIK overload then.';

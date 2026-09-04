@@ -24,8 +24,10 @@
 -- sec_reference.company_ticker, provably single-valued (no CIK has two
 -- overlapping primary intervals), resolved as of each fact's own
 -- availability date and coalesced to the company's best-known symbol
--- where the crosswalk (2019 onward) has nothing; `ticker_is_asof` says
--- which you got.
+-- where the crosswalk has nothing. `ticker_is_asof` is TRUE only for an
+-- OBSERVED interval (2018-12 onward); a label from a back-extended
+-- interval (05_spine/010, section 3b) is an inference and flags FALSE
+-- like the fallback does.
 --
 -- INDEX MEMBERSHIP IS DATED. The population is every company that has
 -- ever had an interval in sec_reference.index_membership -- the
@@ -50,7 +52,7 @@ DROP MATERIALIZED VIEW IF EXISTS sec_gold.tradable_financials_pit    CASCADE;
 CREATE MATERIALIZED VIEW sec_gold.tradable_financials AS
 SELECT
     COALESCE(ct.ticker, cl.ticker_latest)  AS ticker,
-    (ct.ticker IS NOT NULL)                AS ticker_is_asof,
+    COALESCE(ct.source = 'observed', FALSE) AS ticker_is_asof,
     co.name_latest                         AS company_name,
     COALESCE(asof.index_name, latest.index_name)               AS index_name,
     (asof.index_name IS NOT NULL)                              AS index_is_asof,
@@ -103,7 +105,7 @@ CREATE INDEX idx_tradable_sector ON sec_gold.tradable_financials (gics_sector);
 CREATE MATERIALIZED VIEW sec_gold.tradable_financials_pit AS
 SELECT
     COALESCE(ct.ticker, cl.ticker_latest)  AS ticker,
-    (ct.ticker IS NOT NULL)                AS ticker_is_asof,
+    COALESCE(ct.source = 'observed', FALSE) AS ticker_is_asof,
     co.name_latest                         AS company_name,
     COALESCE(asof.index_name, latest.index_name)               AS index_name,
     (asof.index_name IS NOT NULL)                              AS index_is_asof,
@@ -155,10 +157,10 @@ COMMENT ON MATERIALIZED VIEW sec_gold.tradable_financials_pit IS
     'own: it has no knowledge date, so a backtest looping over dates will '
     'read facts filed after the date it simulates. Use fact_asof.';
 COMMENT ON COLUMN sec_gold.tradable_financials.ticker_is_asof IS
-    'TRUE when the ticker was resolved as of this fact''s own '
-    'availability date. FALSE means the crosswalk had no interval '
-    'covering it (it predates 2019) and this is the company''s '
-    'best-known symbol instead.';
+    'TRUE when the ticker comes from an OBSERVED crosswalk interval '
+    'covering this fact''s own availability date (2018-12 onward). '
+    'FALSE means the label is inferred: a back-extended single-ticker '
+    'history, or the company''s best-known symbol where there is none.';
 COMMENT ON COLUMN sec_gold.tradable_financials.index_name IS
     'Index the company belonged to as of tradable_from (SP500 from '
     'replayed history; SP400/SP600 from today''s snapshot at every date). '

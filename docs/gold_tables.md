@@ -110,7 +110,7 @@ One row per **(company, XBRL tag, value date, period length, unit)** for every c
 | Column | Type | Description |
 |---|---|---|
 | `ticker` | text | Exchange ticker (class shares use hyphens: `BRK-B`) |
-| `ticker_is_asof` | boolean | `false` where the crosswalk (2019 onward) has no interval covering `tradable_from`; the ticker is then the company's best-known symbol |
+| `ticker_is_asof` | boolean | `true` only when an **observed** crosswalk interval (2018-12 onward) covers `tradable_from`. `false` means the label is inferred: the back-extended interval of a single-ticker history, or the company's best-known symbol where there is none |
 | `company_name` | text | Company name as of the fact, via `sec_reference.company_label` |
 | `index_name` | text | Index the company belonged to **as of `tradable_from`**: `SP500` from replayed history; `SP400`/`SP600` from today's snapshot at every date until their histories are replayed |
 | `index_is_asof` | boolean | `true` when a membership interval covers `tradable_from`. `false` means the company was not a constituent then and `index_name` / GICS are labels from its latest membership |
@@ -221,7 +221,7 @@ Two earlier rules were wrong in opposite directions: "exactly one ticker current
 |---|---|
 | `class_label` | The `ClassOfStock` member, or `(single class)` |
 | `price_ticker` | The ticker whose price applies: the class's own, the listed class an unlisted one converts into, or — for inferred rows — the ticker held on `tradable_from` |
-| `price_ticker_is_asof` | `TRUE` for mapped rows and for inferred rows whose ticker the crosswalk covers on `tradable_from`; `FALSE` (348,705 rows, all before the 2019 floor) means `price_ticker` is the company's best-known symbol |
+| `price_ticker_is_asof` | `TRUE` for mapped rows and for inferred rows whose ticker an **observed** crosswalk interval covers on `tradable_from`; `FALSE` (348,705 rows, all before 2018-12) means `price_ticker` is inferred: a back-extended single-ticker history or the company's best-known symbol |
 | `is_unlisted_class`, `conversion_ratio` | An unlisted class priced through a listed one, and at what ratio |
 | `shares`, `value_date`, `source_tag`, `rung` | The count, its period, the tag it came from, and the tag's preference rank (1 best) |
 | `known_at`, `tradable_from`, `superseded_tradable`, `vintage_seq` | The usual availability interval, inherited from `num_silver` per class |
@@ -418,11 +418,12 @@ sec_gold.as_of_snapshot(p_ticker TEXT,    p_asof DATE, p_buffer_sessions INTEGER
                  value_date DATE, tradable_from DATE, value NUMERIC, tag TEXT)
 ```
 
-Every canonical concept as it was knowable on `p_asof`. The ticker form resolves the CIK **as of the same date** through `sec_reference.cik_at_strict()` and **raises** if the crosswalk (2019 onward) cannot resolve it; the CIK form works at any date. The knowledge date has no default.
+Every canonical concept as it was knowable on `p_asof`. The ticker form resolves the CIK **as of the same date** through `sec_reference.cik_at_strict()` and **raises** if the crosswalk cannot resolve it (observed from 2018-12, extended back to the first filing for single-ticker histories); the CIK form works at any date. The knowledge date has no default.
 
 ```sql
 SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2022-06-30');
-SELECT * FROM sec_gold.as_of_snapshot(320193, DATE '2015-06-30');   -- before the crosswalk floor
+SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2015-06-30');   -- resolves: Apple has only ever been AAPL
+SELECT * FROM sec_gold.as_of_snapshot(1326801, DATE '2015-06-30'); -- Meta was FB then; the ticker form raises, the CIK form works
 ```
 
 ### `shares_outstanding_at()`
@@ -479,7 +480,7 @@ RETURNS TABLE (value_date DATE, filed_date DATE, metric TEXT, value_billions NUM
 ## Rebuilding and refreshing
 
 ```bash
-uv run dera build-gold                 # full DDL rebuild (drops + recreates sec_gold), ~16 min
+uv run dera build-gold                 # full DDL rebuild (drops + recreates sec_gold), ~32 min
 uv run dera build-gold --refresh-only  # REFRESH all five matviews, in order
 uv run dera rebuild-reference          # after a crosswalk change: spine, security model, then gold
 ```

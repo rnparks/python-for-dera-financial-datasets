@@ -180,10 +180,11 @@ inferred AS (
         '(single class)'::TEXT                 AS class_label,
         -- The ticker held on the fact's availability date, else the
         -- best-known symbol as a label. Same trade as tradable_financials:
-        -- the crosswalk floor is 2019-02, so facts older than that get
-        -- the fallback, and the flag says which you got.
+        -- observed intervals start 2018-12, older facts get either the
+        -- back-extended interval or the fallback, and the flag is TRUE
+        -- only for an observed one.
         COALESCE(ct.ticker, cl.ticker_latest)  AS price_ticker,
-        (ct.ticker IS NOT NULL)                AS price_ticker_is_asof,
+        COALESCE(ct.source = 'observed', FALSE) AS price_ticker_is_asof,
         FALSE                                  AS is_unlisted_class,
         1::NUMERIC                             AS conversion_ratio,
         f.value                                AS shares,
@@ -233,8 +234,9 @@ COMMENT ON COLUMN sec_gold.share_class_shares.price_ticker IS
 COMMENT ON COLUMN sec_gold.share_class_shares.price_ticker_is_asof IS
     'TRUE when price_ticker was resolved as of this row''s own '
     'tradable_from (always TRUE for mapped classes, whose mapping is '
-    'dated). FALSE means the crosswalk predates 2019-02 for this fact '
-    'and price_ticker is the company''s best-known symbol.';
+    'dated). FALSE means no observed interval (2018-12 onward) covers '
+    'this fact and price_ticker is inferred: a back-extended '
+    'single-ticker history or the company''s best-known symbol.';
 COMMENT ON COLUMN sec_gold.share_class_shares.conversion_ratio IS
     'Shares of price_ticker per share of this class. Cited in the '
     'mapping source, never assumed.';

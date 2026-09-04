@@ -12,7 +12,7 @@ it.
 SEC does not publish history, and the submissions API returns an empty
 `tickers` array for delisted companies (verified against MOD PAC CORP
 and ASSURED PHARMACY). The Internet Archive, however, has been
-snapshotting `company_tickers.json` since February 2019. Replaying those
+snapshotting `company_tickers.json` since December 2018. Replaying those
 snapshots recovers companies that have since vanished from the live
 file: the 2019-02 snapshot alone brings back 2,473 CIKs that filed with
 SEC and are absent today.
@@ -42,8 +42,10 @@ TWO RULES THAT WERE LEARNED THE HARD WAY.
    A missing observation is recoverable by re-running; a fabricated one
    is not, because nothing downstream can tell it from a real one.
 
-Coverage note: the archive starts in 2019, so companies that delisted
-between 2009 and 2019 are still unrecoverable from free sources. Closing
+Coverage note: the archive starts in December 2018. The spine extends a
+single-ticker history back to the company's first filing (flagged as
+inferred), but a company that delisted between 2009 and 2018 and never
+appeared in the file is still unrecoverable from free sources. Closing
 that window needs a vendor with delisted coverage. This tool narrows the
 gap rather than eliminating it.
 
@@ -69,7 +71,7 @@ SEC_LIVE_URL = "https://www.sec.gov/files/company_tickers.json"
 WAYBACK_AVAIL = "https://archive.org/wayback/available?url=sec.gov/files/company_tickers.json&timestamp={ts}"
 WAYBACK_FETCH = "https://web.archive.org/web/{ts}id_/https://www.sec.gov/files/company_tickers.json"
 
-# The archive's first capture is 2019-02. One probe a month: a ticker
+# The archive's first capture is 2018-12-26. One probe a month: a ticker
 # that disappears is then bounded to a few weeks, and a single partial
 # capture is bracketed by good ones on both sides, which is what the
 # bridging rule in the spine needs. 96 availability lookups in total.

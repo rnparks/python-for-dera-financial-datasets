@@ -220,7 +220,11 @@ SELECT * FROM (
            GREATEST(ct.valid_from, COALESCE(s.first_trade_date, ct.valid_from)) AS valid_from,
            LEAST(COALESCE(ct.valid_to, DATE '9999-12-31'),
                  COALESCE(s.delisting_date, DATE '9999-12-31'))                 AS valid_to,
-           'company_ticker'::text AS source
+           -- A back-extended interval is an inference (05_spine/010,
+           -- section 3b); its listing says so, and universe_at reports
+           -- ticker_is_asof = FALSE for it.
+           CASE ct.source WHEN 'extended' THEN 'company_ticker_extended'
+                          ELSE 'company_ticker' END AS source
     FROM sec_reference.security s
     JOIN sec_reference.company_ticker ct ON ct.cik = s.cik
     WHERE s.class_label = '(common)'

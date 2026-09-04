@@ -92,16 +92,18 @@ LANGUAGE sql STABLE AS $$
            -- The ticker AS OF the date where one is known, else the
            -- security's earliest known symbol as a labelling fallback.
            --
-           -- The crosswalk floor is 2019-02 (the archive's first capture
-           -- of company_tickers.json), so a strict as-of lookup returns
-           -- NULL for most of 2009-2019 and the universe loses its human
-           -- labels across half its range. tradable_financials hit this
-           -- exact trade and resolved it the same way: coalesce to the
-           -- best-known symbol and publish a flag saying which you got,
-           -- so a caller that needs a date-correct symbol can filter and
-           -- everyone else gets a readable label.
+           -- Observed crosswalk intervals start 2018-12 (the archive's
+           -- first capture of company_tickers.json), so a strict as-of
+           -- lookup returned NULL for most of 2009-2019 and the universe
+           -- lost its human labels across half its range. Two things
+           -- fill that: single-ticker histories are back-extended to the
+           -- company's first filing (listing source
+           -- 'company_ticker_extended'), and what remains coalesces to
+           -- the best-known symbol. The flag is TRUE only for an observed
+           -- interval, so a caller that needs a date-correct symbol can
+           -- filter and everyone else gets a readable label.
            COALESCE(asof.ticker, fallback.ticker),
-           asof.ticker IS NOT NULL,
+           COALESCE(asof.source <> 'company_ticker_extended', FALSE),
            (SELECT cn.name FROM sec_reference.company_name cn
              WHERE cn.cik = s.cik
                AND cn.valid_from <= p_asof
@@ -114,7 +116,7 @@ LANGUAGE sql STABLE AS $$
     -- valid_to is the first date the ticker was observed gone (or the
     -- delisting date), so it must not resolve ON that date.
     LEFT JOIN LATERAL (
-        SELECT l.ticker FROM sec_reference.listing l
+        SELECT l.ticker, l.source FROM sec_reference.listing l
         WHERE l.security_id = s.security_id
           AND l.valid_from <= p_asof
           AND (l.valid_to IS NULL OR l.valid_to > p_asof)

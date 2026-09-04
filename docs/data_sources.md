@@ -109,10 +109,24 @@ so today's file is missing 58.5% of 2013 filers and 36.1% of 2019 filers. Waybac
 replay recovers a great deal of it: **12,321 of the 20,326 CIKs** with a ticker
 interval are absent from the live file.
 
-**The floor is 2019 and it is load-bearing.** Companies that delisted between
-2009 and 2018 remain unrecoverable from free sources. This is why tickers before
-2019 are labelling fallbacks flagged with `ticker_is_asof = false` rather than
-date-correct symbols. Closing the gap needs a vendor with delisted coverage.
+**Observed coverage starts 2018-12 and is back-extended for one shape.** The
+first full-size capture is 2019-10-02, so every pair alive then is
+left-censored. Where a CIK has had exactly one primary ticker in its whole
+observed history (preferred lines and notes are non-primary and do not count; a
+ticker change does — Meta is FB then META and gets nothing), that ticker was
+seen on or before the floor, the company filed before the first sighting, and no
+other CIK was seen holding the ticker earlier in the window, the spine writes
+one `source = 'extended'` interval from `company.first_filed` to the first
+sighting. As of 2026-09-04 that is **6,405 CIKs** (2,108 of them already
+delisted when first seen; 86 candidates skipped because a stale file still
+showed the ticker against a predecessor, Alcoa Inc against AA). Extended rows
+are inferences: `ticker_is_asof`, `price_ticker_is_asof` and `universe_at`'s
+flag are true for observed intervals only, and their listings carry
+`source = 'company_ticker_extended'`. The 2015 universe went from 2,420
+unlabelled members to 1,476, and `cik_at('AAPL', DATE '2015-06-30')` resolves.
+Companies that delisted between 2009 and 2018 and never appeared in the file,
+and any ticker that changed before 2018-12, remain unrecoverable from free
+sources; closing that needs a vendor with delisted coverage.
 
 **A capture is evidence of presence, not proof of absence.** SEC's file is not a
 stable list and the archive's captures of it are not all complete. Three shapes
@@ -315,7 +329,7 @@ the specific archived captures a run resolved to, so the run is reproducible.
 uv run dera download --from 2026q2 --to 2026q2   # new DERA quarter
 uv run dera load --quarter 2026q2                # into bronze (refuses a quarter already loaded)
 uv run dera build-silver                         # ~39 min, single transaction
-uv run dera build-gold                           # ~16 min
+uv run dera build-gold                           # ~32 min
 uv run dera verify                               # correctness suite
 
 uv run dera fetch-filing-index                   # EDGAR archive, ~1.5 GB
