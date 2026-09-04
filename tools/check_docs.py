@@ -11,7 +11,8 @@ because nothing was checking.
 WHAT IT CHECKS, AND WHY ONLY THIS. Four classes, chosen because these are
 precisely what broke:
 
-    database objects   `sec_gold.peer_stats`   -> pg_class / pg_proc
+    database objects   sec_gold.peer_stats     -> pg_class / pg_proc / pg_attribute
+                       (backticked or not, in prose or inside a ```sql fence)
     file paths         `sql/06_security/...`   -> the filesystem
     CLI commands       `dera build-gold`       -> the argparse parser
     doc cross-links    [x](schema_overview.md) -> the filesystem
@@ -34,7 +35,6 @@ Run:  uv run dera verify-docs
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 from dera_pipeline import config, db
@@ -45,6 +45,15 @@ IGNORE_MARKER = "check-docs:ignore"
 # three-part column form `sec_gold.fact_asof.tradable_from`.
 RE_DBOBJ = re.compile(
     r"`(sec_(?:raw|silver|gold|reference)\.[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?)\(?\)?`")
+
+# Any schema-qualified name anywhere on the line, backticked or not: a
+# call with arguments such as `sec_gold.as_of_snapshot('AAPL', ...)`, a
+# FROM clause inside a ```sql fence, a name in prose. The backticked
+# pattern above only matched a bare name, which left every SQL example
+# in the docs unchecked -- including a README quickstart that returned
+# fifteen NULLs. Two-part names only; columns stay with RE_DBOBJ.
+RE_DBOBJ_ANY = re.compile(
+    r"(?<![\w.])(sec_(?:raw|silver|gold|reference)\.[a-z_][a-z0-9_]*)(?![\w])")
 
 # Backticked repo-relative paths.
 RE_PATH = re.compile(
@@ -78,9 +87,17 @@ def db_inventory(conn) -> set[str]:
             WHERE n.nspname LIKE 'sec\\_%'
         """)
         names.update(r[0] for r in cur.fetchall())
+        # pg_attribute, not information_schema.columns: the latter omits
+        # materialized views entirely, so every column of fact_asof,
+        # peer_stats and share_class_shares was invisible to this check.
         cur.execute("""
-            SELECT table_schema || '.' || table_name || '.' || column_name
-            FROM information_schema.columns WHERE table_schema LIKE 'sec\\_%'
+            SELECT n.nspname || '.' || c.relname || '.' || a.attname
+            FROM pg_attribute a
+            JOIN pg_class c ON c.oid = a.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname LIKE 'sec\\_%'
+              AND c.relkind IN ('r','m','v','p')
+              AND a.attnum > 0 AND NOT a.attisdropped
         """)
         names.update(r[0] for r in cur.fetchall())
     return names
@@ -92,8 +109,9 @@ def cli_inventory() -> dict[str, set[str]]:
     Introspected rather than hardcoded so this cannot drift from cli.py
     the way the docs drifted from the code.
     """
-    from dera_pipeline.cli import build_parser
     import argparse
+
+    from dera_pipeline.cli import build_parser
 
     out: dict[str, set[str]] = {}
     for action in build_parser()._actions:
@@ -119,7 +137,11 @@ def check(root: Path, conn) -> list[str]:
                 continue
             where = f"{rel}:{n}"
 
-            for name in RE_DBOBJ.findall(line):
+            seen_on_line: set[str] = set()
+            for name in RE_DBOBJ.findall(line) + RE_DBOBJ_ANY.findall(line):
+                if name in seen_on_line:
+                    continue
+                seen_on_line.add(name)
                 if name not in objects:
                     failures.append(f"{where}  database object does not exist: {name}")
 

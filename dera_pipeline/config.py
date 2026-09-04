@@ -9,6 +9,7 @@ writes to the wrong database.
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -54,7 +55,28 @@ REFERENCE_DIR = Path(os.getenv("DERA_REFERENCE_DIR", PROJECT_ROOT / "data" / "re
 SQL_DIR = PROJECT_ROOT / "sql"
 
 DEFAULT_START: tuple[int, int] = (2009, 1)
-DEFAULT_END: tuple[int, int] = (2026, 2)
+
+
+def last_completed_quarter(today: date | None = None) -> tuple[int, int]:
+    """The most recent calendar quarter that has fully elapsed.
+
+    SEC publishes a quarter's dataset a few days after the quarter ends,
+    so this is the newest quarter worth asking for. It replaces a
+    hardcoded ``(2026, 2)`` that had to be bumped by hand every three
+    months and was already a quarter stale once. A quarter that is not
+    published yet comes back as a 404, which the downloader reports once
+    and skips.
+    """
+    from datetime import date
+
+    d = today or date.today()
+    quarter = (d.month - 1) // 3 + 1
+    if quarter == 1:
+        return d.year - 1, 4
+    return d.year, quarter - 1
+
+
+DEFAULT_END: tuple[int, int] = last_completed_quarter()
 
 MAX_CONCURRENT_DOWNLOADS = 5
 MAX_RETRIES = 3

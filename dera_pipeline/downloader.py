@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import zipfile
+from collections.abc import Iterator
 from io import BytesIO
 from pathlib import Path
-from typing import Iterator
 
 import aiohttp
 
@@ -116,11 +116,16 @@ async def fetch_quarter(
                     return None
                 print(f"SUCCESS: {extract_to}")
                 return extract_to
-            except (
-                aiohttp.ClientPayloadError,
-                aiohttp.ClientError,
-                asyncio.TimeoutError,
-            ) as exc:
+            except aiohttp.ClientResponseError as exc:
+                # A 404 is SEC saying the quarter is not published yet
+                # (the datasets land a few days into the following
+                # quarter). Retrying it three times with back-off is
+                # noise; report once and move on.
+                if exc.status == 404:
+                    print(f"Not available (404): {url} — not published yet.")
+                    return None
+                print(f"HTTP error on {url}: {exc}")
+            except (TimeoutError, aiohttp.ClientPayloadError, aiohttp.ClientError) as exc:
                 print(f"Network error on {url}: {exc}")
             except Exception as exc:  # noqa: BLE001 — retry on anything transient
                 print(f"Unexpected error on {url}: {exc}")

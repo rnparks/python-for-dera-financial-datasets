@@ -102,13 +102,35 @@ def _copy_file(
         return cur.rowcount if cur.rowcount is not None else 0
 
 
-def load_quarter(conn: psycopg.Connection, quarter_dir: Path) -> dict[str, int]:
+class QuarterAlreadyLoaded(RuntimeError):
+    """Raised when a quarter in ``sec_raw.load_log`` would be loaded again."""
+
+
+def load_quarter(
+    conn: psycopg.Connection, quarter_dir: Path, *, force: bool = False
+) -> dict[str, int]:
     """Load one quarter directory into the bronze layer.
 
     Returns a ``{filename: row_count}`` map. Raises ``FileNotFoundError``
     if any of the four expected files is missing; raises ``ValueError``
     if any header has drifted from the expected schema.
+
+    Refuses a quarter that ``sec_raw.load_log`` already lists unless
+    *force* is set. Bronze has no quarter column, so a second COPY of the
+    same quarter cannot be told apart from the first and simply doubles
+    every row for it; the only way back is a full truncate and reload.
+    Nothing in the pipeline needs to load a quarter twice, so the guard
+    costs nothing and the footgun goes away.
     """
+    _ensure_load_log(conn)
+    if not force and quarter_dir.name in loaded_quarters(conn):
+        raise QuarterAlreadyLoaded(
+            f"{quarter_dir.name} is already in sec_raw.load_log. Loading it "
+            "again would duplicate every bronze row for that quarter, and "
+            "bronze has no quarter column to replace by. Use "
+            "`dera load --truncate --full` to reload everything, or "
+            "`--force` if you have removed the rows yourself."
+        )
     counts: dict[str, int] = {}
     for filename, expected in EXPECTED_COLUMNS.items():
         path = quarter_dir / filename
@@ -135,10 +157,21 @@ def load_all(
     own transaction so progress is visible from other sessions via
     ``sec_raw.load_log`` and a mid-run failure keeps everything loaded
     up to the last successful quarter.
+
+    ``incremental=False`` re-loads every quarter and therefore requires
+    the bronze tables to have been truncated first; the CLI enforces
+    ``--truncate`` alongside ``--full`` for that reason. Without the
+    truncate, every quarter already present would be doubled.
     """
     _ensure_load_log(conn)
     conn.commit()  # persist load_log creation before the per-quarter loop
     already = loaded_quarters(conn) if incremental else set()
+    if not incremental and already:
+        raise QuarterAlreadyLoaded(
+            f"{len(already)} quarter(s) are still in sec_raw.load_log; a "
+            "full reload must start from truncated bronze tables "
+            "(`dera load --truncate --full`)."
+        )
     quarter_dirs = sorted(
         p for p in data_dir.iterdir()
         if p.is_dir() and _looks_like_quarter(p.name)
@@ -150,7 +183,7 @@ def load_all(
             continue
         print(f"Loading {qdir.name}")
         try:
-            result[qdir.name] = load_quarter(conn, qdir)
+            result[qdir.name] = load_quarter(conn, qdir, force=not incremental)
             conn.commit()
         except Exception:
             conn.rollback()

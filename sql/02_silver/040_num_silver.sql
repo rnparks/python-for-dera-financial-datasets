@@ -118,8 +118,11 @@ WINDOW
     );
 
 CREATE INDEX idx_num_cik_tag      ON sec_silver.num_silver (cik, tag);
-CREATE INDEX idx_num_rank_pit     ON sec_silver.num_silver (rank_pit);
-CREATE INDEX idx_num_rank_latest  ON sec_silver.num_silver (rank_latest);
+-- No index on rank_pit or rank_latest. Both existed (1.2 GB each) and
+-- neither was ever scanned: the only predicate anyone writes is `= 1`,
+-- which matches the majority of the table, so the planner correctly
+-- prefers a sequential scan and the indexes were 2.4 GB of dead weight.
+-- Dropped 2026-09-04.
 
 -- Serves the as-of interval predicate for a single company/concept,
 -- which is the shape every backtest lookup takes.
