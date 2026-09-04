@@ -169,7 +169,21 @@ The legacy `get_pit_financials` baked a hardcoded `CASE` expression into the fun
 
 The dated crosswalk, `sec_reference.ticker_observation`, is loaded from
 `data/reference/ticker_history.csv.gz` (gzipped; the loader reads either form)
-before the silver build, alongside the trading calendar and the share-class map.
+before the silver build, alongside the trading calendar, the share-class map and
+the S&P 500 constituent history (`sp500_history.csv.gz` →
+`sec_reference.index_observation`). The spine stage turns that history into
+`sec_reference.index_membership`, dated intervals with GICS as of the interval,
+and it is what gold joins to for index membership and classification: the two
+display matviews carry `index_name`, `index_is_asof` and as-of GICS per fact,
+and `peer_stats` scores only facts whose company was a constituent when the
+fact became actionable. For the S&P 400 and 600, whose histories are not yet
+replayed, the membership is today's snapshot as one labelled interval.
+
+Share-class mappings come from the issuers' own 10-K cover pages
+(`tools/fetch_cover_page_classes.py`); a dual-class issuer — one that has ever
+reported share counts for two `ClassOfStock` members — gets per-class counts
+only once mapped, while a single-class issuer is inferred from the filings
+regardless of how many preferreds or notes it lists.
 The calendar loader refuses a file with less than a year of sessions left, since
 a filing accepted after the last session would silently get a NULL
 `tradable_from`.
@@ -178,7 +192,9 @@ Regenerate the S&P universe from Wikipedia, and the crosswalk from the archive:
 
 ```bash
 uv run python tools/fetch_sp1500.py
+uv run python tools/fetch_sp500_history.py --batch 0
 uv run python tools/fetch_ticker_history.py --batch 0
+uv run python tools/fetch_cover_page_classes.py --sp500 --write-map
 uv run dera rebuild-reference
 ```
 

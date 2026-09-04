@@ -53,7 +53,7 @@ is established.
 | `tag_silver` | 4.5M | 1.5 GB | Deduplicated taxonomy |
 | `sub_silver` | 433.7K | 111 MB | Filings with `known_at` (acceptance instant) and `tradable_from` |
 | `ticker_map` | 10.2K | 1.3 MB | Legacy CIK ↔ ticker crosswalk (superseded by `sec_reference`) |
-| `universe_sp1500` | 1,505 | 376 kB | **Today's** S&P 1500 membership — no dates, see caveat below |
+| `universe_sp1500` | 1,505 | 376 kB | **Today's** S&P 1500 membership — no dates; the source of the S&P 400/600 snapshot intervals in `sec_reference.index_membership` |
 
 `num_silver` carries the availability columns everything else depends on:
 `known_at`, `tradable_from`, `vintage_seq`, `superseded_known_at`,
@@ -63,9 +63,10 @@ query time. (It no longer carries indexes on `rank_pit` and `rank_latest`: 2.4 G
 that the planner never used, since `= 1` matches most of the table.)
 
 > **Caveat — `universe_sp1500` is current-constituents-only.** It has no date
-> columns at all, so anything joining to it inherits survivorship bias. The
-> replacement is `sec_reference.universe_at()`; the gold matviews have not been
-> rewired to it yet.
+> columns at all. Nothing in gold joins to it directly any more: gold reads
+> `sec_reference.index_membership`, which holds replayed S&P 500 history and,
+> for the S&P 400 and 600 only, this table's snapshot as a labelled interval
+> from 1900-01-01 until their histories are replayed.
 
 ### Raw SEC fields → silver columns
 
@@ -100,12 +101,18 @@ construction: it holds every CIK that ever filed, not the ones that survived.
 | `ticker_observation` | 861,755 | Raw dated crosswalk observations: 81 captures, monthly from 2018-12 |
 | `ticker_capture` | 81 | One row per capture with its size and whether it is partial |
 | `company_ticker` | 35,520 | Dated CIK ↔ ticker intervals with `is_primary`; 20,326 CIKs, 12,321 of them absent from SEC's live file |
-| **`security`** | **17,025** | **A tradable instrument, distinct from its issuer.** Listed classes only |
-| `listing` | 21,970 | Security ↔ ticker over time |
-| `eligibility` | 17,695 | Universe membership intervals, with reasons in and out |
+| `index_observation` | 107,555 | Raw S&P 500 constituent sightings: 214 monthly Wikipedia captures, 2008-09 to 2026-08, GICS as the page gave it |
+| `index_capture` | 214 | One row per capture with its size and partial flag (none partial) |
+| `index_observation_resolved` | 107,555 | The same sightings with a CIK from the page (74,743), by continuity (28,851) or by name (3,373); 588 unresolved |
+| `index_membership_unresolved` | 40 | Tickers that never resolved to a CIK — the members the historical universe is missing, listed rather than guessed |
+| **`index_membership`** | **2,708** | **Dated membership with GICS as of the interval**: 1,738 replayed S&P 500 intervals over 840 companies (`wikipedia_history`), 970 S&P 400/600 snapshot intervals (`current_snapshot`) |
+| `index_membership_latest` | 1,711 | One row per company: its current or most recent membership, the label gold falls back to |
+| **`security`** | **17,030** | **A tradable instrument, distinct from its issuer.** Listed classes only |
+| `listing` | 21,935 | Security ↔ ticker over time |
+| `eligibility` | 18,559 | Universe membership intervals (`filers_10k_15m` 17,695, `sp500` 864), with reasons in and out |
 | `delisting_event` | 7,119 | Outcomes: 4,498 exchange notices (Form 25), 2,621 deregistrations (Form 15) |
 | `corporate_action` | 0 | Declared, unpopulated |
-| `share_class` | 27 | Hand-mapped share class → ticker allowlist (9 CIKs) |
+| `share_class` | 99 | Share class → ticker allowlist (66 CIKs): 27 hand-mapped rows plus 72 derived from 10-K cover pages, every row citing its filing |
 | `company_label` | *(view)* | Best-known display name per CIK — joined by both `tradable_financials` matviews |
 | `trading_calendar` | 4,947 | NYSE sessions to 2028-09-01, for availability arithmetic |
 | `security_event_raw` | 905,049 | Staging: raw EDGAR lifecycle events |
@@ -148,6 +155,13 @@ members, 3,012 of them (41%) since delisted or deregistered. 2,420 have no
 ticker label at all: they left before the crosswalk's 2019 floor and SEC's file
 never carried them afterwards.
 
+A second universe, `sp500`, is derived from `index_membership` for every listed
+security of a member company, clipped to the security's lifecycle like the
+first. `sec_reference.index_members('SP500', DATE '2015-06-30')` gives the
+constituents on a date with their GICS as of that date; `universe_at('sp500',
+…)` gives the securities. SVB Financial is a member from 2018-03-19 to
+2023-03-24, Tesla from 2020-12-21, Twitter from 2018-06-07 to 2022-10-29.
+
 ## `sec_gold` — gold
 
 Query-facing. Rebuild with `dera build-gold`; see `docs/gold_tables.md` for the
@@ -156,10 +170,10 @@ full reference including every function signature.
 | Object | Kind | Rows | Size | What it is |
 |---|---|---:|---:|---|
 | `fact_asof` | matview | 97.9M | 33 GB | **Bitemporal facts, every vintage. The backtest source** |
-| `tradable_financials` | matview | 11.8M | 3.4 GB | Latest-restated facts, one row per fact |
-| `tradable_financials_pit` | matview | 11.8M | 3.5 GB | As-first-seen twin |
-| `peer_stats` | matview | 538.5K | 127 MB | Cross-sectional scores at sector and sub-industry |
-| `share_class_shares` | matview | 618.2K | 174 MB | Per-class share counts for 8,228 companies, delisted included — the market-cap denominator |
+| `tradable_financials` | matview | 12.4M | 3.5 GB | Latest-restated facts, one row per fact; index membership and GICS dated |
+| `tradable_financials_pit` | matview | 12.4M | 3.6 GB | Earliest-sighting twin |
+| `peer_stats` | matview | 479.6K | 118 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the time |
+| `share_class_shares` | matview | 777.5K | 218 MB | Per-class share counts for 9,654 companies, delisted included — the market-cap denominator |
 | `canonical_concepts` | table | 15 | — | Research taxonomy (revenue, total_debt, …) |
 | `concept_tag_map` | table | 38 | — | Priority-ordered XBRL tag resolution |
 | `concept_formula` | table | 6 | — | Derived concepts as linear combinations |
@@ -178,6 +192,7 @@ documented in `docs/gold_tables.md`.
 |---|---|---|
 | Backtest — what was knowable on date T | `fact_asof` + `as_of_*()` | `tradable_financials` |
 | Know who was investable on date T | `sec_reference.universe_at()` | `universe_sp1500` |
+| Know who was in the S&P 500 on date T, with GICS then | `sec_reference.index_members()` | `universe_sp1500` |
 | Analyse historical results as now understood | `tradable_financials` | the `_pit` twin |
 | Screen cross-sectionally today | `peer_stats` | — |
 | Resolve one metric across companies | `get_canonical()` | raw XBRL tags |
@@ -194,11 +209,11 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 42 checks; exits non-zero on any FAIL
+uv run dera verify     # 48 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 
 Covers restatement preservation, availability correctness, crosswalk capture
 quality, share-class summing, derived-concept resolution, and the survivorship /
-future-existence tests on the universe. Checks 29–42 each name the defect found
+future-existence tests on the universe. Checks 29–48 each name the defect found
 in the 2026-09-04 review that they guard against.

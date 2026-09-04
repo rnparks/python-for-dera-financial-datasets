@@ -50,9 +50,11 @@ EDGAR bulk submissions archive
   └─[dera build-security-model]→ sec_reference.{security,listing,      SPINE
                                  eligibility,delisting_event}
 
-Internet Archive captures of SEC's ticker file
+Internet Archive captures of SEC's ticker file; Wikipedia page history
   └─[tools/fetch_ticker_history.py]→ data/reference/ticker_history.csv.gz
-  └─[dera rebuild-reference]───────→ spine → security model → gold
+  └─[tools/fetch_sp500_history.py]─→ data/reference/sp500_history.csv.gz
+  └─[dera rebuild-reference]───────→ spine (crosswalk, index membership)
+                                     → security model → gold
 ```
 
 ## Setup
@@ -77,7 +79,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 42 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 48 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -129,11 +131,17 @@ SELECT * FROM sec_gold.as_of_snapshot(320193, DATE '2015-06-30');
 
 -- Who was actually investable then, delisted companies included
 SELECT * FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30');
+
+-- Who was in the S&P 500 then, with the GICS classification of the time
+SELECT * FROM sec_reference.index_members('SP500', DATE '2015-06-30');
 ```
 
-That last query returns 7,293 members, of which **3,012 (41%) have since
+The filers query returns 7,293 members, of which **3,012 (41%) have since
 delisted or deregistered**. A universe built from today's index membership
-returns none of them.
+returns none of them. The S&P 500 query comes from Wikipedia's page history
+replayed monthly since 2008: SVB Financial is a member from 2018-03-19 to
+2023-03-24, Tesla from 2020-12-21, and 840 companies have been in the index
+against 503 on today's page.
 
 ## Reference data
 
@@ -141,8 +149,10 @@ Tracked files under `data/reference/`, all regenerable — see
 [`docs/data_sources.md`](docs/data_sources.md) for provenance and known gaps.
 
 ```bash
-uv run python tools/fetch_sp1500.py                     # S&P 1500 membership (Wikipedia)
+uv run python tools/fetch_sp1500.py                     # today's S&P 1500 (Wikipedia)
+uv run python tools/fetch_sp500_history.py --batch 0    # S&P 500 membership, monthly since 2008; resumes
 uv run python tools/fetch_ticker_history.py --batch 0   # CIK↔ticker via the Internet Archive; resumes
+uv run python tools/fetch_cover_page_classes.py --sp500 # share-class mappings from 10-K cover pages
 uv run python tools/build_calendar.py                   # NYSE trading calendar, two years ahead
 ```
 

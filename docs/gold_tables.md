@@ -1,8 +1,8 @@
 # `sec_gold` — Gold Layer Reference
 
-The gold layer is the query-facing top of the medallion pipeline: SEC DERA fundamentals filtered to the S&P 1500 tradable universe, keyed by ticker, with a canonical-concept taxonomy and pre-computed peer statistics on top. Everything here is derived from `sec_silver` — rebuild it any time with `uv run dera build-gold`.
+The gold layer is the query-facing top of the medallion pipeline: SEC DERA fundamentals for every company that has ever been an S&P 500, 400 or 600 constituent (membership dated where the history has been replayed), keyed by ticker, with a canonical-concept taxonomy and pre-computed peer statistics on top. Everything here is derived from `sec_silver` — rebuild it any time with `uv run dera build-gold`.
 
-**Data coverage** (as of the 2026q2 load, figures dated 2026-09-04): filings from 2009-04-15 through 2026-06-30, 11.8M rows per display matview and 97.9M in `fact_asof`.
+**Data coverage** (as of the 2026q2 load, figures dated 2026-09-04): filings from 2009-04-15 through 2026-06-30, 12.4M rows per display matview (1,701 companies that have ever been index constituents) and 97.9M in `fact_asof`.
 
 For the whole database — including `sec_reference`, which holds the survivorship-free company and security spine — see [`schema_overview.md`](schema_overview.md).
 
@@ -13,10 +13,10 @@ For the whole database — including `sec_reference`, which holds the survivorsh
 | Object | Kind | Rows | One-line description |
 |---|---|---:|---|
 | [`fact_asof`](#fact_asof) | matview | 97.9M | **Bitemporal facts, every vintage. The correct backtest source.** |
-| [`tradable_financials`](#tradable_financials) | matview | 11.8M | Latest-restated facts, one row per fact |
-| [`tradable_financials_pit`](#tradable_financials_pit) | matview | 11.8M | Earliest-sighting twin of the above |
-| [`peer_stats`](#peer_stats) | matview | 538K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level` |
-| [`share_class_shares`](#share_class_shares) | matview | 618K | **Per-share-class counts for 8,228 companies, delisted included. The market-cap denominator.** |
+| [`tradable_financials`](#tradable_financials) | matview | 12.4M | Latest-restated facts, one row per fact, index membership dated |
+| [`tradable_financials_pit`](#tradable_financials_pit) | matview | 12.4M | Earliest-sighting twin of the above |
+| [`peer_stats`](#peer_stats) | matview | 480K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level`; population is the index of the time |
+| [`share_class_shares`](#share_class_shares) | matview | 778K | **Per-share-class counts for 9,654 companies, delisted included. The market-cap denominator.** |
 | [`canonical_concepts`](#canonical_concepts) | table | 15 | Research-meaningful metric definitions (revenue, capex, …) |
 | [`concept_tag_map`](#concept_tag_map) | table | 38 | Priority-ordered XBRL tag resolution rules per concept |
 | `concept_formula` | table | 6 | Derived concepts as linear combinations of other concepts |
@@ -105,18 +105,19 @@ Prefer the `as_of_*` function family over querying this directly — those take 
 
 ### `tradable_financials`
 
-One row per **(company, XBRL tag, value date, period length, unit)** for every S&P 1500 constituent, holding the latest-restated value (`rank_latest = 1` in silver). Built from `sec_silver.num_silver` joined to `sec_reference.company`, `sec_reference.company_label` and the dated `sec_reference.company_ticker` (resolved against each fact's `tradable_from`), with `universe_sp1500` reached through a lateral on the crosswalk. It does **not** use `sec_silver.ticker_map`.
+One row per **(company, XBRL tag, value date, period length, unit)** for every company that has ever had an interval in `sec_reference.index_membership` — the replayed S&P 500 history plus today's S&P 400 and 600 — holding the latest-restated value (`rank_latest = 1` in silver). Built from `sec_silver.num_silver` joined to `sec_reference.company`, `sec_reference.company_label`, the dated `sec_reference.company_ticker` and `sec_reference.index_membership`, both resolved against each fact's `tradable_from`. It does **not** use `sec_silver.ticker_map` or `sec_silver.universe_sp1500`.
 
 | Column | Type | Description |
 |---|---|---|
 | `ticker` | text | Exchange ticker (class shares use hyphens: `BRK-B`) |
-| `ticker_is_asof` | boolean | **`false` for 47.8% of rows** — the ticker is the company's best-known symbol, not the one it traded under on `value_date`. The crosswalk floor is 2019; filter on this if you need a date-correct symbol |
+| `ticker_is_asof` | boolean | `false` where the crosswalk (2019 onward) has no interval covering `tradable_from`; the ticker is then the company's best-known symbol |
 | `company_name` | text | Company name as of the fact, via `sec_reference.company_label` |
-| `gics_sector` | text | GICS sector, resolved once per company (not as of a date) |
-| `gics_sub_industry` | text | GICS sub-industry, same caveat |
+| `index_name` | text | Index the company belonged to **as of `tradable_from`**: `SP500` from replayed history; `SP400`/`SP600` from today's snapshot at every date until their histories are replayed |
+| `index_is_asof` | boolean | `true` when a membership interval covers `tradable_from`. `false` means the company was not a constituent then and `index_name` / GICS are labels from its latest membership |
+| `gics_sector` | text | GICS sector as of `tradable_from` where the membership history has it (S&P 500), else the latest classification |
+| `gics_sub_industry` | text | GICS sub-industry, same rule (the page carries it from 2016) |
 | `known_at` | timestamptz | When the filing was accepted by EDGAR |
 | `tradable_from` | date | First session on which the fact was actionable |
-| `index_name` | text | `SP500`, `SP400`, or `SP600` |
 | `cik` | integer | SEC Central Index Key |
 | `tag` | text | Raw XBRL tag, e.g. `NetIncomeLoss` |
 | `metric` | text | Human-readable tag label (`tlabel` from the taxonomy) |
@@ -151,27 +152,28 @@ WHERE ticker = 'NVDA' AND value_date = '2023-01-29' AND qtrs = 4;
 
 ### `peer_stats`
 
-Pre-computed cross-sectional scores: one row per **(ticker, canonical concept, fiscal year, peer level)**. 538,466 rows. Sourced from `tradable_financials` (latest-restated values).
+Pre-computed cross-sectional scores: one row per **(company, canonical concept, fiscal year, peer level)**. Sourced from `tradable_financials` (latest-restated values), **restricted to facts whose company was an index constituent when the fact became actionable** (`index_is_asof`). For the S&P 500 that is the replayed history, so a FY2012 cross-section scores 2012's members and not today's; for the S&P 400 and 600 it is today's list at every year until their histories are replayed. Each row carries `index_name`.
 
 **Two peer levels, tagged by `peer_level`.** Sub-industry alone was too granular — only 106 of 156 groups clear the five-member threshold, and the threshold *deletes* a thin group rather than degrading it, so companies vanished with nothing in the output saying so. Both levels are computed:
 
 | `peer_level` | Groups | Companies scored |
 |---|---:|---:|
-| `sector` | 11 | 1,573 CIKs |
-| `sub_industry` | 106 | 1,449 CIKs |
+| `sector` | 11 | 1,692 CIKs across all fiscal years |
+| `sub_industry` | 106 | fewer, groups under five members dropped |
 
 Sector is the sounder default. The standard error of an estimated standard deviation is about σ/√(2(n−1)), so at the sub-industry median of seven companies the z-score denominator is itself uncertain by nearly 30%, against roughly 10% at sector's thinnest group.
 
 Fiscal year is bucketed by `sec_gold.fiscal_year_of(value_date)`, **not** `EXTRACT(YEAR FROM value_date)` — see [Fiscal years ≠ calendar years](#fiscal-years--calendar-years).
 
-Revenue coverage by fiscal year, tracked universe: 1,105 companies in FY2010, 1,283 in FY2015, 1,479 in FY2024. Before the pre-2018 revenue tags were mapped, FY2015 covered 628.
+S&P 500 revenue coverage by fiscal year, members of the time: 457 companies in FY2009, 476 in FY2012, 473 in FY2015, 499 in FY2024 (of roughly 500 resolved members each year). Before dated membership the FY2012 panel was today's surviving constituents only; before the pre-2018 revenue tags were mapped, FY2015 covered 628 of the whole tracked population.
 
 | Column | Type | Description |
 |---|---|---|
 | `cik` | integer | SEC Central Index Key |
 | `ticker` | text | Exchange ticker |
-| `gics_sector` | text | GICS sector (11 values) |
-| `gics_sub_industry` | text | GICS sub-industry |
+| `index_name` | text | Index the company belonged to when the fact became actionable |
+| `gics_sector` | text | GICS sector as of the fact (11 values) |
+| `gics_sub_industry` | text | GICS sub-industry as of the fact |
 | `peer_level` | text | `sector` or `sub_industry` — **which grouping this row scores against** |
 | `peer_group` | text | The actual group value `peer_level` selects; the composite indexes are keyed on it |
 | `tradable_from` | date | Availability of the underlying fact |
@@ -187,9 +189,9 @@ Revenue coverage by fiscal year, tracked universe: 1,105 companies in FY2010, 1,
 | `zscore` | numeric | `(value − peer_mean) / peer_stddev`; NULL if stddev is 0 |
 | `peer_percentile` | numeric | Rank within the group; robust to the size skew that makes a raw-dollar z of +4 mean "much bigger than peers" |
 
-**Indexes**: `(ticker)`; `(cik)`; `(peer_level, concept, fiscal_year)`; `(peer_level, peer_group, fiscal_year, concept)`. Note `peer_level` leads both composite indexes — a query filtered only on `(concept, fiscal_year)` will not use them.
+**Indexes**: `(ticker)`; `(cik)`; `(index_name, fiscal_year)`; `(peer_level, concept, fiscal_year)`; `(peer_level, peer_group, fiscal_year, concept)`. Note `peer_level` leads both composite peer indexes — a query filtered only on `(concept, fiscal_year)` will not use them.
 
-> **Not availability-correct.** Built from restated values, with peer moments computed over the finished panel, so both the inputs and the statistics know the future. This is a dashboard and screening artifact. Anything backtested should read `fact_asof` and build its own cross-section.
+> **Not availability-correct.** Built from restated values, with peer moments computed over the finished panel, so both the inputs and the statistics know the future. The *population* of each cross-section is now point-in-time (who was in the index when the fact became actionable); the *values* are not. This is a dashboard and screening artifact. Anything backtested should read `fact_asof` and build its own cross-section.
 
 ```sql
 -- NVDA revenue vs. semiconductor peers
@@ -208,12 +210,12 @@ LIMIT 20;
 
 ### `share_class_shares`
 
-**The market-cap denominator.** One row per (company, share class, period, vintage, source tag): 618,158 rows across 8,228 companies, delisted ones included. A class appears in one of two ways:
+**The market-cap denominator.** One row per (company, share class, period, vintage, source tag): 777,501 rows across 9,654 companies, delisted ones included; 482 of today's 500 S&P 500 constituents are covered, 61 of them through cover-page mappings. A class appears in one of two ways:
 
-- **Mapped.** The issuer has rows in `sec_reference.share_class` and the class label matches the `ClassOfStock` member exactly (`method = 'mapped_class'`, 1,684 rows across 9 issuers).
-- **Inferred single-class.** The issuer has no mapping and never held two tickers at once — every one of its `company_ticker` intervals is `is_primary` (`method = 'inferred_single'`, 616,474 rows). A ticker change keeps a company here; a second listed line, such as a preferred, removes it.
+- **Mapped.** The issuer has rows in `sec_reference.share_class` and the class label matches the `ClassOfStock` member exactly (`method = 'mapped_class'`). 66 issuers are mapped: 9 by hand and 57 from their 10-K cover pages via `tools/fetch_cover_page_classes.py`, every row citing its filing.
+- **Inferred single-class.** The issuer has no mapping and has **never reported share counts for two `ClassOfStock` members** on the three point-in-time share-count tags (`method = 'inferred_single'`). Decided from the filings, so preferreds, baby bonds, ADR lines and delistings do not matter: Bank of America with its seventeen tickers is single-class; Meta with its unlisted Class B is not, and needs its mapping. An issuer whose only class member is its sole class (Bunge files `ClassOfStock=CommonStock` and nothing undimensioned) is inferred from that member's rows. The price ticker is the company's primary line as of the fact.
 
-The second rule replaced "has exactly one ticker current today", which excluded every company that had delisted — 4,998 of them — from the one table that exists to compute historical market caps.
+Two earlier rules were wrong in opposite directions: "exactly one ticker current today" excluded every company that had delisted, and "never held two tickers at once" excluded every company with a listed preferred while quietly admitting dual-class issuers whose second class is unlisted — pricing Visa's consolidated count at the Class A price although its Class B does not convert 1:1.
 
 | Column | Description |
 |---|---|
@@ -467,11 +469,11 @@ RETURNS TABLE (value_date DATE, filed_date DATE, metric TEXT, value_billions NUM
 ## Caveats and data quirks
 
 - **Stray `value_date`s.** The matviews span 1980-07-31 → 2032-03-31. Old dates are prior-period comparatives re-filed in modern filings; future dates are filer typos that SEC publishes as-is. Bound `value_date` in analyses that aggregate by date.
-- **Universe is current-constituents-only.** `universe_sp1500` is today's S&P 1500 membership scraped from Wikipedia — historical analyses over the two `tradable_financials` matviews and `peer_stats` carry **survivorship bias** (companies delisted or dropped from the index before today are absent). `fact_asof`, `share_class_shares` and everything in `sec_reference` cover the full spine.
+- **Index membership is dated for the S&P 500 only.** The two `tradable_financials` matviews and `peer_stats` draw their population from `sec_reference.index_membership`: replayed monthly Wikipedia history for the S&P 500 (840 companies since 2008, 40 early tickers unresolved and listed), but today's list at every date for the S&P 400 and 600 until their histories are replayed. Historical analyses restricted to those two indexes still carry survivorship bias, and `index_membership.source` says which rows do. `fact_asof`, `share_class_shares` and everything in `sec_reference` cover the full spine.
 - **Per-share vs. dollar units.** `eps_diluted` is `USD/share`; don't scale it by 1e9 alongside the dollar concepts. Check `uom` when working with raw tags.
 - **`total_debt` is a roll-up.** Only two tags resolve it directly; otherwise `concept_formula` sums `debt_noncurrent + debt_current`. `LongTermDebtNoncurrent` was once priority 3 here and silently understated the figure by excluding the current portion; it now sits on `debt_noncurrent` where it belongs.
 - **Z-scores are raw-value scores.** `peer_stats` scores raw dollar values, so it mixes company size with performance; a z of +4 on revenue mostly means "much bigger than peers," not "growing faster." `peer_percentile` is robust to that skew. Both degrade in thin groups, which is why `peer_level = 'sector'` is the sounder default.
-- **Multi-class issuers.** In the tracked universe, **177 of 1,569** companies hold more than one current ticker and **135** file more than one `ClassOfStock` member on share-count tags since 2024. Only 9 are mapped by hand so far; the rest have no rows in `share_class_shares`, by design (an unmapped class yields nothing rather than a wrong sum). Companies with a listed preferred line are likewise excluded from the single-class inference until mapped.
+- **Dual-class issuers need a mapping.** Across the spine roughly 2,100 companies have reported share counts for two or more `ClassOfStock` members; 66 are mapped, 57 of them S&P 500 issuers derived from their cover pages. The rest have no rows in `share_class_shares`, by design (an unmapped class yields nothing rather than a wrong sum). Six S&P 500 covers say only "Common Stock" against A/B members and are reported by the tool for a hand decision; unlisted classes (Meta's B, Nike's A, Visa's B and C) are never mapped automatically because the conversion ratio must be cited, so those issuers' market caps are partial and flagged by `share_classes_at`.
 - **Ticker collisions.** `ticker_map` keeps the first CIK seen per ticker; a handful of ambiguous tickers may resolve to an unexpected issuer. The `as_of_*` family avoids this by resolving through the dated crosswalk.
 
 ## Rebuilding and refreshing

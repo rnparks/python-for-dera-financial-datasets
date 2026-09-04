@@ -35,7 +35,7 @@ refill.
 
 Verification::
 
-    uv run dera verify        # 42 data-correctness checks
+    uv run dera verify        # 48 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 
@@ -328,7 +328,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     `tools/verify_pit.sql` had 15 passing checks at the time and was
     invoked from nothing: no test runner, no CI, no CLI path. It now
-    holds 42. A correctness suite
+    holds 48. A correctness suite
     nobody runs is documentation, not a guard. This gives it a command.
 
     It shells out to psql rather than going through psycopg because the

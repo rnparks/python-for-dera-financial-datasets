@@ -1,0 +1,151 @@
+cik,name,adsh,filing_date,class_member,trading_symbol,exchange,security_title,resolved,on_share_count_facts
+14693,BROWN FORMAN CORP,0000014693-26-000024,2026-06-12,CommonClassA,BFA,New York Stock Exchange,"Class A Common Stock (voting), $0.15 par value",dimensioned,True
+14693,BROWN FORMAN CORP,0000014693-26-000024,2026-06-12,NonvotingCommonStock,BFB,New York Stock Exchange,"Class B Common Stock (nonvoting), $0.15 par value",dimensioned,True
+14693,BROWN FORMAN CORP,0000014693-26-000024,2026-06-12,,BF26,New York Stock Exchange,1.200% Notes due 2026,unresolved,False
+14693,BROWN FORMAN CORP,0000014693-26-000024,2026-06-12,,BF28,New York Stock Exchange,2.600% Notes due 2028,unresolved,False
+16918,"CONSTELLATION BRANDS, INC.",0000016918-26-000011,2026-04-22,CommonClassA,STZ,New York Stock Exchange,Class A Common Stock,title,True
+24545,MOLSON COORS BEVERAGE CO,0000024545-26-000006,2026-02-18,CommonClassA,TAP-A,New York Stock Exchange,"Class A Common Stock, $0.01 par value",dimensioned,True
+24545,MOLSON COORS BEVERAGE CO,0000024545-26-000006,2026-02-18,CommonClassB,TAP,New York Stock Exchange,"Class B Common Stock, $0.01 par value",dimensioned,True
+24545,MOLSON COORS BEVERAGE CO,0000024545-26-000006,2026-02-18,,TAP 32,New York Stock Exchange,3.800% Senior Notes due 2032,unresolved,False
+37996,FORD MOTOR CO,0000037996-26-000015,2026-02-11,CommonStock,F,New York Stock Exchange,"Common Stock, par value $.01 per share",dimensioned,True
+37996,FORD MOTOR CO,0000037996-26-000015,2026-02-11,FPRB,FPRB,New York Stock Exchange,"6.200% Notes due June 1, 2059",dimensioned,False
+37996,FORD MOTOR CO,0000037996-26-000015,2026-02-11,FPRC,FPRC,New York Stock Exchange,"6.000% Notes due December 1, 2059",dimensioned,False
+37996,FORD MOTOR CO,0000037996-26-000015,2026-02-11,FPRD,FPRD,New York Stock Exchange,"6.500% Notes due August 15, 2062",dimensioned,False
+47111,HERSHEY CO,0001628280-26-008586,2026-02-17,CommonStock,HSY,New York Stock Exchange,"Common Stock, one dollar par value",title,True
+48465,HORMEL FOODS CORP /DE/,0000048465-25-000059,2025-12-05,CommonStock,HRL,New York Stock Exchange,Common Stock $0.01465 par value,title,True
+48898,HUBBELL INC,0001628280-26-007500,2026-02-12,CommonStock,HUBB,New York Stock Exchange,Common Stock — par value $0.01 per share,title,True
+63754,MCCORMICK & CO INC,0000063754-26-000037,2026-01-22,CommonStock,MKC-V,New York Stock Exchange,"Common Stock, Par Value $0.01 per share",dimensioned,True
+63754,MCCORMICK & CO INC,0000063754-26-000037,2026-01-22,NonvotingCommonStock,MKC,New York Stock Exchange,"Common Stock Non-Voting, Par Value $0.01 per share",dimensioned,True
+91142,SMITH A O CORP,0000091142-26-000008,2026-02-10,CommonStock,AOS,New York Stock Exchange,Common Stock (par value $1.00 per share),title,True
+100493,"TYSON FOODS, INC.",0000100493-25-000095,2025-11-10,CommonClassA,TSN,New York Stock Exchange,Class A Common Stock,title,True
+316709,SCHWAB CHARLES CORP,0000316709-26-000009,2026-02-25,CommonStock,SCHW,New York Stock Exchange,Common Stock – $.01 par value per share,dimensioned,True
+316709,SCHWAB CHARLES CORP,0000316709-26-000009,2026-02-25,SeriesDPreferredStock,SCHW PRD,New York Stock Exchange,"Depositary Shares, each representing a 1/40th ownership interest in a share of 5.95% Non-Cumulative Preferred Stock, Series D",dimensioned,False
+316709,SCHWAB CHARLES CORP,0000316709-26-000009,2026-02-25,SeriesJPreferredStock,SCHW PRJ,New York Stock Exchange,"Depositary Shares, each representing a 1/40th ownership interest in a share of 4.450% Non-Cumulative Preferred Stock, Series J",dimensioned,False
+320187,"NIKE, Inc.",0000320187-26-000088,2026-07-15,CommonClassB,NKE,New York Stock Exchange,Class B Common Stock,title,True
+352915,UNIVERSAL HEALTH SERVICES INC,0001193125-26-071676,2026-02-25,CommonClassB,UHS,New York Stock Exchange,"Class B Common Stock, $0.01 par value",title,True
+815097,Carnival Corp Ltd.,0000815097-26-000007,2026-01-27,CommonStock,CCL,New York Stock Exchange,Common Stock ($0.01 par value),dimensioned,True
+815097,Carnival Corp Ltd.,0000815097-26-000007,2026-01-27,OrdinaryShares,CUK,New York Stock Exchange,Ordinary Shares each represented by American Depositary Shares ($1.66 par value),dimensioned,True
+815097,Carnival Corp Ltd.,0000815097-26-000007,2026-01-27,A1.000SeniorNotesDue2029,CUK29,New York Stock Exchange LLC,1.000% Senior Notes due 2029,dimensioned,False
+821189,EOG RESOURCES INC,0000821189-26-000054,2026-02-24,,EOG,New York Stock Exchange,"Common Stock, par value $0.01 per share",unresolved,False
+872589,"REGENERON PHARMACEUTICALS, INC.",0000872589-26-000008,2026-02-04,CommonStock,REGN,NASDAQ Global Select Market,Common Stock - par value $.001 per share,title,True
+920760,LENNAR CORP /NEW/,0001628280-26-003870,2026-01-28,CommonClassA,LEN,New York Stock Exchange,"Class A Common Stock, par value 10¢",dimensioned,True
+920760,LENNAR CORP /NEW/,0001628280-26-003870,2026-01-28,CommonClassB,LEN-B,New York Stock Exchange,"Class B Common Stock, par value 10¢",dimensioned,True
+922621,ERIE INDEMNITY CO,0001628280-26-010666,2026-02-23,CommonClassA,ERIE,"NASDAQ Stock Market, LLC","Class A common stock,",title,True
+1001250,ESTEE LAUDER COMPANIES INC,0001001250-26-000041,2026-08-19,CommonClassA,EL,New York Stock Exchange,"Class A Common Stock, $.01 par value",title,True
+1034054,SBA COMMUNICATIONS CORP,0001034054-26-000002,2026-02-27,CommonClassA,SBAC,The NASDAQ Stock Market LLC,"Class A Common Stock, $0.01 par value per share",title,True
+1037038,RALPH LAUREN CORP,0001628280-26-037074,2026-05-21,CommonClassA,RL,New York Stock Exchange,"Class A Common Stock, $.01 par value",title,True
+1050915,"QUANTA SERVICES, INC.",0001050915-26-000006,2026-02-19,,PWR,New York Stock Exchange,"Common Stock, $0.00001 par value",unresolved,False
+1059556,MOODYS CORP /DE/,0001628280-26-009136,2026-02-18,CommonStock,MCO,New York Stock Exchange,"Common Stock, par value $0.01 per share",dimensioned,True
+1059556,MOODYS CORP /DE/,0001628280-26-009136,2026-02-18,TwoThousandAndFifteenSeniorNotesDueTwoThousandAndTwentySeven,MCO 27,New York Stock Exchange,1.75% Senior Notes Due 2027,dimensioned,False
+1059556,MOODYS CORP /DE/,0001628280-26-009136,2026-02-18,A950SeniorNotesDueTwoThousandAndThirty,MCO 30,New York Stock Exchange,0.950% Senior Notes Due 2030,dimensioned,False
+1063761,SIMON PROPERTY GROUP INC.,0001104659-26-019419,2026-02-25,CommonClassA,SPG,New York Stock Exchange,"Common stock, $0.0001 par value",dimensioned,True
+1063761,SIMON PROPERTY GROUP INC.,0001104659-26-019419,2026-02-25,SeriesJPreferredStock,SPGJ,New York Stock Exchange,"83/8% Series J Cumulative Redeemable Preferred Stock, $0.0001 par value",dimensioned,False
+1090727,UNITED PARCEL SERVICE INC,0001628280-26-008432,2026-02-17,CommonClassB,UPS,New York Stock Exchange,"Class B common stock, par value $0.01 per share",title,True
+1090727,UNITED PARCEL SERVICE INC,0001628280-26-008432,2026-02-17,,UPS28,New York Stock Exchange,1% Senior Notes due 2028,unresolved,False
+1090727,UNITED PARCEL SERVICE INC,0001628280-26-008432,2026-02-17,,UPS32,New York Stock Exchange,1.500% Senior Notes due 2032,unresolved,False
+1091667,"CHARTER COMMUNICATIONS, INC. /MO/",0001091667-26-000017,2026-01-30,CommonClassA,CHTR,NASDAQ Global Select Market,Class A Common Stock $.001 Par Value,title,True
+1103982,"Mondelez International, Inc.",0001628280-26-005345,2026-02-04,CommonClassA,MDLZ,The Nasdaq Global Select Market,"Class A Common Stock, no par value",dimensioned,True
+1103982,"Mondelez International, Inc.",0001628280-26-005345,2026-02-04,OnePointSixTwentyFivePercentNotesDue2027,MDLZ27,The Nasdaq Stock Market LLC,1.625% Notes due 2027,dimensioned,False
+1103982,"Mondelez International, Inc.",0001628280-26-005345,2026-02-04,ZeroPointTwoFiftyPercentNotesDue2028,MDLZ28,The Nasdaq Stock Market LLC,0.250% Notes due 2028,dimensioned,False
+1103982,"Mondelez International, Inc.",0001628280-26-005345,2026-02-04,ZeroPointSevenFiftyPercentNotesDue2033,MDLZ33,The Nasdaq Stock Market LLC,0.750% Notes due 2033,dimensioned,False
+1103982,"Mondelez International, Inc.",0001628280-26-005345,2026-02-04,TwoPointThreeSeventyFivePercentNotesDue2035,MDLZ35,The Nasdaq Stock Market LLC,2.375% Notes due 2035,dimensioned,False
+1103982,"Mondelez International, Inc.",0001628280-26-005345,2026-02-04,FourPointFivePercentNotesDue2035,MDLZ35A,The Nasdaq Stock Market LLC,4.500% Notes due 2035,dimensioned,False
+1103982,"Mondelez International, Inc.",0001628280-26-005345,2026-02-04,OnePointThreeSeventyFivePercentNotesDue2041,MDLZ41,The Nasdaq Stock Market LLC,1.375% Notes due 2041,dimensioned,False
+1103982,"Mondelez International, Inc.",0001628280-26-005345,2026-02-04,ThreePointEightSeventyFivePercentNotesDue2045,MDLZ45,The Nasdaq Stock Market LLC,3.875% Notes due 2045,dimensioned,False
+1120193,"NASDAQ, INC.",0001628280-26-007703,2026-02-12,CommonStock.01parvaluepershare,NDAQ,The Nasdaq Stock Market,"Common Stock, $0.01 par value per share",dimensioned,False
+1120193,"NASDAQ, INC.",0001628280-26-007703,2026-02-12,FourPointFiveZeroZeroSeniorNotesDue2032,NDAQ32,The Nasdaq Stock Market,4.500% Senior Notes due 2032,dimensioned,False
+1120193,"NASDAQ, INC.",0001628280-26-007703,2026-02-12,ZeroPointNineZeroZeroSeniorUnsecuredNotesDue2033,NDAQ33,The Nasdaq Stock Market,0.900% Senior Notes due 2033,dimensioned,False
+1120193,"NASDAQ, INC.",0001628280-26-007703,2026-02-12,ZeroPointEightSevenFivePercentSeniorNotesDue2030,NDAQ30,The Nasdaq Stock Market,0.875% Senior Notes due 2030,dimensioned,False
+1120193,"NASDAQ, INC.",0001628280-26-007703,2026-02-12,OnePointSevenFivePercentSeniorNotesDue2029,NDAQ29,The Nasdaq Stock Market,1.75% Senior Notes due 2029,dimensioned,False
+1137774,PRUDENTIAL FINANCIAL INC,0001137774-26-000048,2026-02-12,CommonClassA,PRU,New York Stock Exchange,"Common Stock, Par Value $.01",dimensioned,False
+1137774,PRUDENTIAL FINANCIAL INC,0001137774-26-000048,2026-02-12,A5950JuniorSubordinatedNotes,PRH,New York Stock Exchange,5.950% Junior Subordinated Notes,dimensioned,False
+1137774,PRUDENTIAL FINANCIAL INC,0001137774-26-000048,2026-02-12,A5.625JuniorSubordinatedNotes,PRS,New York Stock Exchange,5.625% Junior Subordinated Notes,dimensioned,False
+1137774,PRUDENTIAL FINANCIAL INC,0001137774-26-000048,2026-02-12,A4125JuniorSubordinatedNote,PFH,New York Stock Exchange,4.125% Junior Subordinated Notes,dimensioned,False
+1138118,"CBRE GROUP, INC.",0001138118-26-000005,2026-02-12,CommonClassA,CBRE,New York Stock Exchange,"Class A Common Stock, $0.01 par value per share",title,True
+1140536,WILLIS TOWERS WATSON PLC,0001193125-26-069307,2026-02-25,,WTW,NASDAQ Global Select Market,"Ordinary Shares, nominal value $0.000304635 per share",unresolved,False
+1141391,Mastercard Inc,0001141391-26-000013,2026-02-11,CommonClassA,MA,New York Stock Exchange,"Class A Common Stock, par value $0.0001 per share",dimensioned,True
+1141391,Mastercard Inc,0001141391-26-000013,2026-02-11,TwoPointOnePercentNotesDue2027,MA27,New York Stock Exchange,2.1% Notes due 2027,dimensioned,False
+1141391,Mastercard Inc,0001141391-26-000013,2026-02-11,OnePointZeroPercentNotesDue2029,MA29A,New York Stock Exchange,1.0% Notes due 2029,dimensioned,False
+1141391,Mastercard Inc,0001141391-26-000013,2026-02-11,TwoPointFivePercentNotesDue2030,MA30,New York Stock Exchange,2.5% Notes due 2030,dimensioned,False
+1156375,CME GROUP INC.,0001156375-26-000009,2026-02-26,CommonClassA,CME,Nasdaq,Class A Common Stock $0.01 par value,title,True
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,CommonClassA,CMCSA,The Nasdaq Stock Market LLC,"Class A Common Stock, $0.01 par value",dimensioned,True
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,Notes0.000PercentDue2026,CMCS26,The Nasdaq Stock Market LLC,0.000% Notes due 2026,dimensioned,False
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,Notes0.250PercentDue2027,CMCS27,The Nasdaq Stock Market LLC,0.250% Notes due 2027,dimensioned,False
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,Notes1.500PercentDue2029,CMCS29,The Nasdaq Stock Market LLC,1.500% Notes due 2029,dimensioned,False
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,Notes0.250PercentDue2029,CMCS29A,The Nasdaq Stock Market LLC,0.250% Notes due 2029,dimensioned,False
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,Notes0.750PercentDue2032,CMCS32,The Nasdaq Stock Market LLC,0.750% Notes due 2032,dimensioned,False
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,Notes3.250PercentDue2032,CMCS32A,The Nasdaq Stock Market LLC,3.250% Notes due 2032,dimensioned,False
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,Notes1.875PercentDue2036,CMCS36,The Nasdaq Stock Market LLC,1.875% Notes due 2036,dimensioned,False
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,Notes3.550PercentDue2036,CMCS36A,The Nasdaq Stock Market LLC,3.550% Notes due 2036,dimensioned,False
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,Notes1.250PercentDue2040,CMCS40,The Nasdaq Stock Market LLC,1.250% Notes due 2040,dimensioned,False
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,Notes5.250PercentDue2040,CMCS40A,The Nasdaq Stock Market LLC,5.250% Notes due 2040,dimensioned,False
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,Notes5.50PercentDue2029,CCGBP29,New York Stock Exchange,5.50% Notes due 2029,dimensioned,False
+1166691,COMCAST CORP,0001628280-26-004994,2026-02-03,ExchangeableSubordinatedDebentures2.0PercentDue2029,CCZ,New York Stock Exchange,2.0% Exchangeable Subordinated Debentures due 2029,dimensioned,False
+1176948,Ares Management Corp,0001628280-26-011413,2026-02-25,ClassACommonStockParValue0.01PerShare,ARES,New York Stock Exchange,"Class A common stock, par value $0.01 per share",dimensioned,False
+1176948,Ares Management Corp,0001628280-26-011413,2026-02-25,A6.75SeriesBMandatoryConvertiblePreferredStockParValue0.01PerShare,ARES-PRB,New York Stock Exchange,"6.75% Series B mandatory convertible preferred stock, par value $0.01 per share",dimensioned,False
+1285785,MOSAIC CO,0001285785-26-000017,2026-02-27,CommonStock,MOS,New York Stock Exchange,"Common Stock, par value $0.01 per share",title,True
+1286681,DOMINOS PIZZA INC,0001193125-26-062321,2026-02-23,,DPZ,The Nasdaq Stock Market LLC,Common Stock,unresolved,False
+1321655,Palantir Technologies Inc.,0001321655-26-000011,2026-02-17,CommonClassA,PLTR,The Nasdaq Stock Market LLC,"Class A Common Stock, par value $0.001 per share",title,True
+1324424,"Expedia Group, Inc.",0001324424-26-000008,2026-02-13,CommonStock,EXPE,Nasdaq Stock Market LLC,"Common stock, $0.0001 par value",title,True
+1326801,"Meta Platforms, Inc.",0001628280-26-003942,2026-01-29,CommonClassA,META,The Nasdaq Stock Market LLC,"Class A Common Stock, $0.000006 par value",title,True
+1327811,"Workday, Inc.",0001327811-26-000014,2026-03-06,CommonClassA,WDAY,The Nasdaq Stock Market LLC,"Class A Common Stock, par value $0.001",title,True
+1374310,"Cboe Global Markets, Inc.",0001628280-26-010013,2026-02-20,,CBOE,CboeBZX,"Common Stock, par value $0.01 per share",unresolved,False
+1381197,"Interactive Brokers Group, Inc.",0001381197-26-000062,2026-02-27,,IBKR,Nasdaq,"Common Stock, par value $.01 per share",unresolved,False
+1393052,VEEVA SYSTEMS INC,0001393052-26-000014,2026-03-20,CommonClassA,VEEV,The New York Stock Exchange,"Class A Common Stock,par value $0.00001 per share",title,True
+1393818,Blackstone Inc.,0001193125-26-082531,2026-02-27,,BX,New York Stock Exchange,Common Stock,unresolved,False
+1402057,CDW Corp,0001402057-26-000011,2026-02-20,,CDW,Nasdaq Global Select Market,"Common stock, par value $0.01 per share",unresolved,False
+1403161,VISA INC.,0001403161-25-000089,2025-11-06,CommonClassA,V,New York Stock Exchange,"Class A Common Stock, par value $0.0001 per share",dimensioned,True
+1403161,VISA INC.,0001403161-25-000089,2025-11-06,A2026Notes,V26,New York Stock Exchange,1.500% Senior Notes due 2026,dimensioned,False
+1403161,VISA INC.,0001403161-25-000089,2025-11-06,A2028Notes,V28,New York Stock Exchange,2.250% Senior Notes due 2028,dimensioned,False
+1403161,VISA INC.,0001403161-25-000089,2025-11-06,A2029Notes,V29,New York Stock Exchange,2.000% Senior Notes due 2029,dimensioned,False
+1403161,VISA INC.,0001403161-25-000089,2025-11-06,A2033Notes,V33,New York Stock Exchange,3.125% Senior Notes due 2033,dimensioned,False
+1403161,VISA INC.,0001403161-25-000089,2025-11-06,A2034Notes,V34,New York Stock Exchange,2.375% Senior Notes due 2034,dimensioned,False
+1403161,VISA INC.,0001403161-25-000089,2025-11-06,A2037Notes,V37,New York Stock Exchange,3.500% Senior Notes due 2037,dimensioned,False
+1403161,VISA INC.,0001403161-25-000089,2025-11-06,A2044Notes,V44,New York Stock Exchange,3.875% Senior Notes due 2044,dimensioned,False
+1404912,KKR & Co. Inc.,0001404912-26-000007,2026-02-27,CommonStock,KKR,New York Stock Exchange,Common Stock,dimensioned,True
+1404912,KKR & Co. Inc.,0001404912-26-000007,2026-02-27,SeriesD6.25PercentConvertiblePreferredStock,KKR PR D,New York Stock Exchange,6.25% Series D Mandatory Convertible Preferred Stock,dimensioned,False
+1404912,KKR & Co. Inc.,0001404912-26-000007,2026-02-27,SeniorNotes4625PercentDue2061,KKRS,New York Stock Exchange,4.625% Subordinated Notes due 2061 of KKR Group Finance Co. IX LLC,dimensioned,False
+1404912,KKR & Co. Inc.,0001404912-26-000007,2026-02-27,SubordinatedNotes6.875PercentDue2026,KKRT,New York Stock Exchange,6.875% Subordinated Notes due 2065,dimensioned,False
+1415404,EchoStar CORP,0001104659-26-021817,2026-03-02,CommonClassA,SATS,Nasdaq,"Class A common stock, $0.001 par value",title,True
+1437107,"Warner Bros. Discovery, Inc.",0001437107-26-000020,2026-02-27,SeriesACommonStock,WBD,The Nasdaq Global Select Market,Series A Common Stock,dimensioned,False
+1437107,"Warner Bros. Discovery, Inc.",0001437107-26-000020,2026-02-27,SeniorNotesDue20304.302,WBDI30,The Nasdaq Global Market,4.302% Senior Notes due 2030,dimensioned,False
+1437107,"Warner Bros. Discovery, Inc.",0001437107-26-000020,2026-02-27,SeniorNotesDue20334.693,WBDI33,The Nasdaq Global Market,4.693% Senior Notes due 2033,dimensioned,False
+1467373,Accenture plc,0001467373-25-000217,2025-10-10,CommonClassA,ACN,New York Stock Exchange,"Class A ordinary shares, par value $0.0000225 per share",title,True
+1506307,"KINDER MORGAN, INC.",0001506307-26-000011,2026-02-13,ClassP,KMI,New York Stock Exchange,Class P Common Stock,dimensioned,True
+1506307,"KINDER MORGAN, INC.",0001506307-26-000011,2026-02-13,A2.25DueMarch2027Notes,KMI 27 A,New York Stock Exchange,2.250% Senior Notes due 2027,dimensioned,False
+1512673,"Block, Inc.",0001628280-26-012254,2026-02-26,CommonClassA,XYZ,New York Stock Exchange,"Class A Common Stock, $0.0000001 par value per share",title,True
+1535527,"CrowdStrike Holdings, Inc.",0001535527-26-000010,2026-03-05,CommonClassA,CRWD,The Nasdaq Stock Market LLC,"Class A common stock, par value $0.0005 per share",title,True
+1555280,Zoetis Inc.,0001555280-26-000011,2026-02-12,,ZTS,New York Stock Exchange,"Common Stock, $0.01 par value per share",unresolved,False
+1559720,"Airbnb, Inc.",0001559720-26-000004,2026-02-12,CommonClassA,ABNB,The Nasdaq Stock Market,"Class A common stock, par value $0.0001 per share",title,True
+1561550,"Datadog, Inc.",0001628280-26-008819,2026-02-18,CommonClassA,DDOG,The Nasdaq Stock Market LLC,"Class A common stock, par value $0.00001 per share",title,True
+1564708,NEWS CORP,0001564708-26-000175,2026-08-07,CommonClassA,NWSA,The Nasdaq Global Select Market,"Class A Common Stock, par value $0.01 per share",dimensioned,True
+1564708,NEWS CORP,0001564708-26-000175,2026-08-07,CommonClassB,NWS,The Nasdaq Global Select Market,"Class B Common Stock, par value $0.01 per share",dimensioned,True
+1571996,Dell Technologies Inc.,0001571996-26-000008,2026-03-16,CommonClassC,DELL,New York Stock Exchange,"Class C Common Stock, par value of $0.01 per share",title,True
+1609711,GoDaddy Inc.,0001609711-26-000010,2026-02-25,CommonClassA,GDDY,New York Stock Exchange,"Class A Common Stock, par value $0.001 per share",title,True
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,CommonClassA,GOOGL,Nasdaq Stock Market LLC,"Class A Common Stock, $0.001 par value",dimensioned,True
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,CapitalClassC,GOOG,Nasdaq Stock Market LLC,"Class C Capital Stock, $0.001 par value",dimensioned,True
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,A2.375SeniorNotesDue2028,,Nasdaq Stock Market LLC,2.375% Senior Notes due 2028,dimensioned,False
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,A2.500SeniorNotesDue2029,,Nasdaq Stock Market LLC,2.500% Senior Notes due 2029,dimensioned,False
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,A2.875SeniorNotesDue2031,,Nasdaq Stock Market LLC,2.875% Senior Notes due 2031,dimensioned,False
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,A3.000SeniorNotesDue2033,,Nasdaq Stock Market LLC,3.000% Senior Notes due 2033,dimensioned,False
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,A3.125SeniorNotesDue2034,,Nasdaq Stock Market LLC,3.125% Senior Notes due 2034,dimensioned,False
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,A3.375SeniorNotesDue2037,,Nasdaq Stock Market LLC,3.375% Senior Notes due 2037,dimensioned,False
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,A3.500SeniorNotesDue2038,,Nasdaq Stock Market LLC,3.500% Senior Notes due 2038,dimensioned,False
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,A4.000SeniorNotesDue2044,,Nasdaq Stock Market LLC,4.000% Senior Notes due 2044,dimensioned,False
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,A3.875SeniorNotesDue2045,,Nasdaq Stock Market LLC,3.875% Senior Notes due 2045,dimensioned,False
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,A4.000SeniorNotesDue2054,,Nasdaq Stock Market LLC,4.000% Senior Notes due 2054,dimensioned,False
+1652044,Alphabet Inc.,0001652044-26-000018,2026-02-05,A4.375SeniorNotesDue2064,,Nasdaq Stock Market LLC,4.375% Senior Notes due 2064,dimensioned,False
+1671933,"Trade Desk, Inc.",0001671933-26-000014,2026-02-27,CommonClassA,TTD,The Nasdaq Stock Market LLC,"Class A Common Stock, par value $0.000001 per share",title,True
+1674101,Vertiv Holdings Co,0001674101-26-000008,2026-02-13,CommonClassA,VRT,New York Stock Exchange,"Class A common stock, $0.0001 par value per share",title,True
+1679788,"Coinbase Global, Inc.",0001679788-26-000015,2026-02-12,CommonClassA,COIN,The Nasdaq Stock Market LLC,"Class A common stock, $0.00001 par value per share",title,True
+1690820,CARVANA CO.,0001690820-26-000009,2026-02-18,CommonClassA,CVNA,New York Stock Exchange,"Class A Common Stock, Par Value $0.001 Per Share",title,True
+1701605,Baker Hughes Co,0001701605-26-000007,2026-02-05,CommonClassA,BKR,The Nasdaq Stock Market LLC,"Class A Common Stock, $0.0001 Par Value per Share",title,True
+1701605,Baker Hughes Co,0001701605-26-000007,2026-02-05,,BKR40,The Nasdaq Stock Market LLC,"5.125% Senior Notes due 2040 of Baker Hughes Holdings LLC and Baker Hughes Co-Obligor, Inc.",unresolved,False
+1713445,"Reddit, Inc.",0001713445-26-000022,2026-02-06,CommonClassA,RDDT,New York Stock Exchange,"Class A common stock, par value $0.0001 per share",title,True
+1751008,AppLovin Corp,0001751008-26-000010,2026-02-19,CommonClassA,APP,The Nasdaq Stock Market LLC,"Class A common stock, par value $0.00003 per share",title,True
+1754301,Fox Corp,0001628280-26-053960,2026-08-06,CommonClassA,FOXA,The Nasdaq Global Select Market,"Class A Common Stock, par value $0.01 per share",dimensioned,True
+1754301,Fox Corp,0001628280-26-053960,2026-08-06,CommonClassB,FOX,The Nasdaq Global Select Market,"Class B Common Stock, par value $0.01 per share",dimensioned,True
+1783879,"Robinhood Markets, Inc.",0001783879-26-000023,2026-02-18,CommonClassA,HOOD,The Nasdaq Stock Market,Class A Common Stock - $0.0001 par value per share,title,True
+1792789,"DoorDash, Inc.",0001792789-26-000013,2026-02-18,CommonClassA,DASH,The Nasdaq Stock Market,"Class A common stock, par value of $0.00001 per share",title,True
+1973266,"TKO Group Holdings, Inc.",0001193125-26-071651,2026-02-25,CommonClassA,TKO,The New York Stock Exchange,"Class A Common Stock, par value $0.00001 per share",title,True
+2041610,Paramount Skydance Corp,0002041610-26-000011,2026-02-25,CommonClassB,PSKY,The Nasdaq Stock Market LLC,"Class B Common Stock, $0.001 par value",title,True

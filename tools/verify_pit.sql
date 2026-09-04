@@ -190,10 +190,15 @@ WITH cov AS (
     WHERE peer_level='sector' AND fiscal_year=2024
     GROUP BY concept
 )
+-- Floors re-based on 2026-09-04 when the panel became the index of the
+-- time: a company promoted into the S&P 500 during 2025 was an S&P 400
+-- member at its FY2024 period end, and the 400 has no replayed history,
+-- so it is in no FY2024 panel. Revenue 1,428 (was 1,479 on today's
+-- survivors), total_debt 1,063, gross_profit 844.
 SELECT CASE WHEN
-            COALESCE((SELECT n FROM cov WHERE concept='total_debt'),0)   >= 1050
-        AND COALESCE((SELECT n FROM cov WHERE concept='gross_profit'),0) >=  830
-        AND COALESCE((SELECT n FROM cov WHERE concept='revenue'),0)      >= 1470
+            COALESCE((SELECT n FROM cov WHERE concept='total_debt'),0)   >= 1040
+        AND COALESCE((SELECT n FROM cov WHERE concept='gross_profit'),0) >=  820
+        AND COALESCE((SELECT n FROM cov WHERE concept='revenue'),0)      >= 1400
        THEN 'PASS' ELSE 'FAIL' END AS status,
        (SELECT n FROM cov WHERE concept='total_debt')     AS total_debt,
        (SELECT n FROM cov WHERE concept='gross_profit')   AS gross_profit,
@@ -594,7 +599,10 @@ FROM (
 -- while no issuer files BOTH of them with no total in the same year --
 -- that shape would resolve to the goods line alone -- so it is asserted
 -- absent here rather than assumed.
-SELECT CASE WHEN fy2015 >= 1200 AND fy2024 >= 1470 AND half_company = 0
+-- Floors re-based on 2026-09-04 for the dated panel: FY2015 1,192 (a
+-- company in today's S&P 500 that was an S&P 400 member in 2015 is in
+-- no FY2015 panel until the 400's history is replayed), FY2024 1,428.
+SELECT CASE WHEN fy2015 >= 1150 AND fy2024 >= 1400 AND half_company = 0
             THEN 'PASS' ELSE 'FAIL' END AS status,
        fy2015 AS ciks_with_revenue_fy2015, fy2024 AS ciks_with_revenue_fy2024,
        half_company AS cik_years_with_both_components_and_no_total
@@ -682,4 +690,99 @@ FROM (
     SELECT COUNT(*) FILTER (WHERE reason = 'exchange_notice') AS exchange_notices,
            COUNT(*) FILTER (WHERE reason = 'deregistration')  AS deregistrations
     FROM sec_reference.delisting_event
+) t;
+
+\echo '=== 43. S&P 500 history: captures are complete and members resolve ==='
+-- 214 monthly Wikipedia captures, none undersized; CIKs from the page,
+-- by continuity, or by name; 40 tickers unresolved (21 inside DERA
+-- coverage), listed in index_membership_unresolved rather than guessed.
+SELECT CASE WHEN captures >= 200 AND partial = 0 AND unresolved_in_coverage <= 30
+             AND m2009 BETWEEN 470 AND 530 AND m2015 BETWEEN 490 AND 530 AND ever >= 800
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       captures, partial, unresolved_in_coverage, m2009 AS members_2009_06_30,
+       m2015 AS members_2015_06_30, ever AS ever_members
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_reference.index_capture WHERE index_name = 'SP500') AS captures,
+           (SELECT COUNT(*) FROM sec_reference.index_capture WHERE index_name = 'SP500' AND is_partial) AS partial,
+           (SELECT COUNT(*) FROM sec_reference.index_membership_unresolved
+             WHERE last_seen >= DATE '2009-04-15') AS unresolved_in_coverage,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2009-06-30')) AS m2009,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2015-06-30')) AS m2015,
+           (SELECT COUNT(DISTINCT cik) FROM sec_reference.index_membership
+             WHERE index_name = 'SP500' AND source = 'wikipedia_history') AS ever
+) t;
+
+\echo '=== 44. S&P 500 membership is dated: joins and exits land where they happened ==='
+-- SVB Financial joined 2018-03 and collapsed 2023-03; Tesla was added
+-- 2020-12-21; Twitter left 2022-10 when taken private. A
+-- current-snapshot universe gets every one of these wrong.
+SELECT CASE WHEN svb_2019 AND NOT svb_2024 AND NOT tsla_2020 AND tsla_2021 AND twtr_2020 AND NOT twtr_2024
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       svb_2019, svb_2024, tsla_2020, tsla_2021, twtr_2020, twtr_2024
+FROM (
+    SELECT EXISTS (SELECT 1 FROM sec_reference.index_members('SP500', DATE '2019-06-30') WHERE cik = 719739)  AS svb_2019,
+           EXISTS (SELECT 1 FROM sec_reference.index_members('SP500', DATE '2024-06-30') WHERE cik = 719739)  AS svb_2024,
+           EXISTS (SELECT 1 FROM sec_reference.index_members('SP500', DATE '2020-06-30') WHERE cik = 1318605) AS tsla_2020,
+           EXISTS (SELECT 1 FROM sec_reference.index_members('SP500', DATE '2021-06-30') WHERE cik = 1318605) AS tsla_2021,
+           EXISTS (SELECT 1 FROM sec_reference.index_members('SP500', DATE '2020-06-30') WHERE cik = 1418091) AS twtr_2020,
+           EXISTS (SELECT 1 FROM sec_reference.index_members('SP500', DATE '2024-06-30') WHERE cik = 1418091) AS twtr_2024
+) t;
+
+\echo '=== 45. The sp500 universe recovers companies that have since failed ==='
+-- The index universe must contain 2015 members that later delisted or
+-- deregistered; today's list contains none of them.
+SELECT CASE WHEN members BETWEEN 450 AND 560 AND since_delisted >= 40 THEN 'PASS' ELSE 'FAIL' END AS status,
+       members AS securities_2015_06_30, since_delisted
+FROM (
+    SELECT COUNT(*) AS members, COUNT(*) FILTER (WHERE s.delisting_date IS NOT NULL) AS since_delisted
+    FROM sec_reference.universe_at('sp500', DATE '2015-06-30') u
+    JOIN sec_reference.security s USING (security_id)
+) t;
+
+\echo '=== 46. Every share-class mapping cites its source ==='
+-- 27 rows are hand-mapped and 72 derived from 10-K cover pages. Every
+-- row carries a substantive source_note, and every cover-page row names
+-- the accession number it was read from.
+SELECT CASE WHEN total >= 90 AND blank = 0 AND cover_uncited = 0 AND ciks >= 60 THEN 'PASS' ELSE 'FAIL' END AS status,
+       total AS mapping_rows, ciks, blank AS rows_without_a_note, cover_uncited AS cover_page_rows_without_accession
+FROM (
+    SELECT COUNT(*) AS total, COUNT(DISTINCT cik) AS ciks,
+           COUNT(*) FILTER (WHERE COALESCE(length(source_note), 0) < 20) AS blank,
+           -- tool-derived rows name the accession; hand-mapped rows name the form
+           COUNT(*) FILTER (WHERE source_note LIKE '%cover page%'
+                              AND source_note !~ '\d{10}-\d{2}-\d{6}'
+                              AND source_note !~ '10-[KQ]') AS cover_uncited
+    FROM sec_reference.share_class
+) t;
+
+\echo '=== 47. Gold cross-sections are the index of the time ==='
+-- peer_stats admits a company to a fiscal year only if it was a
+-- constituent on the period end date. Tesla joined the S&P 500 on
+-- 2020-12-21: its FY2018 must be absent and its FY2021 present. SVB
+-- Financial: in for FY2019, gone for FY2024. The FY2012 panel must hold
+-- 2012's members (previously only today's survivors, ~340 of them).
+SELECT CASE WHEN NOT tsla_2018 AND tsla_2021 AND svb_2019 AND NOT svb_2024 AND fy2012 >= 450 AND fy2024 >= 480
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       tsla_2018, tsla_2021, svb_2019, svb_2024, fy2012 AS sp500_with_revenue_fy2012, fy2024 AS sp500_with_revenue_fy2024
+FROM (
+    SELECT EXISTS (SELECT 1 FROM sec_gold.peer_stats WHERE cik = 1318605 AND fiscal_year = 2018 AND concept = 'revenue' AND peer_level = 'sector') AS tsla_2018,
+           EXISTS (SELECT 1 FROM sec_gold.peer_stats WHERE cik = 1318605 AND fiscal_year = 2021 AND concept = 'revenue' AND peer_level = 'sector') AS tsla_2021,
+           EXISTS (SELECT 1 FROM sec_gold.peer_stats WHERE cik = 719739  AND fiscal_year = 2019 AND concept = 'total_assets' AND peer_level = 'sector') AS svb_2019,
+           EXISTS (SELECT 1 FROM sec_gold.peer_stats WHERE cik = 719739  AND fiscal_year = 2024 AND concept = 'total_assets' AND peer_level = 'sector') AS svb_2024,
+           (SELECT COUNT(DISTINCT cik) FROM sec_gold.peer_stats WHERE peer_level = 'sector' AND concept = 'revenue' AND index_name = 'SP500' AND fiscal_year = 2012) AS fy2012,
+           (SELECT COUNT(DISTINCT cik) FROM sec_gold.peer_stats WHERE peer_level = 'sector' AND concept = 'revenue' AND index_name = 'SP500' AND fiscal_year = 2024) AS fy2024
+) t;
+
+\echo '=== 48. The S&P 500 share denominator is nearly complete and never guessed ==='
+-- Every current constituent should have per-class share counts, either
+-- inferred (single class by the filings) or mapped from its cover page;
+-- the few that remain are the covers that say only "Common Stock" against
+-- A/B members and are listed by the tool for a hand decision.
+SELECT CASE WHEN in_denominator >= 480 AND members BETWEEN 495 AND 510 THEN 'PASS' ELSE 'FAIL' END AS status,
+       members AS sp500_members_today, in_denominator, via_mapping, members - in_denominator AS missing
+FROM (
+    SELECT COUNT(*) AS members,
+           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM sec_gold.share_class_shares s WHERE s.cik = m.cik)) AS in_denominator,
+           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM sec_gold.share_class_shares s WHERE s.cik = m.cik AND s.method = 'mapped_class')) AS via_mapping
+    FROM sec_reference.index_members('SP500', CURRENT_DATE) m
 ) t;

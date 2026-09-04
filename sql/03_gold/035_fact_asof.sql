@@ -32,10 +32,12 @@ SELECT
     co.name_latest          AS company_name,
     -- Carried here so a cross-sectional as-of screen can group by
     -- sector without re-joining 98M rows back to the universe.
-    -- Resolved once per company, not as of a date: the universe is a
-    -- present-day snapshot with no classification history.
-    u.gics_sector,
-    u.gics_sub_industry,
+    -- As of the fact's availability date where the membership history
+    -- has a classification for it (the replayed S&P 500), else the
+    -- company's latest known classification, else NULL for a company
+    -- that was never in an index.
+    COALESCE(asof.gics_sector, latest.gics_sector)             AS gics_sector,
+    COALESCE(asof.gics_sub_industry, latest.gics_sub_industry) AS gics_sub_industry,
     n.tag,
     n.tlabel                AS metric,
     n.value_date,
@@ -54,16 +56,18 @@ SELECT
     n.is_original_disclosure
 FROM sec_silver.num_silver n
 JOIN sec_reference.company co ON co.cik = n.cik
--- Single-valued: at most one row, so this cannot multiply facts even
--- for a company holding several share classes.
+-- Both laterals are single-valued (LIMIT 1), so they cannot multiply
+-- facts even for a company holding several share classes.
 LEFT JOIN LATERAL (
-    SELECT u2.gics_sector, u2.gics_sub_industry
-    FROM sec_reference.company_ticker ct2
-    JOIN sec_silver.universe_sp1500   u2 ON u2.ticker = ct2.ticker
-    WHERE ct2.cik = n.cik
-    ORDER BY ct2.is_primary DESC, ct2.valid_from DESC
+    SELECT m.gics_sector, m.gics_sub_industry
+    FROM sec_reference.index_membership m
+    WHERE m.cik = n.cik
+      AND m.valid_from <= n.tradable_from
+      AND (m.valid_to IS NULL OR m.valid_to > n.tradable_from)
+    ORDER BY (m.source = 'wikipedia_history') DESC, m.valid_from DESC
     LIMIT 1
-) u ON TRUE
+) asof ON TRUE
+LEFT JOIN sec_reference.index_membership_latest latest ON latest.cik = n.cik
 WHERE n.segments IS NULL
   AND n.coreg    IS NULL
   -- DERA carries filer typos: value_dates as early as 1980 and as late

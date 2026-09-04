@@ -20,14 +20,15 @@ one document. A confidently wrong doc is worse than no doc.
 | Layer design or build ordering | `docs/architecture.md` |
 | Anything shipped or newly blocked | `features.md` — status snapshot **and** the Shipped list |
 | A SQL file's location or purpose | its own header, and `docs/gold_tables.md`'s source-files table |
-| The crosswalk, spine or security derivation | `docs/data_sources.md` (capture quality, rules), then `dera rebuild-reference` |
+| The crosswalk, index history, spine or security derivation | `docs/data_sources.md` (capture quality, rules), then `dera rebuild-reference` |
+| A share-class mapping | `data/reference/share_class_map.csv` with a cited source_note; prefer `tools/fetch_cover_page_classes.py` |
 | A pure Python function | `tests/test_pure_functions.py` |
 
 ### Before committing
 
 ```bash
 uv run dera verify-docs    # object names (prose and SQL), paths, CLI commands, cross-links
-uv run dera verify         # 42 data-correctness checks
+uv run dera verify         # 48 data-correctness checks
 uv run pytest              # unit tests, no database
 uv run ruff check .        # what CI runs
 ```

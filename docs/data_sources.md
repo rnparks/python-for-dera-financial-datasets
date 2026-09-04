@@ -20,7 +20,8 @@ data. Five acquisition paths, in rough order of how much they matter:
 | 1 | SEC DERA Financial Statement Data Sets | `data/raw/<year>q<n>/` | **29 GB** | `dera download` |
 | 2 | EDGAR bulk submissions archive | `data/edgar/submissions.zip` | **1.5 GB** | `dera fetch-filing-index` |
 | 3 | SEC company-ticker crosswalk + Internet Archive | `data/reference/ticker_history.csv.gz` | 15 MB | `tools/fetch_ticker_history.py` |
-| 4 | Wikipedia S&P index pages | `data/reference/sp1500_universe.csv` | 102 KB | `tools/fetch_sp1500.py` |
+| 4 | Wikipedia S&P index pages, today and (S&P 500) every month since 2008 | `data/reference/sp1500_universe.csv`, `sp500_history.csv.gz` | 102 KB, 0.7 MB | `tools/fetch_sp1500.py`, `tools/fetch_sp500_history.py` |
+| 4b | Issuer 10-K cover pages (inline XBRL) | `data/reference/share_class_map.csv`, `cover_page_classes.csv` | small | `tools/fetch_cover_page_classes.py` |
 | 5 | NYSE trading calendar | `data/reference/trading_calendar.csv` | 256 KB | `tools/build_calendar.py` |
 
 Plus a small set of hand-maintained files described under [Manual inputs](#manual-inputs).
@@ -143,28 +144,79 @@ asserts the newest capture is a recent live fetch.
 
 ## 4. Wikipedia S&P index constituent pages
 
-**Today's S&P 1500 membership**, and the only free path to historical membership.
+**Today's S&P 1500 membership, and — for the S&P 500 — dated membership since
+2008, replayed from the page's revision history.**
 
 - **Pages**: `List_of_S&P_{500,400,600}_companies`
-- **Becomes**: `sec_silver.universe_sp1500` (current membership only, **no dates**)
+- **Today**: `tools/fetch_sp1500.py` → `sec_silver.universe_sp1500` (no dates)
+- **History**: `tools/fetch_sp500_history.py` → `data/reference/sp500_history.csv.gz`
+  → `sec_reference.index_observation` → `index_membership`
 
-Historical membership would come from replaying page revisions. That is not yet
-built, and the coverage limit is worth recording because it is not what you would
-guess — the constraint is **not revision depth** but whether the page carried a
-CIK column:
+The history tool asks the MediaWiki API for the latest revision at the start of
+each month from October 2008 and parses the rendered constituents table: **214
+captures**, 107,555 constituent sightings, table sizes 496–505 (no capture was
+undersized; the same 85%-of-window rule as the crosswalk stands guard anyway).
+Because the page carried GICS sector on every revision and sub-industry from
+2016, the classification is **as of** for the first time.
+
+**CIK resolution.** The page has a CIK column only from 2014. Earlier rows are
+resolved three ways, in order, each recorded in `cik_source`: the page itself;
+**continuity** — a ticker present in every capture from the row up to the first
+capture with a CIK is the same company, since a recycled ticker shows a removal
+and a later re-addition; and the **name**, normalised, matching exactly one
+company the spine has ever known under any name and that was filing at the time.
+Measured: 74,743 sightings from the page, 28,851 by continuity, 3,373 by name;
+**40 tickers unresolved** (588 sightings), 21 of them ending inside DERA coverage
+— Sunoco, J.C. Penney, Washington Post, Viacom's two Viacoms — listed in
+`sec_reference.index_membership_unresolved` and never guessed. The 2009-06-30
+cross-section resolves 497 of its members; 840 companies have been in the index
+since 2008 against 503 on today's page.
+
+**Granularity.** Membership starts at the page's own "date added" where it has
+one (Tesla: 2020-12-21), else the first monthly capture, and ends at the first
+capture that no longer lists the company. A mid-month replacement therefore
+overlaps by up to a month, so a cross-section can count a few more than 500
+(518 on 2015-06-30). The page's "changes" table has exact dates and is the
+obvious refinement.
+
+The coverage limit for the other two indexes is not revision depth but whether
+the page carried a CIK column:
 
 | Index | Real CIK column | Ticker + name only |
 |---|---|---|
-| S&P 500 | 2014 → now | 2009–2013 |
+| S&P 500 | 2014 → now | 2008–2013 (resolved as above) |
 | S&P 400 | **never**, including the 2026 page | 2011 → now |
 | S&P 600 | 2019 → now | — |
 
-The 2009 S&P 500 page's "SEC filings" link reads `CIK=MMM` — a *ticker* in an
-EDGAR URL that accepts either. Also measured: ~1.6% of revisions are malformed
-(one 309-byte anonymous edit, reverted within five minutes, truncated the parsed
-table from 506 companies to 370), and a removed ticker survives in the page text
-for months inside the changes table, so any diff must run against the
-`id="constituents"` table alone.
+Until those are replayed, `index_membership` carries the 400 and 600 as a single
+interval from 1900-01-01 with `source = 'current_snapshot'` — the old
+survivorship-biased state, confined to two indexes and labelled. Also measured:
+~1.6% of revisions are malformed (one 309-byte anonymous edit truncated the
+table from 506 companies to 370), and a removed ticker survives for months in
+the page's changes table, so only the constituents table is read.
+
+## 4b. Issuer 10-K cover pages (share-class mapping)
+
+- **Source**: each dual-class issuer's latest 10-K primary document on EDGAR,
+  located through the bulk submissions archive
+- **Tool**: `tools/fetch_cover_page_classes.py`
+- **Becomes**: candidate rows for `data/reference/share_class_map.csv` →
+  `sec_reference.share_class`; every cover line is recorded in
+  `data/reference/cover_page_classes.csv`
+
+Since 2019 the cover page tags `dei:TradingSymbol`, `dei:SecurityExchangeName`
+and `dei:Security12bTitle` in inline XBRL, and the `StatementClassOfStockAxis`
+member on those facts is exactly what DERA renders into `num_silver.segments`.
+Where an issuer registers a single class it tags the symbol in the default
+context and names the class in the 12(b) title ("Class B Common Stock" for Nike),
+which is matched to the one member carrying that class's share counts. Spelling
+changes (BFA → BF-A) and renames (FB → META, SQ → XYZ) become dated rows from the
+crosswalk's own intervals. Measured on the dual-class S&P 500 issuers (two or more class members on the
+three point-in-time share-count tags): 72 cited mapping rows across 57 issuers;
+a dozen covers say only "Common Stock" against A/B members (Blackstone, CDW,
+Domino's, Interactive Brokers, Zoetis, Quanta, Cboe, EOG, Generac and others)
+and are reported for a hand decision. Unlisted classes are never mapped by the tool:
+they need a conversion ratio the cover does not state.
 
 ## 5. NYSE trading calendar
 
@@ -197,7 +249,7 @@ filing, because a filing accepted after the last session would get a NULL
 
 | File | Rows | What it is |
 |---|---|---|
-| `share_class_map.csv` | 27 across 9 CIKs | Hand-mapped share class → ticker, each citing its filing |
+| `share_class_map.csv` | 99 across 66 CIKs | Share class → ticker allowlist: 27 hand-mapped rows citing filings, 72 derived from 10-K cover pages by `tools/fetch_cover_page_classes.py` |
 | `tickers.csv` | 10,221 | Legacy CIK ↔ ticker crosswalk (December 2025). Loads `sec_silver.ticker_map` only; no longer a fallback for anything |
 | `wayback_stamps.json` | — | The archive captures the last crosswalk run resolved to, keyed by the probe set that produced them |
 | `GAAP Taxonomy 2024.xlsx` | — | Reference taxonomy, not loaded by the pipeline |
@@ -270,9 +322,12 @@ uv run dera fetch-filing-index                   # EDGAR archive, ~1.5 GB
 uv run dera build-security-model                 # security lifecycle
 
 uv run python tools/fetch_ticker_history.py --batch 0   # all captures + live file
+uv run python tools/fetch_sp500_history.py --batch 0    # S&P 500 revisions (resumes)
+uv run python tools/fetch_sp1500.py              # today's S&P 1500
+uv run python tools/fetch_cover_page_classes.py --sp500 --write-map   # dual-class mappings
 uv run dera rebuild-reference                    # spine -> security model -> gold
-uv run python tools/fetch_sp1500.py              # S&P membership
 ```
 
-A crosswalk refresh always ends with `rebuild-reference`: rebuilding the spine
-drops the gold matviews, so the three stages have to run in that order.
+A crosswalk, membership or mapping refresh always ends with `rebuild-reference`:
+rebuilding the spine drops the gold matviews, so the three stages have to run in
+that order.

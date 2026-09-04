@@ -27,20 +27,41 @@
 -- before it gets a market cap; the benefit is that it never gets a wrong
 -- one.
 --
--- THE SECOND DESIGN CHOICE: single-class means "never held two tickers
--- at once", NOT "holds one ticker today".
+-- THE SECOND DESIGN CHOICE: single-class is decided by the FILINGS, not
+-- by counting tickers.
 --
 -- The first version inferred a single-class issuer from having exactly
 -- one ticker with valid_to IS NULL, i.e. current today. Every company
 -- that had delisted therefore had no rows at all: measured 2026-09-04,
 -- 12,835 CIKs carried consolidated share counts and only 4,346 were
 -- here, 4,998 of the rest excluded for no reason but having failed.
--- That is survivorship bias in the one table that exists to compute
--- historical market caps. The rule is now that no two of the company's
--- ticker intervals overlap -- the spine marks exactly one primary
--- interval per overlapping run, so "every interval is primary" is that
--- test -- and the price ticker is resolved AS OF each fact's
--- availability date, with a flag saying whether it was.
+-- The second version required that no two ticker intervals overlap,
+-- which fixed the delisted case but still excluded every company with a
+-- listed preferred, baby bond or ADR line: 147 of the S&P 500 alone,
+-- Bank of America with its seventeen tickers among them. And it quietly
+-- ADMITTED dual-class issuers whose second class is unlisted -- Meta,
+-- Nike, Visa -- pricing the consolidated count at the listed class on an
+-- unverified 1:1 conversion (Visa's Class B does not convert 1:1).
+--
+-- The filings settle both. An issuer with two classes of common stock
+-- reports its share counts per class on the ClassOfStock axis; an
+-- issuer with one class and any number of preferreds does not. So:
+--
+--   single class  <=>  no share_class mapping AND at most one distinct
+--                      single-axis ClassOfStock member on the two
+--                      outstanding-share tags across its history
+--
+-- Measured on 2026-09-04: of the 147 excluded S&P 500 companies 136
+-- have zero or one member and are recovered; the 35 with two or more are
+-- precisely the dual-class issuers (Alphabet, Meta, Nike, Visa,
+-- Mastercard, Comcast, ...) and need a cited mapping, which
+-- tools/fetch_cover_page_classes.py derives from their own 10-K cover
+-- pages. Across the whole spine the rule admits 2,547 companies and
+-- withdraws 1,051 unmapped dual-class ones, which is the allowlist doing
+-- its job. The price ticker is the PRIMARY ticker as of each fact's
+-- availability date -- the spine marks one primary per overlapping run
+-- and the common line is the primary -- with a flag saying whether it
+-- was resolved as of the date.
 --
 -- POINT-IN-TIME COMES FREE. num_silver partitions its vintage chains by
 -- `segments`, so every share class already has its own independent
@@ -118,17 +139,40 @@ mapped AS (
      AND (sc.effective_to IS NULL OR f.value_date < sc.effective_to)
     ORDER BY f.cik, sc.class_label, f.value_date, f.vintage_seq, f.rung, f.qtrs
 ),
--- (2) Single-class issuers need no mapping: one listed line at any one
---     time, so the consolidated count IS the class count. Deterministic,
---     and it keeps the mapping file to genuine exceptions only. A ticker
---     change (TRTC then UNRV) keeps a company here; a second listed line
---     -- a preferred, a second class -- removes it, as it should.
+-- (2) Single-class issuers need no mapping: one class of common stock,
+--     so the consolidated count IS the class count. Decided from the
+--     filings (see the header): an issuer that has ever reported share
+--     counts for two or more ClassOfStock members is dual-class and
+--     needs a mapping; everyone else with a ticker history is here,
+--     preferreds, notes and delistings notwithstanding.
+-- Every single-axis ClassOfStock member an issuer has ever put a share
+-- count under, on the three POINT-IN-TIME tags: Lennar and UPS report
+-- per class only under CommonStockSharesIssued and would be invisible to
+-- a test on the outstanding tags alone, while the weighted-average tag
+-- carries junk members (General Motors files ClassOfStock=
+-- EarningsPerShareBasic on it) that would flag single-class issuers.
+share_members AS (
+    SELECT cik, segments AS member
+    FROM share_facts
+    WHERE segments LIKE 'ClassOfStock=%'
+      AND segments NOT LIKE '%;%;%'      -- single axis only
+      AND rung <= 3
+    GROUP BY cik, segments
+),
+multi_class AS (
+    SELECT cik FROM share_members GROUP BY cik HAVING COUNT(*) >= 2
+),
+-- An issuer with exactly ONE member has one class; its member rows are
+-- the consolidated count under another name (Bunge files
+-- ClassOfStock=CommonStock and nothing undimensioned).
+sole_member AS (
+    SELECT cik, MIN(member) AS member FROM share_members GROUP BY cik HAVING COUNT(*) = 1
+),
 single_class AS (
-    SELECT ct.cik
+    SELECT DISTINCT ct.cik
     FROM sec_reference.company_ticker ct
     WHERE NOT EXISTS (SELECT 1 FROM sec_reference.share_class sc WHERE sc.cik = ct.cik)
-    GROUP BY ct.cik
-    HAVING COUNT(*) = COUNT(*) FILTER (WHERE ct.is_primary)
+      AND NOT EXISTS (SELECT 1 FROM multi_class mc WHERE mc.cik = ct.cik)
 ),
 inferred AS (
     SELECT DISTINCT ON (f.cik, f.value_date, f.vintage_seq)
@@ -150,14 +194,17 @@ inferred AS (
     FROM share_facts f
     JOIN single_class sc ON sc.cik = f.cik
     JOIN sec_reference.company_label cl ON cl.cik = f.cik
-    -- Single-valued for a single-class issuer: its intervals do not
-    -- overlap, so at most one covers the date.
+    -- Single-valued: exactly one PRIMARY interval covers any date (the
+    -- spine marks one primary per overlapping run), and for a
+    -- single-class issuer the primary is the common line -- the
+    -- preferreds and notes are the non-primary ones.
     LEFT JOIN sec_reference.company_ticker ct
            ON ct.cik = f.cik
           AND ct.is_primary
           AND ct.valid_from <= f.tradable_from
           AND (ct.valid_to > f.tradable_from OR ct.valid_to IS NULL)
-    WHERE f.segments IS NULL          -- consolidated only for these
+    LEFT JOIN sole_member sm ON sm.cik = f.cik
+    WHERE f.segments IS NULL OR f.segments = sm.member   -- consolidated, or the one class
     ORDER BY f.cik, f.value_date, f.vintage_seq, f.rung, f.qtrs
 )
 SELECT m.*, co.name_latest AS company_name
@@ -174,8 +221,9 @@ COMMENT ON MATERIALIZED VIEW sec_gold.share_class_shares IS
     'Per-share-class share counts, the market-cap denominator. One row '
     'per (company, class, period, vintage, source tag). A class appears '
     'only if explicitly mapped in sec_reference.share_class, or if the '
-    'issuer never held two tickers at once (delisted issuers included). '
-    'Unmapped classes contribute nothing, by design.';
+    'issuer has never reported share counts for two ClassOfStock members '
+    '(single class; preferreds, notes and delistings do not matter). '
+    'Unmapped dual-class issuers contribute nothing, by design.';
 COMMENT ON COLUMN sec_gold.share_class_shares.price_ticker IS
     'The ticker whose price applies to these shares. For an unlisted '
     'class this is the listed class it converts into, and '

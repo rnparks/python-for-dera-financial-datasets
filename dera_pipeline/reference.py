@@ -192,6 +192,56 @@ def load_ticker_history(conn: psycopg.Connection, csv_path: Path) -> int:
     return len(rows)
 
 
+def load_index_history(conn: psycopg.Connection, csv_path: Path,
+                       index_name: str = "SP500") -> int:
+    """Load data/reference/sp500_history.csv(.gz) → sec_reference.index_observation.
+
+    One row per (capture, ticker) from tools/fetch_sp500_history.py.
+    Replaces the rows for *index_name* only, so a second index's history
+    can be loaded alongside. Blank CIKs stay NULL: the page carried no
+    CIK before 2014 and resolution is done in SQL, where it is auditable.
+    """
+    rows: list[tuple] = []
+    seen: set[tuple[str, str]] = set()
+    with _open_text(csv_path) as f:
+        for row in csv.DictReader(f):
+            ticker = (row.get("ticker") or "").strip().upper()
+            day = row.get("observed_on") or ""
+            if not ticker or not day or (day, ticker) in seen:
+                continue
+            seen.add((day, ticker))
+            cik = (row.get("cik") or "").strip()
+            # The page's "date added" is free text and has carried
+            # vandalism ("1978-21-31"); anything that is not a real date
+            # is NULL, never an error.
+            try:
+                added = dt.date.fromisoformat((row.get("date_added") or "").strip()[:10])
+            except ValueError:
+                added = None
+            rows.append((
+                index_name, day, int(row["revid"]), ticker,
+                (row.get("name") or None),
+                int(cik) if cik.isdigit() else None,
+                (row.get("gics_sector") or None),
+                (row.get("gics_sub_industry") or None),
+                added,
+            ))
+    if not rows:
+        raise ValueError(f"{csv_path} contained no constituent observations")
+
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM sec_reference.index_observation WHERE index_name = %s",
+                    (index_name,))
+        with cur.copy(
+            "COPY sec_reference.index_observation "
+            "(index_name, observed_on, revid, ticker, name, cik, gics_sector, "
+            " gics_sub_industry, date_added) FROM STDIN"
+        ) as cp:
+            for r in rows:
+                cp.write_row(r)
+    return len(rows)
+
+
 def load_share_class_map(conn: psycopg.Connection, csv_path: Path) -> int:
     """Load data/reference/share_class_map.csv → sec_reference.share_class.
 
@@ -296,6 +346,20 @@ def load_calendar_only(conn: psycopg.Connection) -> int:
         print(f"  share_class      → {m:>6,} class mappings")
     else:
         print("  share_class_map.csv absent — no per-class share data")
+
+    # Optional: without it the S&P 500 has no dated membership and the
+    # index_membership derivation falls back to today's snapshot for it,
+    # labelled current_snapshot, exactly as for the 400 and 600.
+    hist = config.REFERENCE_DIR / "sp500_history.csv.gz"
+    if not hist.exists():
+        hist = config.REFERENCE_DIR / "sp500_history.csv"
+    if hist.exists():
+        k = load_index_history(conn, hist, "SP500")
+        print(f"  index_observation → {k:>6,} S&P 500 constituent sightings")
+    else:
+        print("  sp500_history.csv.gz absent — S&P 500 membership will be "
+              "today's snapshot only. Build it with "
+              "`uv run python tools/fetch_sp500_history.py --batch 0`.")
     return n
 
 
