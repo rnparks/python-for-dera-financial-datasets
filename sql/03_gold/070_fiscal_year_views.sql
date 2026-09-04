@@ -33,6 +33,29 @@
 -- totals) while balance-sheet items filter qtrs=0 (point-in-time
 -- snapshots). It honors the same mode parameter as get_canonical()
 -- so backtests and fundamental analysis share one function family.
+--
+-- HOW A DERIVED CONCEPT IS RESOLVED, AND WHY THE NEWEST PERIOD WINS.
+--
+-- Two things were wrong in the previous version, both found by
+-- measuring rather than reading:
+--
+--   1. The formula branch took its candidate periods only from operands
+--      marked `required`. total_debt's two operands are both optional,
+--      so it had NO candidate periods and never derived at all: 836 of
+--      the 1,092 tracked companies that peer_stats resolves total_debt
+--      for in FY2024 got NULL here.
+--   2. It evaluated the formula at the single newest period where ANY
+--      operand existed and gave up if the formula failed there, instead
+--      of falling back to an older complete period. Five tracked
+--      companies with a derivable FY2023 gross profit returned nothing.
+--
+-- And a third, a design choice that turned out to be wrong in practice:
+-- "direct tags always win" was applied across periods, so Apple's
+-- total_debt resolved to a 2015 LongTermDebt figure ($40.1B) while its
+-- 2026 balance sheet carried the components ($82.7B). Now the direct hit
+-- and the derived hit are each found at their own newest period, and
+-- the newer period wins; a direct tag still beats a reconstruction of
+-- the same period.
 
 -- Explicit drop: CREATE OR REPLACE cannot change a RETURNS TABLE
 -- shape, so editing this signature and re-applying the single file
@@ -53,23 +76,24 @@ CREATE OR REPLACE FUNCTION sec_gold.latest_annual(
 )
 LANGUAGE sql STABLE AS $$
     WITH concept_type AS (
-        SELECT fact_type FROM sec_gold.canonical_concepts WHERE concept = p_concept
+        SELECT CASE WHEN fact_type = 'balance' THEN 0 ELSE 4 END AS qtrs
+        FROM sec_gold.canonical_concepts WHERE concept = p_concept
     ),
-    resolved AS (
+    -- Direct tags: the newest period at which any mapped tag resolves,
+    -- industry-specific rows first, then priority.
+    direct_hit AS (
         SELECT
             n.value_date,
             n.filed_date,
             n.value * m.sign_multiplier AS value,
-            n.tag,
-            m.priority,
-            m.sic_prefix
+            n.tag
         FROM sec_gold.concept_tag_map m
         JOIN sec_silver.num_silver    n ON n.tag = m.tag
         LEFT JOIN sec_silver.sub_silver s ON s.adsh = n.adsh
         CROSS JOIN concept_type ct
         WHERE m.concept = p_concept
           AND n.cik = p_cik
-          AND n.qtrs = CASE WHEN ct.fact_type = 'balance' THEN 0 ELSE 4 END
+          AND n.qtrs = ct.qtrs
           AND n.segments IS NULL AND n.coreg IS NULL
           -- Same NULL-shadowing guard as get_canonical: a priority-1
           -- tag with no parseable value must not mask a valid
@@ -83,57 +107,67 @@ LANGUAGE sql STABLE AS $$
               m.sic_prefix = ''
            OR s.sic::TEXT LIKE m.sic_prefix || '%'
           )
-    )
-    -- Direct tags first. If nothing resolved, and the concept has a
-    -- formula, compute it at the most recent period where its required
-    -- operands are available. Sourcing the date from the operands
-    -- rather than guessing keeps the components on the same statement:
-    -- a gross profit assembled from this year's revenue and last year's
-    -- cost would be worse than no answer at all.
-    SELECT * FROM (
-        SELECT r.value_date, r.filed_date, r.value, r.tag
-        FROM resolved r
         ORDER BY
-          r.value_date   DESC,        -- most recent fiscal year first
-          r.sic_prefix <> '' DESC,    -- industry-specific beats generic
-          r.priority     ASC
+          n.value_date   DESC,        -- most recent fiscal year first
+          m.sic_prefix <> '' DESC,    -- industry-specific beats generic
+          m.priority     ASC
         LIMIT 1
-    ) direct_hit
-    UNION ALL
-    SELECT d.value_date, d.filed_date,
-           sec_gold.get_canonical(p_cik, p_concept, d.value_date,
-               CASE WHEN (SELECT fact_type FROM concept_type) = 'balance'
-                    THEN 0 ELSE 4 END, p_mode),
-           NULL::TEXT AS tag        -- derived: no single source tag
+    ),
+    -- Formula: candidate periods are every period at which ANY operand
+    -- resolves (required or not), newest first, bounded to the twelve
+    -- most recent. The formula is evaluated at each until one succeeds,
+    -- so a period missing a required operand falls through to the next
+    -- rather than ending the search. Sourcing the dates from the
+    -- operands keeps the components on the same statement: a gross
+    -- profit assembled from this year's revenue and last year's cost
+    -- would be worse than no answer at all.
+    --
+    -- Inlined rather than calling latest_annual recursively: a SQL
+    -- function body is validated at CREATE time, so a self-reference
+    -- fails outright on a fresh build, and inlining keeps the one-level
+    -- rule visible here exactly as it is in get_canonical.
+    derived_hit AS (
+        SELECT x.value_date, x.filed_date, x.value, NULL::TEXT AS tag
+        FROM (
+            SELECT d.value_date, d.filed_date,
+                   sec_gold.get_canonical(p_cik, p_concept, d.value_date,
+                                          ct.qtrs, p_mode) AS value
+            FROM (
+                SELECT n.value_date, MAX(n.filed_date) AS filed_date
+                FROM sec_gold.concept_formula f
+                JOIN sec_gold.concept_tag_map m ON m.concept = f.operand
+                JOIN sec_silver.num_silver    n ON n.tag = m.tag
+                LEFT JOIN sec_silver.sub_silver s ON s.adsh = n.adsh
+                CROSS JOIN concept_type ct
+                WHERE f.concept = p_concept
+                  AND n.cik = p_cik
+                  AND n.qtrs = ct.qtrs
+                  AND n.segments IS NULL AND n.coreg IS NULL
+                  AND n.value IS NOT NULL
+                  AND (
+                      (p_mode = 'latest' AND n.rank_latest = 1)
+                   OR (p_mode = 'pit'    AND n.rank_pit    = 1)
+                  )
+                  AND (m.sic_prefix = '' OR s.sic::TEXT LIKE m.sic_prefix || '%')
+                GROUP BY n.value_date
+                ORDER BY n.value_date DESC
+                LIMIT 12
+            ) d
+            CROSS JOIN concept_type ct
+        ) x
+        WHERE x.value IS NOT NULL
+        ORDER BY x.value_date DESC
+        LIMIT 1
+    )
+    -- Newest period wins; at the same period a filed figure beats a
+    -- reconstruction.
+    SELECT u.value_date, u.filed_date, u.value, u.tag
     FROM (
-        -- Operand dates resolved inline rather than by calling
-        -- latest_annual recursively: a SQL function body is validated at
-        -- CREATE time, so a self-reference fails outright on a fresh
-        -- build. Inlining also guarantees the one-level rule holds here
-        -- exactly as it does in get_canonical.
-        SELECT n.value_date, n.filed_date
-        FROM sec_gold.concept_formula f
-        JOIN sec_gold.concept_tag_map m ON m.concept = f.operand
-        JOIN sec_silver.num_silver    n ON n.tag = m.tag
-        LEFT JOIN sec_silver.sub_silver s ON s.adsh = n.adsh
-        CROSS JOIN concept_type ct
-        WHERE f.concept = p_concept AND f.required
-          AND n.cik = p_cik
-          AND n.qtrs = CASE WHEN ct.fact_type = 'balance' THEN 0 ELSE 4 END
-          AND n.segments IS NULL AND n.coreg IS NULL
-          AND n.value IS NOT NULL
-          AND (
-              (p_mode = 'latest' AND n.rank_latest = 1)
-           OR (p_mode = 'pit'    AND n.rank_pit    = 1)
-          )
-          AND (m.sic_prefix = '' OR s.sic::TEXT LIKE m.sic_prefix || '%')
-        ORDER BY n.value_date DESC
-        LIMIT 1
-    ) d
-    WHERE NOT EXISTS (SELECT 1 FROM resolved)
-      AND sec_gold.get_canonical(p_cik, p_concept, d.value_date,
-              CASE WHEN (SELECT fact_type FROM concept_type) = 'balance'
-                   THEN 0 ELSE 4 END, p_mode) IS NOT NULL
+        SELECT dh.value_date, dh.filed_date, dh.value, dh.tag, 0 AS pref FROM direct_hit  dh
+        UNION ALL
+        SELECT xh.value_date, xh.filed_date, xh.value, xh.tag, 1 AS pref FROM derived_hit xh
+    ) u
+    ORDER BY u.value_date DESC, u.pref ASC
     LIMIT 1;
 $$;
 
@@ -161,10 +195,9 @@ $$;
 
 
 -- Company snapshot — returns one row per canonical concept with the
--- most recent annual (or point-in-time) value. Derived concepts like
--- free_cash_flow are excluded since they have no tag map entries;
--- clients compute them from the flow rows (operating_cash_flow
--- minus capex).
+-- most recent annual (or point-in-time) value. Derived concepts such as
+-- free_cash_flow and total_debt are computed through concept_formula by
+-- latest_annual, so they appear here with a value and a NULL tag.
 DROP FUNCTION IF EXISTS sec_gold.company_snapshot(TEXT, TEXT);
 
 CREATE OR REPLACE FUNCTION sec_gold.company_snapshot(

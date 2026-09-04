@@ -33,6 +33,15 @@
 -- point-in-time count. It sits last and is reported with its source so
 -- a caller can see when it was used rather than silently blending it
 -- with instant counts.
+--
+-- RECENCY VERSUS KIND. The ladder used to order by value_date first and
+-- rung second, so a period average with a newer period end beat a real
+-- point-in-time count from the quarter before. Measured 2026-09-04:
+-- 216 of 1,569 tracked companies resolved to a WeightedAverage* tag as
+-- of today, and for 87 of them an instant count within 400 days
+-- existed. Now an instant count within 400 days of the newest available
+-- period beats an average at the newest period; only when no instant
+-- count is that recent does the average win, and `source_tag` says so.
 
 -- Explicit drop: CREATE OR REPLACE cannot change a RETURNS TABLE
 -- shape, so editing this signature and re-applying the single file
@@ -58,7 +67,7 @@ LANGUAGE sql STABLE AS $$
     -- Every share-count fact knowable as of the date, including the
     -- per-class rows that the consolidated filter normally discards.
     visible AS (
-        SELECT n.tag, n.value, n.value_date, n.tradable_from, n.segments
+        SELECT n.tag, n.value, n.value_date, n.tradable_from, n.segments, n.qtrs
         FROM sec_silver.num_silver n, k
         WHERE n.cik = p_cik
           AND n.coreg IS NULL
@@ -83,7 +92,8 @@ LANGUAGE sql STABLE AS $$
                    WHEN 'CommonStockSharesIssued'                       THEN 3
                    WHEN 'WeightedAverageNumberOfDilutedSharesOutstanding' THEN 8
                    ELSE 9
-               END AS rung
+               END AS rung,
+               v.qtrs
         FROM visible v
         WHERE v.segments IS NULL
     ),
@@ -102,21 +112,14 @@ LANGUAGE sql STABLE AS $$
     -- Adding those double counts the entire company. The error happened
     -- to be only 0.067% because A shares are tiny expressed in B units,
     -- which is precisely why it went unnoticed: it looked plausible and
-    -- was wrong in principle.
-    --
-    -- So the aggregate branches on the label. Where the segments say
-    -- "Equivalent" the rows are alternative expressions of one total and
-    -- the largest is taken, that being the finest unit. Everywhere else
-    -- they are genuine separate classes and are summed. `method`
-    -- records which, because the two mean different things to a caller
-    -- computing market cap.
+    -- was wrong in principle. The A-equivalent row is now is_excluded in
+    -- the mapping, so it never reaches the sum.
     by_class AS (
         SELECT
-            -- Plain SUM is now safe: only mapped classes reach here, and
+            -- Plain SUM is safe: only mapped classes reach here, and
             -- Berkshire's duplicate A-equivalent expression is marked
             -- is_excluded in the mapping rather than being detected by
-            -- string matching. The label sniff it replaces caught one
-            -- instance of a general problem.
+            -- string matching.
             SUM(v.value) AS shares,
             v.value_date,
             MAX(v.tradable_from) AS tradable_from, v.tag AS source_tag,
@@ -125,7 +128,8 @@ LANGUAGE sql STABLE AS $$
                 WHEN 'CommonStockSharesOutstanding' THEN 4
                 WHEN 'CommonStockSharesIssued'      THEN 5
                 ELSE 9
-            END AS rung
+            END AS rung,
+            MIN(v.qtrs) AS qtrs
         FROM visible v
         -- ALLOWLIST, not a pattern match. The previous filter was
         -- `segments LIKE 'ClassOfStock=%' AND NOT ILIKE '%treasury%'`,
@@ -142,7 +146,7 @@ LANGUAGE sql STABLE AS $$
         --      total in 312 of 1,033 cases, because the axis contains
         --      aggregates, subsets and duplicates of its own members.
         --
-        -- No regex fixes (2). So the fallback now sums only classes that
+        -- No regex fixes (2). So the fallback sums only classes that
         -- sec_reference.share_class explicitly maps. Where an issuer has
         -- unmapped classes it yields nothing and the ladder falls back to
         -- a consolidated figure, which is the honest outcome.
@@ -161,22 +165,34 @@ LANGUAGE sql STABLE AS $$
               WHERE c.source_tag = v.tag AND c.value_date = v.value_date
           )
         GROUP BY v.value_date, v.tag
+    ),
+    laddered AS (
+        SELECT l.*, MAX(l.value_date) OVER () AS newest_period
+        FROM (
+            SELECT * FROM consolidated
+            UNION ALL
+            SELECT * FROM by_class
+        ) l
+        WHERE l.shares > 0
     )
     SELECT shares, value_date, tradable_from, source_tag, method
-    FROM (
-        SELECT * FROM consolidated
-        UNION ALL
-        SELECT * FROM by_class
-    ) laddered
-    WHERE shares > 0
-    -- Most recent period first, then the most trustworthy rung.
-    ORDER BY value_date DESC, rung ASC
+    FROM laddered
+    -- An instant count (rungs 1-5) within 400 days of the newest period
+    -- first; then the most recent period, the most trustworthy rung, and
+    -- the shortest period for an average (qtrs 1 is closer to a point in
+    -- time than qtrs 4).
+    ORDER BY (rung <= 5 AND value_date >= newest_period - 400) DESC,
+             value_date DESC,
+             rung ASC,
+             qtrs ASC
     LIMIT 1;
 $$;
 
 COMMENT ON FUNCTION sec_gold.shares_outstanding_at(INTEGER, DATE, INTEGER) IS
-    'Share count knowable on p_asof, by priority ladder with share-class '
-    'handling. method: consolidated | class_sum | class_equivalent. '
-    'NOT sufficient for market cap on multi-class issuers - that needs '
-    'each class priced separately, and 329 of 1,504 issuers have more '
-    'than one class.';
+    'Share count knowable on p_asof, by priority ladder with mapped '
+    'share-class summation. method: consolidated | class_sum_mapped. '
+    'An instant count within 400 days of the newest period beats a '
+    'weighted average. NOT sufficient for market cap on multi-class '
+    'issuers - that needs each class priced separately (177 of 1,569 '
+    'tracked companies hold more than one listed ticker, 2026-09-04); '
+    'use share_classes_at.';

@@ -15,6 +15,13 @@
 -- genuinely have acted". Re-run a strategy at 1, 2 and 5 to see how
 -- fast the edge decays; one that dies at a single extra session was
 -- never an edge.
+--
+-- TICKER WRAPPERS RAISE ON AN UNRESOLVABLE TICKER. The crosswalk starts
+-- 2019-02, so sec_reference.cik_at('AAPL', DATE '2015-06-30') is NULL.
+-- The wrappers used to pass that NULL straight through, and the README's
+-- own headline example returned fifteen rows with no values and no
+-- message. They now resolve through cik_at_strict(), which raises, and
+-- CIK-keyed overloads exist for dates the crosswalk cannot reach.
 
 -- ---------------------------------------------------------------
 -- Every fact for one company as it stood on a given date.
@@ -132,6 +139,16 @@ COMMENT ON FUNCTION sec_gold.as_of_canonical(INTEGER, TEXT, DATE, INTEGER, DATE,
 -- ---------------------------------------------------------------
 -- Most recent annual observation as of a date, fiscal-year aware.
 -- ---------------------------------------------------------------
+-- Mirrors latest_annual() in 070_fiscal_year_views.sql, against
+-- fact_asof with the availability predicate, and with the same formula
+-- fallback. It had none: as_of_snapshot returned free_cash_flow for 0
+-- of 148 tracked tickers where company_snapshot returned it for all
+-- 148, and Apple's as-of total_debt was a 2015 LongTermDebt figure with
+-- the 2026 components sitting unused. The candidate periods for the
+-- formula come from any operand visible as of the date, newest first,
+-- and as_of_canonical evaluates each so every operand shares one
+-- knowledge date. The newest period wins; a filed figure beats a
+-- reconstruction of the same period.
 DROP FUNCTION IF EXISTS sec_gold.as_of_latest_annual(INTEGER, TEXT, DATE, INTEGER);
 
 CREATE FUNCTION sec_gold.as_of_latest_annual(
@@ -148,31 +165,77 @@ RETURNS TABLE (
 )
 LANGUAGE sql STABLE AS $$
     WITH concept_type AS (
-        SELECT fact_type FROM sec_gold.canonical_concepts WHERE concept = p_concept
+        SELECT CASE WHEN fact_type = 'balance' THEN 0 ELSE 4 END AS qtrs
+        FROM sec_gold.canonical_concepts WHERE concept = p_concept
     ),
-    k AS (SELECT sec_gold.shift_sessions(p_asof, p_buffer_sessions) AS d)
-    SELECT f.value_date, f.tradable_from, f.value * m.sign_multiplier, f.tag
-    FROM sec_gold.concept_tag_map m
-    JOIN sec_gold.fact_asof      f ON f.tag = m.tag
-    LEFT JOIN sec_reference.company c ON c.cik = f.cik
-    CROSS JOIN concept_type ct
-    CROSS JOIN k
-    WHERE m.concept = p_concept
-      AND f.cik = p_cik
-      AND f.qtrs = CASE WHEN ct.fact_type = 'balance' THEN 0 ELSE 4 END
-      AND f.value IS NOT NULL
-      AND f.tradable_from <= k.d
-      AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
-      AND (m.sic_prefix = '' OR c.sic_latest::TEXT LIKE m.sic_prefix || '%')
-    ORDER BY f.value_date DESC,
-             m.sic_prefix <> '' DESC,
-             m.priority ASC
+    k AS (SELECT sec_gold.shift_sessions(p_asof, p_buffer_sessions) AS d),
+    direct_hit AS (
+        SELECT f.value_date, f.tradable_from, f.value * m.sign_multiplier AS value, f.tag
+        FROM sec_gold.concept_tag_map m
+        JOIN sec_gold.fact_asof      f ON f.tag = m.tag
+        LEFT JOIN sec_reference.company c ON c.cik = f.cik
+        CROSS JOIN concept_type ct
+        CROSS JOIN k
+        WHERE m.concept = p_concept
+          AND f.cik = p_cik
+          AND f.qtrs = ct.qtrs
+          AND f.value IS NOT NULL
+          AND f.tradable_from <= k.d
+          AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
+          AND (m.sic_prefix = '' OR c.sic_latest::TEXT LIKE m.sic_prefix || '%')
+        ORDER BY f.value_date DESC,
+                 m.sic_prefix <> '' DESC,
+                 m.priority ASC
+        LIMIT 1
+    ),
+    derived_hit AS (
+        SELECT x.value_date, x.tradable_from, x.value, NULL::TEXT AS tag
+        FROM (
+            SELECT d.value_date, d.tradable_from,
+                   sec_gold.as_of_canonical(p_cik, p_concept, d.value_date,
+                                            ct.qtrs, p_asof, p_buffer_sessions) AS value
+            FROM (
+                -- tradable_from of the derived figure is the moment its
+                -- last operand became actionable.
+                SELECT f.value_date, MAX(f.tradable_from) AS tradable_from
+                FROM sec_gold.concept_formula fm
+                JOIN sec_gold.concept_tag_map m ON m.concept = fm.operand
+                JOIN sec_gold.fact_asof      f ON f.tag = m.tag
+                LEFT JOIN sec_reference.company c ON c.cik = f.cik
+                CROSS JOIN concept_type ct
+                CROSS JOIN k
+                WHERE fm.concept = p_concept
+                  AND f.cik = p_cik
+                  AND f.qtrs = ct.qtrs
+                  AND f.value IS NOT NULL
+                  AND f.tradable_from <= k.d
+                  AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
+                  AND (m.sic_prefix = '' OR c.sic_latest::TEXT LIKE m.sic_prefix || '%')
+                GROUP BY f.value_date
+                ORDER BY f.value_date DESC
+                LIMIT 12
+            ) d
+            CROSS JOIN concept_type ct
+        ) x
+        WHERE x.value IS NOT NULL
+        ORDER BY x.value_date DESC
+        LIMIT 1
+    )
+    SELECT u.value_date, u.tradable_from, u.value, u.tag
+    FROM (
+        SELECT dh.value_date, dh.tradable_from, dh.value, dh.tag, 0 AS pref FROM direct_hit  dh
+        UNION ALL
+        SELECT xh.value_date, xh.tradable_from, xh.value, xh.tag, 1 AS pref FROM derived_hit xh
+    ) u
+    ORDER BY u.value_date DESC, u.pref ASC
     LIMIT 1;
 $$;
 
 -- ---------------------------------------------------------------
 -- Ticker wrappers. The ticker is resolved AS OF the same date, because
--- symbols are recycled between unrelated companies.
+-- symbols are recycled between unrelated companies, and STRICTLY,
+-- because an unresolvable ticker must be an error rather than a NULL
+-- CIK that quietly matches nothing.
 -- ---------------------------------------------------------------
 DROP FUNCTION IF EXISTS sec_gold.as_of_latest_annual_by_ticker(TEXT, TEXT, DATE, INTEGER);
 
@@ -191,18 +254,20 @@ RETURNS TABLE (
 LANGUAGE sql STABLE AS $$
     SELECT *
     FROM sec_gold.as_of_latest_annual(
-        sec_reference.cik_at(p_ticker, p_asof),
+        sec_reference.cik_at_strict(p_ticker, p_asof),
         p_concept, p_asof, p_buffer_sessions
     );
 $$;
 
 -- ---------------------------------------------------------------
--- Whole-company snapshot as of a date.
+-- Whole-company snapshot as of a date. Two overloads: by CIK, which
+-- works at any date, and by ticker, which resolves the CIK as of the
+-- same date and raises when the crosswalk cannot.
 -- ---------------------------------------------------------------
-DROP FUNCTION IF EXISTS sec_gold.as_of_snapshot(TEXT, DATE, INTEGER);
+DROP FUNCTION IF EXISTS sec_gold.as_of_snapshot(INTEGER, DATE, INTEGER);
 
 CREATE FUNCTION sec_gold.as_of_snapshot(
-    p_ticker           TEXT,
+    p_cik              INTEGER,
     p_asof             DATE,
     p_buffer_sessions  INTEGER DEFAULT 0
 )
@@ -220,12 +285,42 @@ LANGUAGE sql STABLE AS $$
            la.value_date, la.tradable_from, la.value, la.tag
     FROM sec_gold.canonical_concepts c
     LEFT JOIN LATERAL sec_gold.as_of_latest_annual(
-        sec_reference.cik_at(p_ticker, p_asof),
-        c.concept, p_asof, p_buffer_sessions
+        p_cik, c.concept, p_asof, p_buffer_sessions
     ) la ON TRUE
     ORDER BY c.concept;
 $$;
 
+COMMENT ON FUNCTION sec_gold.as_of_snapshot(INTEGER, DATE, INTEGER) IS
+    'Every canonical concept for a company (by CIK) as it was knowable '
+    'on p_asof. The knowledge date is required, by design. Works at any '
+    'date, including before the 2019-02 crosswalk floor.';
+
+DROP FUNCTION IF EXISTS sec_gold.as_of_snapshot(TEXT, DATE, INTEGER);
+
+CREATE FUNCTION sec_gold.as_of_snapshot(
+    p_ticker           TEXT,
+    p_asof             DATE,
+    p_buffer_sessions  INTEGER DEFAULT 0
+)
+RETURNS TABLE (
+    concept        TEXT,
+    display_name   TEXT,
+    fact_type      TEXT,
+    value_date     DATE,
+    tradable_from  DATE,
+    value          NUMERIC,
+    tag            TEXT
+)
+LANGUAGE sql STABLE AS $$
+    SELECT *
+    FROM sec_gold.as_of_snapshot(
+        sec_reference.cik_at_strict(p_ticker, p_asof),
+        p_asof, p_buffer_sessions
+    );
+$$;
+
 COMMENT ON FUNCTION sec_gold.as_of_snapshot(TEXT, DATE, INTEGER) IS
-    'Every canonical concept for a company as it was knowable on '
-    'p_asof. The knowledge date is required, by design.';
+    'Every canonical concept for a ticker as it was knowable on p_asof. '
+    'The ticker is resolved as of the same date and the call raises if '
+    'the crosswalk (2019-02 onward) cannot resolve it; use the CIK '
+    'overload for earlier dates.';

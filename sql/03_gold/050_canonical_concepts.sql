@@ -60,11 +60,33 @@ CREATE TABLE sec_gold.concept_tag_map (
 CREATE INDEX idx_concept_tag_map_concept ON sec_gold.concept_tag_map (concept, priority);
 
 -- Revenue ----------------------------------------------------------
+--
+-- The pre-2018 tags matter. ASC 606 retired SalesRevenueNet and its
+-- siblings in the 2018 taxonomy, and before that they were the dominant
+-- top-line tags for product companies. Without them peer_stats resolved
+-- revenue for 628 of 1,361 tracked issuers in FY2015 against 1,479 in
+-- FY2024 (measured 2026-09-04), so anything backtested before 2018 ran
+-- on half a universe with nothing in the output to say so. Check 13 in
+-- tools/verify_pit.sql now guards FY2015 as well as FY2024.
+--
+-- SalesRevenueGoodsNet and SalesRevenueServicesNet are COMPONENTS, and a
+-- component is only a safe stand-in for the total when it is the only
+-- one filed: an issuer filing both without any total would resolve to
+-- the goods line alone and understate revenue. Measured before mapping
+-- them: of the 233 tracked issuers still without FY2015 revenue after
+-- SalesRevenueNet, 111 file goods only, 43 services only and NONE file
+-- both. Check 37 asserts that shape stays absent, so the day an issuer
+-- files both components and no total, the suite says so rather than
+-- the table quietly halving its revenue.
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
     ('revenue', 'RevenueFromContractWithCustomerExcludingAssessedTax', 1, 'ASC 606 standard, used by most non-financial issuers'),
     ('revenue', 'Revenues',                                            2, 'Pre-ASC 606 fallback and used by some financials (BAC, C, PNC)'),
     ('revenue', 'RevenuesNetOfInterestExpense',                        3, 'Large-bank headline revenue tag (JPM, WFC, others)'),
-    ('revenue', 'RevenueFromContractWithCustomerIncludingAssessedTax', 4, 'ASC 606 variant that includes sales taxes');
+    ('revenue', 'RevenueFromContractWithCustomerIncludingAssessedTax', 4, 'ASC 606 variant that includes sales taxes'),
+    ('revenue', 'SalesRevenueNet',                                     5, 'Pre-ASC 606 (retired 2018) total sales; 470 tracked issuers used it for FY2015 and resolved to nothing'),
+    ('revenue', 'RealEstateRevenueNet',                                6, 'REIT rental revenue total; 31 tracked issuers file only this'),
+    ('revenue', 'SalesRevenueGoodsNet',                                7, 'Pre-ASC 606 goods component; safe only because no tracked issuer files it alongside SalesRevenueServicesNet without a total (check 37)'),
+    ('revenue', 'SalesRevenueServicesNet',                             8, 'Pre-ASC 606 services component; same guard as above');
 -- Banks (SIC 60) — prefer Revenues or RevenuesNetOfInterestExpense over the non-financial default
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes) VALUES
     ('revenue', 'Revenues',                            1, '60', 'Some banks file plain Revenues'),
