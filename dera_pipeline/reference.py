@@ -11,11 +11,21 @@ class-share tickers like `BRK.B` → `BRK-B`) happens here in Python.
 from __future__ import annotations
 
 import csv
+import datetime as dt
+import gzip
 from pathlib import Path
 
 import psycopg
 
 from . import config
+
+# A calendar that ends too soon is a silent failure, not a loud one:
+# `sub_silver` LEFT JOINs the calendar to resolve `tradable_from`, so a
+# filing accepted after the last session simply gets NULL and vanishes
+# from every as-of slice. The calendar is generated two years ahead;
+# refuse to load one with less than a year left so the rebuild that
+# would have produced NULLs stops before it starts.
+CALENDAR_MIN_HORIZON = dt.timedelta(days=365)
 
 
 def load_sp1500_universe(conn: psycopg.Connection, csv_path: Path) -> int:
@@ -32,14 +42,10 @@ def load_sp1500_universe(conn: psycopg.Connection, csv_path: Path) -> int:
             ticker = row["ticker"].replace(".", "-")
             if ticker in seen:
                 continue
-            gics_sector = (row.get("gics_sector") or None) or None
-            gics_sub = (row.get("gics_sub_industry") or None) or None
             # Empty strings from the CSV read become None so Postgres
             # stores a true NULL rather than a blank string.
-            if gics_sector == "":
-                gics_sector = None
-            if gics_sub == "":
-                gics_sub = None
+            gics_sector = row.get("gics_sector") or None
+            gics_sub = row.get("gics_sub_industry") or None
             seen[ticker] = (
                 ticker, row["name"], row["index_name"], gics_sector, gics_sub
             )
@@ -113,6 +119,16 @@ def load_trading_calendar(conn: psycopg.Connection, csv_path: Path) -> int:
     if not rows:
         raise ValueError(f"{csv_path} contained no sessions")
 
+    last_session = dt.date.fromisoformat(max(r[0] for r in rows))
+    if last_session - dt.date.today() < CALENDAR_MIN_HORIZON:
+        raise ValueError(
+            f"{csv_path} ends {last_session}, less than a year from today. "
+            "Filings accepted after the last session would get a NULL "
+            "tradable_from and silently drop out of every as-of query. "
+            "Regenerate with `uv run python tools/build_calendar.py` "
+            "(it writes two years ahead) before rebuilding silver."
+        )
+
     with conn.cursor() as cur:
         cur.execute("TRUNCATE TABLE sec_reference.trading_calendar")
         with cur.copy(
@@ -125,8 +141,15 @@ def load_trading_calendar(conn: psycopg.Connection, csv_path: Path) -> int:
     return len(rows)
 
 
+def _open_text(path: Path, mode: str = "r"):
+    """Open a reference file for text reading, gzip-transparently by suffix."""
+    if path.suffix == ".gz":
+        return gzip.open(path, mode + "t", encoding="utf-8", newline="")
+    return open(path, mode, encoding="utf-8", newline="")
+
+
 def load_ticker_history(conn: psycopg.Connection, csv_path: Path) -> int:
-    """Load data/reference/ticker_history.csv → sec_reference.ticker_observation.
+    """Load data/reference/ticker_history.csv(.gz) → sec_reference.ticker_observation.
 
     Raw dated sightings of CIK/ticker pairs across snapshots of SEC's
     company_tickers.json. Deliberately append-only evidence; the
@@ -140,7 +163,7 @@ def load_ticker_history(conn: psycopg.Connection, csv_path: Path) -> int:
     """
     seen: set[tuple[int, str, str]] = set()
     rows: list[tuple[int, str, str, str, str]] = []
-    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+    with _open_text(csv_path) as f:
         for row in csv.DictReader(f):
             try:
                 cik = int(row["cik"])
@@ -252,13 +275,15 @@ def load_calendar_only(conn: psycopg.Connection) -> int:
 
     # Ticker history is optional: the pipeline still builds without it,
     # it just falls back to the survivorship-biased current crosswalk.
-    history = config.REFERENCE_DIR / "ticker_history.csv"
+    history = config.REFERENCE_DIR / "ticker_history.csv.gz"
+    if not history.exists():
+        history = config.REFERENCE_DIR / "ticker_history.csv"
     if history.exists():
         h = load_ticker_history(conn, history)
         print(f"  ticker_observation → {h:>6,} dated sightings")
     else:
         print(
-            "  ticker_history.csv absent — crosswalk will be "
+            "  ticker_history.csv.gz absent — crosswalk will be "
             "current-only (survivorship biased). Build it with "
             "`uv run python tools/fetch_ticker_history.py`."
         )
