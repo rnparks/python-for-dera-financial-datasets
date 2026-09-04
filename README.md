@@ -13,8 +13,8 @@ without survivorship bias.
 
 1. **Availability, not filing date.** Every fact records when it became
    *actionable* — the EDGAR acceptance timestamp resolved against a real NYSE
-   calendar. 48% of filings are accepted after the close and stamped that same
-   `filed_date`; all 247,216 of those roll to a later session.
+   calendar. **57%** of filings (247,216 of 433,717) are accepted after the close and
+   stamped that same `filed_date`; **210,683** of them roll to a later session.
 2. **Every vintage is kept.** A restatement does not overwrite history. GE's
    fiscal 2022 revenue exists as four vintages across three values — $76.555B as
    first filed, $58.100B after an 8-K, $29.139B after a 2025 restatement — and
@@ -65,6 +65,8 @@ cp .env.example .env      # then set SEC_USER_AGENT and PG_DSN
 | `PG_DSN` | Postgres connection string, e.g. `postgresql://user:pass@localhost:5432/dera`. |
 
 Expect roughly **141 GB** of Postgres and **31 GB** on disk for a full build.
+
+**Figures throughout this file are as of 2026-09-04.**
 
 ## Quickstart
 

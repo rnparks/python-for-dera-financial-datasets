@@ -6,6 +6,8 @@ how far any given number can be traced back toward the document that reported it
 Read this before `docs/schema_overview.md` — the schemas make more sense once you
 know what is flowing into them.
 
+**Figures throughout this file are as of 2026-09-04.**
+
 ---
 
 ## The short version
@@ -118,8 +120,9 @@ for months inside the changes table, so any diff must run against the
 - **Becomes**: `sec_reference.trading_calendar` (4,947 sessions)
 
 Used to turn an EDGAR acceptance timestamp into the first session on which a fact
-was actually actionable. 48% of filings are accepted after the close and stamped
-that same `filed_date`; all 247,216 of those roll to a later session.
+was actually actionable. 57% of filings (247,216 of 433,717) are accepted after
+the close and stamped that same `filed_date`; 210,683 of them roll to a later
+session.
 
 ## Manual inputs
 

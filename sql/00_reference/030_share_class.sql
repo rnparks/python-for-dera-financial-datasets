@@ -6,13 +6,24 @@
 -- not trade together: GOOGL and GOOG sit a percent or two apart, but
 -- BRK.A is roughly 1,500 times BRK.B.
 --
--- WHY IT IS NOT DERIVED FROM FILINGS. The share counts are filings-native
--- and well populated. The class-to-ticker link is not, and this was
--- verified rather than assumed: SEC's submissions API returns Alphabet's
--- tickers as ['GOOGL','GOOG','GOOGM','GOOGN'] with no class labels at
--- all, and Berkshire's as ['BRK-B','BRK-A']. The cover-page facts that
--- would carry it, dei:TradingSymbol dimensioned by class, are text
--- rather than numeric and so are absent from the DERA numeric datasets.
+-- WHY IT IS NOT *YET* DERIVED FROM FILINGS. The share counts are
+-- filings-native and well populated. The class-to-ticker link is not
+-- available from the sources this pipeline currently ingests, and that
+-- was verified rather than assumed: SEC's submissions API returns
+-- Alphabet's tickers as ['GOOGL','GOOG','GOOGM','GOOGN'] with no class
+-- labels at all, and Berkshire's as ['BRK-B','BRK-A']. The cover-page
+-- facts that would carry it, dei:TradingSymbol dimensioned by class, are
+-- text rather than numeric, so they are absent from the DERA NUMERIC
+-- datasets -- `grep -c TradingSymbol data/raw/2026q2/num.txt` returns 0.
+--
+-- That is a limitation of what we ingest, NOT a property of filings. The
+-- cover page of every 10-K since 2019 does carry dei:TradingSymbol
+-- dimensioned by StatementClassOfStockAxis, and the member string
+-- matches num_silver.segments character for character (verified against
+-- Alphabet). So the ~270 unmapped classes are derivable once a
+-- cover-page ingest exists; hand-mapping is a current-state cost, not a
+-- structural one. An earlier version of this header said "WHY IT IS NOT
+-- DERIVED FROM FILINGS", which read as "cannot be" and was wrong.
 --
 -- WHY IT IS NOT INFERRED. Across the tracked universe, class count equals
 -- listed-ticker count for almost none of the multi-class issuers.

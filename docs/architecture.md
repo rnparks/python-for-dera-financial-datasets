@@ -43,7 +43,7 @@ SEC DERA URLs
 
 ## Why a Python bronze loader instead of a SQL procedure?
 
-The legacy `sec_raw.load_sec_data()` plpgsql procedure used `COPY FROM PROGRAM` to shell out to `find | head | cut`:
+The legacy `sec_raw.load_sec_data()` plpgsql procedure used `COPY FROM PROGRAM` to shell out to `find | head | cut`: <!-- check-docs:ignore legacy procedure, deleted -->
 
 - required `pg_read_server_files` / superuser privileges (won't run on managed Postgres like RDS or Supabase),
 - parsed file headers with shell tools and trimmed trailing columns via `cut -f 1-N`,
@@ -71,8 +71,9 @@ WHERE tradable_from <= T
 
 `tradable_from` is derived from the EDGAR acceptance timestamp against a real
 NYSE calendar, so it answers *when could I have acted on this*, which is not the
-same question as *when was it filed*. 48% of filings are accepted after the close
-and stamped that same `filed_date`.
+same question as *when was it filed*. 57% of filings (247,216 of 433,717) are accepted
+after the close and stamped that same `filed_date`; 210,683 of them roll to a
+later session.
 
 The older dual ranking is still carried for compatibility:
 
@@ -120,12 +121,17 @@ eligibility interval may begin before `first_trade_date`, or outlive
 
 ## Gold: two sibling matviews
 
-`sec_gold.tradable_financials` and `sec_gold.tradable_financials_pit` are parallel materialized views joining the S&P 1500 universe to the two silver ranks. Backtesting reads the `_pit` matview; dashboards and fundamental screens read the latest one. Each has four indexes (ticker, value_date, tag, cik). Refresh both with:
+`sec_gold.tradable_financials` and `sec_gold.tradable_financials_pit` are parallel materialized views joining the S&P 1500 universe to the two silver ranks. Backtesting reads the `_pit` matview; dashboards and fundamental screens read the latest one. Each has six indexes: ticker, value_date, tag, cik, tradable_from and gics_sector. Refresh both with:
 
 ```bash
-uv run dera build-gold            # REFRESH included
-uv run dera build-gold --no-refresh   # skip the refresh
+uv run dera build-gold                 # full DDL rebuild
+uv run dera build-gold --refresh-only  # REFRESH the five matviews instead
 ```
+
+A plain `build-gold` re-runs the DDL, and `CREATE MATERIALIZED VIEW ... AS
+SELECT` populates as it goes — there is no separate REFRESH step to skip.
+`--no-refresh` exists only as an accepted alias for that default and is a
+no-op; `--refresh-only` is the flag that changes behaviour.
 
 or manually:
 

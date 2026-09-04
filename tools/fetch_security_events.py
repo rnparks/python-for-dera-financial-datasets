@@ -1,4 +1,15 @@
-"""Derive security lifecycle events from EDGAR submissions.
+"""Derive security lifecycle events from EDGAR submissions (slice tool).
+
+SUPERSEDED FOR PIPELINE USE. The pipeline ingests the same events for all
+17,015 spine CIKs from the bulk archive via `dera_pipeline.filings`:
+
+    uv run dera fetch-filing-index      # ~1.5 GB, one request
+    uv run dera build-security-model
+
+This script walks the per-CIK submissions API for the hand-picked SLICE
+below and is retained for iterating on the classification rules at a
+scale where the answers are known in advance. Nothing in the pipeline
+imports it.
 
 WHY THIS EXISTS. The pipeline is point-in-time correct on facts and not on
 securities. `sec_gold.fact_asof` knows what any number looked like on any
@@ -35,10 +46,10 @@ to 2015 while its 8-A is far older. The overflow files listed under
 `filings.files` must be followed or long-lived issuers silently lose their
 listing date.
 
-Output is one row per (cik, event), written to
-data/reference/security_events.csv. Turning discrete events into validity
-intervals happens in SQL, not here, so the raw evidence stays auditable --
-the same split `fetch_ticker_history.py` uses.
+Writes two files: data/reference/security_events.csv (one row per
+(cik, event)) and data/reference/company_names.csv. Turning discrete
+events into validity intervals happens in SQL, not here, so the raw
+evidence stays auditable -- the same split `fetch_ticker_history.py` uses.
 
 Run:  uv run python tools/fetch_security_events.py
 """
@@ -188,10 +199,15 @@ def main(argv: list[str] | None = None) -> int:
 
         # First filing of any kind: the floor on company existence in
         # EDGAR. Not a trading date, and deliberately labelled as such.
-        if filings:
+        # Skip falsy dates before taking the minimum, matching
+        # dera_pipeline.filings.iter_events. Without this an EDGAR record
+        # with an empty filingDate yields event_date="" and the two
+        # implementations disagree on the same input.
+        filing_dates = [d for _, d, _ in filings if d]
+        if filing_dates:
             ev_rows.append({
                 "cik": cik, "event_type": "FIRST_EDGAR_FILING",
-                "event_date": min(d for _, d, _ in filings),
+                "event_date": min(filing_dates),
                 "form": "", "adsh": "",
             })
 

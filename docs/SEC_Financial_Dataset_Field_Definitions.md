@@ -2,6 +2,13 @@
 
 > Complete reference guide for all fields in the SEC Financial Statement Data Sets
 
+> **Upstream SEC reference material.** This document describes the format SEC
+> publishes, **not** the schema this project stores. It does not change when the
+> pipeline changes. For what the pipeline actually holds — including the fields
+> silver renames, such as `accepted` → `known_at` and `ddate` → `value_date` —
+> see [`schema_overview.md`](schema_overview.md).
+
+
 [![SEC](https://img.shields.io/badge/SEC-EDGAR-blue)](https://www.sec.gov/edgar)
 [![Data Format](https://img.shields.io/badge/Format-XBRL-green)](https://www.sec.gov/data-research/standard-taxonomies)
 

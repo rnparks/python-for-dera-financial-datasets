@@ -1,7 +1,7 @@
 # Schema overview
 
 Every table and materialized view in the database, what it is for, and which
-layer it belongs to. Sizes and row counts are from 2026-09-04.
+layer it belongs to. **Sizes and row counts are as of 2026-09-04.**
 
 If you are new here, read `docs/data_sources.md` first — it explains what is
 flowing in. `docs/gold_tables.md` is the deep reference for `sec_gold`; this
@@ -38,7 +38,7 @@ reasoned about rather than at ingest.
 | `pre_raw` | 44.1M | 6.7 GB | Presentation: how facts map to statement lines |
 | `tag_raw` | 4.7M | 1.2 GB | XBRL taxonomy: tag names, labels, definitions |
 | `sub_raw` | 419.8K | 141 MB | Submissions: one row per filing |
-| `load_log` | 68 | 32 kB | Which quarters have been loaded (drives incremental load) |
+| `load_log` | 70 | 32 kB | Which quarters have been loaded (drives incremental load) |
 
 ## `sec_silver` — silver
 
@@ -49,7 +49,7 @@ is established.
 |---|---:|---:|---|
 | `num_silver` | 185.0M | 62 GB | **The core fact table.** Every vintage of every fact |
 | `tag_silver` | 4.5M | 1.5 GB | Deduplicated taxonomy |
-| `sub_silver` | 433.7K | 111 MB | Filings with `accepted_time` and `tradable_from` |
+| `sub_silver` | 433.7K | 111 MB | Filings with `known_at` (acceptance instant) and `tradable_from` |
 | `ticker_map` | 10.2K | 1.3 MB | Legacy CIK ↔ ticker crosswalk (superseded by `sec_reference`) |
 | `universe_sp1500` | 1,505 | 376 kB | **Today's** S&P 1500 membership — no dates, see caveat below |
 
@@ -63,6 +63,27 @@ query time.
 > columns at all, so anything joining to it inherits survivorship bias. The
 > replacement is `sec_reference.universe_at()`; the gold matviews have not been
 > rewired to it yet.
+
+### Raw SEC fields → silver columns
+
+Silver renames and drops enough that a reader consulting
+[`SEC_Financial_Dataset_Field_Definitions.md`](SEC_Financial_Dataset_Field_Definitions.md)
+will not find several fields under the names SEC uses.
+
+| SEC raw | Silver | Note |
+|---|---|---|
+| `sub.period` | `sub_silver.period_date` | renamed |
+| `sub.accepted` | `sub_silver.known_at` | renamed; this is the acceptance instant |
+| `sub.filed` | `sub_silver.filed_date` | renamed |
+| `sub.prevrpt` | `sub_silver.was_amended_later` | renamed |
+| `sub.detail` | `sub_silver.is_detailed` | renamed |
+| — | `sub_silver.tradable_from` | **derived** from `known_at` against the NYSE calendar |
+| `num.ddate` | `num_silver.value_date` | renamed |
+| — | `num_silver.{known_at, tradable_from, vintage_seq, superseded_known_at, superseded_tradable, is_original_disclosure, rank_pit, rank_latest}` | **derived** — the bitemporal machinery |
+| — | `num_silver.{cik, form, filed_date, tlabel}` | joined in from `sub_silver` / `tag_silver` |
+
+21 `sub` columns are dropped entirely (mailing address, EIN, former name,
+filer-status flags and similar), as is nothing from `num`.
 
 ## `sec_reference` — the spine
 
@@ -81,8 +102,14 @@ construction: it holds every CIK that ever filed, not the ones that survived.
 | `delisting_event` | 4,553 | Delistings as investment events, not missing data |
 | `corporate_action` | 0 | Declared, unpopulated |
 | `share_class` | 27 | Hand-mapped share class → ticker allowlist (9 CIKs) |
+| `company_label` | *(view)* | Best-known display name per CIK — joined by both `tradable_financials` matviews |
 | `trading_calendar` | 4,947 | NYSE sessions, for availability arithmetic |
 | `security_event_raw` | 910,661 | Staging: raw EDGAR lifecycle events |
+
+Rebuild the security model with `dera build-security-model` (it needs
+`dera fetch-filing-index` to have run first). There is no shell helper — an
+earlier shell helper under tools/ loaded an 18-CIK slice and would silently
+truncate the model to 18 securities, so it was deleted in favour of the CLI.
 | `company_name_raw` | 31,093 | Staging: raw name history |
 
 ### The company/security distinction
@@ -118,12 +145,12 @@ full reference including every function signature.
 | `peer_stats` | matview | 530.3K | 126 MB | Cross-sectional scores at sector and sub-industry |
 | `share_class_shares` | matview | 504.8K | 138 MB | Per-class share counts, the market-cap denominator |
 | `canonical_concepts` | table | 15 | — | Research taxonomy (revenue, total_debt, …) |
-| `concept_tag_map` | table | ~45 | — | Priority-ordered XBRL tag resolution |
+| `concept_tag_map` | table | 34 | — | Priority-ordered XBRL tag resolution |
 | `concept_formula` | table | 6 | — | Derived concepts as linear combinations |
 | `metric_aliases` | table | 4 | — | Legacy display-name remap |
 
 Plus roughly twenty functions — `get_canonical()`, `latest_annual()`,
-`company_snapshot()`, the five `as_of_*` accessors, `shares_outstanding_at()`,
+`company_snapshot()`, the six `as_of_*` accessors, `shares_outstanding_at()`,
 `share_classes_at()`. All documented in `docs/gold_tables.md`.
 
 ---

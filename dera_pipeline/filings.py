@@ -112,6 +112,11 @@ def iter_events(zf: zipfile.ZipFile, ciks: Iterable[int],
         if doc is None:
             continue
 
+        # Historical names, collected here rather than by a second walk.
+        # Bed Bath & Beyond is why they matter: CIK 886158 is now named
+        # "20230930-DK-Butterfly-1, Inc." while a DIFFERENT registrant,
+        # CIK 1130713, carries the Bed Bath name today. Matching on
+        # current name alone merges two companies that were never one.
         if names_sink is not None:
             for fn in doc.get("formerNames", []) or []:
                 names_sink.append((cik, (fn.get("name") or "")[:200],
@@ -141,25 +146,6 @@ def iter_events(zf: zipfile.ZipFile, ciks: Iterable[int],
 
         if earliest is not None:
             yield (cik, "FIRST_EDGAR_FILING", earliest, "", "")
-
-
-def iter_names(zf: zipfile.ZipFile, ciks: Iterable[int]) -> Iterator[tuple]:
-    """Yield (cik, name, valid_from, valid_to) including former names.
-
-    Bed Bath & Beyond is why this matters: CIK 886158 is now named
-    "20230930-DK-Butterfly-1, Inc." while a different registrant carries
-    the Bed Bath name today. Matching on current name merges two
-    companies that were never the same.
-    """
-    for cik in ciks:
-        doc = _read_member(zf, f"CIK{cik:010d}.json")
-        if doc is None:
-            continue
-        for fn in doc.get("formerNames", []) or []:
-            yield (cik, (fn.get("name") or "")[:200],
-                   (fn.get("from") or "")[:10], (fn.get("to") or "")[:10])
-        if doc.get("name"):
-            yield (cik, doc["name"][:200], "", "")
 
 
 def _copy_rows(conn: psycopg.Connection, table: str, columns: tuple[str, ...],

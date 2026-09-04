@@ -131,7 +131,7 @@ def load_ticker_history(conn: psycopg.Connection, csv_path: Path) -> int:
     Raw dated sightings of CIK/ticker pairs across snapshots of SEC's
     company_tickers.json. Deliberately append-only evidence; the
     validity intervals are derived from it in
-    `sql/04_reference/030_company_spine.sql`.
+    `sql/05_spine/010_company_spine.sql`.
 
     A pair can legitimately appear in many snapshots, and the same
     snapshot day can be reached by more than one probe, so the primary
@@ -230,7 +230,17 @@ def load_share_class_map(conn: psycopg.Connection, csv_path: Path) -> int:
 
 
 def load_calendar_only(conn: psycopg.Connection) -> int:
-    """Load just the trading calendar. Called before the silver build."""
+    """Load the pre-silver reference data, in `sec_reference`.
+
+    Three tables, not one: the trading calendar (required — `sub_silver`
+    resolves `tradable_from` against it during its own build), plus the
+    ticker-history observations and the share-class map, both optional
+    and skipped with a message when their CSVs are absent.
+
+    All three live in `sec_reference` precisely so the
+    DROP SCHEMA sec_silver CASCADE at the top of the silver build does
+    not take them out.
+    """
     calendar = config.REFERENCE_DIR / "trading_calendar.csv"
     if not calendar.exists():
         raise FileNotFoundError(
@@ -265,7 +275,13 @@ def load_calendar_only(conn: psycopg.Connection) -> int:
 
 
 def load_all_reference(conn: psycopg.Connection) -> dict[str, int]:
-    """Load every reference table. Called by `dera build-silver`."""
+    """Load the post-silver reference tables: universe_sp1500, ticker_map.
+
+    Not "every reference table" — the calendar, ticker history and
+    share-class map are loaded earlier by `load_calendar_only`, because
+    the silver build depends on them. These two are loaded after silver
+    exists because they live in the `sec_silver` schema it creates.
+    """
     sp1500 = config.REFERENCE_DIR / "sp1500_universe.csv"
     tickers = config.REFERENCE_DIR / "tickers.csv"
     if not sp1500.exists():

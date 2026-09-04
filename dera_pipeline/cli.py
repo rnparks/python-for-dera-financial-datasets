@@ -1,8 +1,9 @@
 """Command-line entry point.
 
 Run via ``uv run dera ...`` once the package is installed; the
-``dera`` script is registered in ``pyproject.toml``. Subcommands map
-one-to-one to pipeline stages so a full refresh is::
+``dera`` script is registered in ``pyproject.toml``.
+
+Nine subcommands. The medallion pipeline, in order::
 
     uv run dera download
     uv run dera init-db
@@ -10,9 +11,20 @@ one-to-one to pipeline stages so a full refresh is::
     uv run dera build-silver
     uv run dera build-gold
 
-or the shorthand::
+or the shorthand ``uv run dera run-all``.
 
-    uv run dera run-all
+The security lifecycle model, an additive second path::
+
+    uv run dera fetch-filing-index      # EDGAR bulk archive, ~1.5 GB
+    uv run dera build-security-model
+
+``build-silver`` also builds the security model when the archive is
+present, and skips that stage with a message when it is not.
+
+Verification::
+
+    uv run dera verify        # 28 data-correctness checks
+    uv run dera verify-docs   # documentation against code and database
 """
 
 from __future__ import annotations
@@ -156,9 +168,9 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
     return 0
 
 
-# Gold materialized views, in dependency order. The first three read
-# silver directly; peer_stats reads tradable_financials, so it must come
-# last. Declared once here so --refresh-only cannot drift out of sync
+# Gold materialized views, in dependency order. The first four read
+# silver directly; only peer_stats reads another matview
+# (tradable_financials), so it must come last. Declared once here so --refresh-only cannot drift out of sync
 # with the DDL again.
 #
 # fact_asof was missing from this tuple until now, which meant
@@ -178,9 +190,10 @@ GOLD_MATVIEWS = (
 def cmd_build_gold(args: argparse.Namespace) -> int:
     """Build (or refresh) the gold layer.
 
-    On first build, ``sql/03_gold/030_tradable_financials.sql`` creates
-    the matviews with ``CREATE MATERIALIZED VIEW ... AS SELECT`` which
-    populates them immediately — no separate REFRESH is needed. On a
+    On first build the ``sql/03_gold`` DDL creates the five matviews
+    across four files (030, 035, 056, 080) with
+    ``CREATE MATERIALIZED VIEW ... AS SELECT``, which populates them
+    immediately — no separate REFRESH is needed. On a
     rebuild against an existing gold schema, pass ``--refresh-only`` to run
     ``REFRESH MATERIALIZED VIEW`` *instead of* re-running the DDL.
     """
@@ -240,8 +253,9 @@ def cmd_build_security_model(args: argparse.Namespace) -> int:
 def cmd_verify(args: argparse.Namespace) -> int:
     r"""Run the point-in-time verification suite.
 
-    `tools/verify_pit.sql` had 15 passing checks and was invoked from
-    nothing: no test runner, no CI, no CLI path. A correctness suite
+    `tools/verify_pit.sql` had 15 passing checks at the time and was
+    invoked from nothing: no test runner, no CI, no CLI path. It now
+    holds 28. A correctness suite
     nobody runs is documentation, not a guard. This gives it a command.
 
     It shells out to psql rather than going through psycopg because the
@@ -280,6 +294,19 @@ def cmd_verify(args: argparse.Namespace) -> int:
     )
     print(f"\n{passes} passed, {failures} failed.")
     return 1 if failures else 0
+
+
+def cmd_verify_docs(args: argparse.Namespace) -> int:
+    """Verify the mechanically checkable claims in the Markdown files.
+
+    Complements `dera verify`, which checks the data. This checks the
+    documentation against the code and database: object names, file
+    paths, CLI commands and cross-links. See tools/check_docs.py for what
+    it deliberately does not check and why.
+    """
+    sys.path.insert(0, str(config.PROJECT_ROOT / "tools"))
+    import check_docs
+    return check_docs.main()
 
 
 def _bronze_quarters_loaded(conn) -> int:
@@ -388,6 +415,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify = sub.add_parser(
         "verify", help="run the point-in-time verification suite")
     p_verify.set_defaults(func=cmd_verify)
+
+    p_vdocs = sub.add_parser(
+        "verify-docs",
+        help="check docs for stale object names, paths, commands and links")
+    p_vdocs.set_defaults(func=cmd_verify_docs)
 
     p_all = sub.add_parser("run-all", help="download + init + load + silver + gold")
     _add_range_args(p_all)

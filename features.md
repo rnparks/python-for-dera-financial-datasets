@@ -12,7 +12,9 @@ A living document that tracks what exists, what's partial, and what's planned. T
 
 Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 `sec_reference`) over SEC DERA Financial Statement Data Sets,
-2009q1 → 2026q2, 185M num rows, 138 GB.
+2009q1 → 2026q2, 185M num rows, 141 GB.
+
+**All figures in this file are as of 2026-09-04.**
 
 **Usable today**:
 - Bronze/silver/gold end-to-end. `run-all` no longer destroys a populated bronze; that needs `--reinit-bronze`.
@@ -21,8 +23,11 @@ Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 - **As-of accessors** where the knowledge date has no default, so omitting it is an error rather than a silent leak: `as_of_facts`, `as_of_canonical`, `as_of_latest_annual`, `as_of_snapshot`. `p_buffer_sessions` applies a safety margin in trading sessions.
 - **Survivorship-free company spine.** `sec_reference.company` holds every CIK that ever filed; `company_ticker` gives dated ticker intervals with `is_primary`. Recovered 2013 10-K filer coverage from 36% to 80%.
 - **Derived concepts.** `concept_formula` computes `gross_profit`, `free_cash_flow` and `total_debt` from other concepts. `total_debt` no longer understates.
-- **Peer stats at two GICS levels** in one table tagged by `peer_level`; sector scores all 1,569 companies where sub-industry dropped 147.
-- 15-check verification suite in `tools/verify_pit.sql`.
+- **Peer stats at two GICS levels** in one table tagged by `peer_level`; sector scores all 1,569 companies where sub-industry reaches 1,445 — 124 fewer.
+- 28-check verification suite in `tools/verify_pit.sql`, run by `dera verify`.
+- **Doc-staleness checker.** `dera verify-docs` validates every database object
+  name, file path, CLI command and cross-link mentioned in the Markdown against
+  the live repo and database.
 - **Security lifecycle model, full scale — 17,031 securities.**
   `sec_reference.{security,listing,eligibility,delisting_event,corporate_action,company_name}`
   separate a company from the securities it issues, built from 910,661 EDGAR
@@ -37,21 +42,24 @@ Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 - **Gold is not yet wired to the new universe.** `universe_sp1500` is still
   today's membership with no dates, and the gold matviews still join to it.
   `sec_reference.universe_at()` exists and is correct; nothing consumes it.
-- **3,527 of 26,277 listing intervals were dropped as non-overlapping (13.4%)**
-  and the cause is not yet characterised. Only 51 have the "ticker ended before
-  first trade" shape. A number that size could mean `first_trade_date` is
+- **2,793 of 23,485 listing intervals were dropped as non-overlapping (11.9%)**
+  and the cause is not yet characterised. Only 50 have the "ticker ended before
+  first trade" shape. (An earlier note said 3,527 of 26,277 and 51; those figures
+  did not reconcile with `sec_reference.listing` at 20,711 rows, and the corrected
+  ones do: 23,485 − 2,793 = 20,692, plus 19 `share_class_map` rows.)
+  A number that size could mean `first_trade_date` is
   systematically late rather than that the crosswalk is noisy.
 - **Historical index membership.** Not started. Free coverage is bounded by
   whether Wikipedia's page carried a CIK column: S&P 500 from 2014, S&P 600
   from 2019, S&P 400 **never**. Revision depth is not the constraint.
 - **Delisting returns.** `delisting_event.delisting_return` is declared and
-  NULL for all 7 delisted securities. It needs prices, and it is the reason
+  NULL for all **4,553** delisting events. It needs prices, and it is the reason
   this is not yet a reliable backtester.
-- **Multi-class market cap.** Denominator now built: `sec_gold.share_class_shares` gives per-class counts for mapped issuers, and `share_classes_at(cik, asof)` returns one row per class. 177 of 1,500 issuers hold multiple listed tickers, 131 file multiple common classes. Remaining: the class-to-ticker mapping covers only 9 companies by hand so far. A cover-page scraper can derive the rest exactly — every 10-K since 2019 carries `dei:TradingSymbol` dimensioned by `StatementClassOfStockAxis`, whose member string matches `num_silver.segments` character for character.
+- **Multi-class market cap.** Denominator now built: `sec_gold.share_class_shares` gives per-class counts for mapped issuers, and `share_classes_at(cik, asof)` returns one row per class. **Unverified**: an earlier note claimed 177 of 1,500 issuers hold multiple listed tickers and 131 file multiple common classes; neither could be re-derived from the live schema and the denominator is 1,505 rows / 1,569 CIKs, not 1,500. Re-measure and record the query before relying on these. Remaining: the class-to-ticker mapping covers only 9 companies by hand so far. A cover-page scraper can derive the rest exactly — every 10-K since 2019 carries `dei:TradingSymbol` dimensioned by `StatementClassOfStockAxis`, whose member string matches `num_silver.segments` character for character.
 - Scale-free metrics: margins, ROIC, FCF yield, growth. `concept_formula` is the mechanism; nothing uses it for ratios yet.
 - Factor library — requires prices.
-- Incremental silver rebuild. Full rebuild is now ~39 min and is a single transaction, so a late failure discards everything.
-- No test runner or CI. `verify_pit.sql` is invoked from nothing.
+- Incremental silver rebuild. Full rebuild is ~39 min and is a single transaction, so a late failure discards everything.
+- No CI. `dera verify` and `dera verify-docs` exist and are run by hand; nothing runs them automatically on a commit.
 - Form 13F / Form 4, research SDK, parquet exports.
 - Long-tail XBRL tag coverage for company-extension namespaces.
 
@@ -59,9 +67,20 @@ Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 
 ## Shipped
 
-In reverse chronological order on `refactor/medallion-cleanup`:
+In reverse chronological order on `db_update`:
 
-- `113f66d` — feat(gold): add peer_zscore_by_sub_industry matview + broaden revenue tags
+- `2e0f84d` — docs: bring README and architecture current; add schema overview
+- `7f69d99` — feat(reference): scale the security model to 17,031 securities
+- `39fe460` — feat(reference): security lifecycle model; separate company from security
+- `11b5967` — feat(gold): per-share-class counts; fix two class-summing defects
+- `34379aa` — feat(gold): derived-concept mechanism; fix total_debt understatement
+- `4698a5a` — perf(gold): join ticker instead of per-row call; add GICS; two-level peer_stats
+- `3eedd5f` — test: add PIT verification suite; rebuild silver and gold
+- `a05ac89` — feat(silver,gold): bitemporal facts, as-of accessors, crosswalk fan-out fix
+- `0aacf2f` — fix: seven correctness and safety defects from external code review
+- `5de661f` — feat(pit): filing-availability foundation and survivorship-free crosswalk
+
+- `113f66d` — feat(gold): add peer_zscore_by_sub_industry matview + broaden revenue tags <!-- check-docs:ignore renamed to peer_stats in 4698a5a -->
 - `5bfd54f` — feat(gold): fiscal-year-aware latest_annual + snapshot, fix capex tag
 - `b4e5299` — feat(gold): add canonical_concepts + get_canonical() function
 - `4e9ae82` — feat(reference): capture GICS sector and sub-industry for S&P 1500
@@ -96,7 +115,9 @@ In reverse chronological order on `refactor/medallion-cleanup`:
 >    Use `sec_gold.fact_asof` with the `tradable_from` / `superseded_tradable`
 >    interval, or simply call `sec_gold.shares_outstanding_at(cik, asof)`.
 > 2. It hardcodes `EntityCommonStockSharesOutstanding`, which covers 69%.
->    `shares_outstanding_at` already ladders five tags to 99.5%.
+>    `shares_outstanding_at` already ladders five tags to 99.5% (1,490 of
+>    1,498). The 69% figure actually measured `CommonStockSharesOutstanding`,
+>    a different tag.
 > 3. It joins `ticker_map`, which is survivorship-biased. Use
 >    `sec_reference.cik_at(ticker, asof)`.
 >
@@ -146,10 +167,10 @@ JOIN LATERAL (
 **Acceptance criteria**:
 - Daily OHLCV for every S&P 1500 ticker from 2009-01-02 → current trading day
 - Adjusted close populated for every row
-- `sec_gold.market_cap_daily` has one row per (ticker, trade_date) with PIT market cap
+- `sec_gold.market_cap_daily` has one row per (ticker, trade_date) with PIT market cap <!-- check-docs:ignore proposed, does not exist yet -->
 - Spot checks: AAPL 2020-03-23 (COVID bottom) close, NVDA 2024-06-18 post-split, BRK.A vs BRK-B handled
 
-**Loader**: `dera_pipeline/prices.py` with `download_polygon_flat_file(date)` + `load_price_file(conn, path)` using `cur.copy("COPY sec_gold.prices ...")`. CLI: `dera fetch-prices --from 2009-01-01 --to $(date +%Y-%m-%d)`.
+**Loader**: `dera_pipeline/prices.py` with `download_polygon_flat_file(date)` + `load_price_file(conn, path)` using `cur.copy("COPY sec_gold.prices ...")`. CLI: `dera fetch-prices --from 2009-01-01 --to $(date +%Y-%m-%d)`. <!-- check-docs:ignore proposed, does not exist yet -->
 
 **Effort**: 1-2 days after Polygon.io signup.
 
@@ -157,7 +178,7 @@ JOIN LATERAL (
 
 ### Incremental silver rebuild
 
-**Problem**: `dera build-silver` currently runs `CREATE TABLE num_silver AS ...` which is a full rebuild of all 177M rows (~32 minutes). Adding a single new quarter (2026q1 when it drops in mid-April) shouldn't cost 32 minutes.
+**Problem**: `dera build-silver` currently runs `CREATE TABLE num_silver AS ...` which is a full rebuild of all 185M rows (~39 minutes). Adding a single new quarter (2026q1 when it drops in mid-April) shouldn't cost 32 minutes.
 
 **Approach**:
 1. Add new quarter to `sec_raw.num_raw` via `dera load --quarter` (works today).
@@ -178,7 +199,7 @@ JOIN LATERAL (
 
 ### Derived QoQ / YoY / TTM metrics
 
-**Problem**: Growth rates are central to both quant factors and fundamental analysis, and computing them at query time over 177M rows is slow. Pre-compute once per silver rebuild.
+**Problem**: Growth rates are central to both quant factors and fundamental analysis, and computing them at query time over 185M rows is slow. Pre-compute once per silver rebuild.
 
 **Proposed matview**:
 ```sql
@@ -209,7 +230,7 @@ WHERE concept IN ('revenue','gross_profit','operating_income','net_income','oper
 
 ### Factor library (monthly cadence)
 
-**Problem**: Systematic quant strategies want a single `sec_gold.factors_monthly` table with pre-computed factor ranks at each month-end for every S&P 1500 ticker.
+**Problem**: Systematic quant strategies want a single `sec_gold.factors_monthly` table with pre-computed factor ranks at each month-end for every S&P 1500 ticker. <!-- check-docs:ignore proposed, does not exist yet -->
 
 **Proposed table**:
 ```sql
@@ -245,9 +266,14 @@ FROM ...;
 
 ---
 
-### Sub-day accepted_time in num_silver
+### ~~Sub-day accepted_time in num_silver~~ — DONE
 
-**Problem**: `num_silver.filed_date` is a `DATE`, losing the intraday precision captured in `sub_silver.accepted_time` (`TIMESTAMPTZ`). For intraday backtests ("did I know X at 10:05 AM when the 10-Q dropped at 10:03 AM?") we need sub-day resolution.
+**This item was already delivered under a different column name.** There is no
+`sub_silver.accepted_time`; the acceptance instant is `known_at TIMESTAMPTZ`, and
+`num_silver` carries it too (values span 2009-04-15 16:44 EDT → 2026-06-30 17:30
+EDT). Intraday questions are answerable today. Retained only so nobody re-plans it.
+
+**Original problem statement**: `num_silver.filed_date` is a `DATE`, losing the intraday precision captured in the submission record. For intraday backtests ("did I know X at 10:05 AM when the 10-Q dropped at 10:03 AM?") we need sub-day resolution.
 
 **Approach**:
 1. Add `accepted_time TIMESTAMPTZ` column to `sec_silver.num_silver`.
@@ -256,13 +282,13 @@ FROM ...;
 
 **Acceptance**: Query for a known intraday filing (e.g., AAPL Q2 earnings released after close) returns rows with non-midnight timestamps.
 
-**Effort**: 30 minutes of SQL + one full silver rebuild (~32 min).
+**Effort**: 30 minutes of SQL + one full silver rebuild (~39 min).
 
 ---
 
 ### Revenue from components (for banks without single-tag revenue)
 
-**Problem**: Some large banks (USB, TFC in S&P 500) don't file a single `Revenues`, `RevenuesNetOfInterestExpense`, or similar headline revenue tag. They file only decomposed components: `InterestIncomeExpenseNet` + `NoninterestIncome`. Today those banks are missing from `sec_gold.peer_stats` for the revenue concept. NOTE: `concept_formula` now exists and is the mechanism for this — bank revenue can be declared as a sum of its components rather than needing new code.
+**Problem**: Some large banks (USB, TFC in S&P 500) don't file a single `Revenues`, `RevenuesNetOfInterestExpense`, or similar headline revenue tag. They file only decomposed components: `InterestIncomeExpenseNet` + `NoninterestIncome`. **RESOLVED**: both now resolve in `sec_gold.peer_stats` — USB revenue FY2023–FY2025 is $30.0B / $31.7B / $31.0B and TFC $24.5B / $25.1B / $24.5B. Retained for the general pattern only.
 
 **Fix**: Add a "derived revenue" computed as `InterestIncomeExpenseNet + NoninterestIncome` when no headline tag is available. Priority 5 in concept_tag_map, or a separate fact_type='derived_bank_revenue' concept.
 
@@ -327,7 +353,7 @@ print(aapl.history('revenue', years=10))
 
 **Problem**: Some research workflows are pandas/polars-native and want data in parquet files, not Postgres connections.
 
-**Approach**: `dera export --matview peer_stats --output s3://bucket/path` — dumps a gold matview to a partitioned parquet file using psycopg + pyarrow.
+**Approach**: `dera export --matview peer_stats --output s3://bucket/path` — dumps a gold matview to a partitioned parquet file using psycopg + pyarrow. <!-- check-docs:ignore proposed, does not exist yet -->
 
 **Effort**: 2-3 hours.
 
@@ -337,7 +363,7 @@ print(aapl.history('revenue', years=10))
 
 **Problem**: A silent bad value can pollute research for months. We need proactive detection.
 
-**Approach**: `sec_gold.magnitude_anomalies` matview that flags any value >100× the peer median for the same (concept, fiscal_year, sub_industry). Plus temporal self-consistency (value >10× a company's own trailing 4-year median).
+**Approach**: `sec_gold.magnitude_anomalies` matview that flags any value >100× the peer median for the same (concept, fiscal_year, sub_industry). Plus temporal self-consistency (value >10× a company's own trailing 4-year median). <!-- check-docs:ignore proposed, does not exist yet -->
 
 **Acceptance**: Daily run surfaces <50 new anomalies per quarter; most are real data errors, not real outliers.
 
@@ -378,9 +404,9 @@ Uses the factor library for signals, the price layer for returns. Not a replacem
 
 ### GICS Phase B (Industry Group + Industry levels)
 
-**Problem**: We have Sector (11) and Sub-Industry (163) today. Industry Group (25) and Industry (74) are missing.
+**Problem**: We have Sector (11) and Sub-Industry (156 present in this universe; 163 in the full GICS taxonomy) today. Industry Group (25) and Industry (74) are missing.
 
-**Approach**: Hardcode a 163-row `sec_gold.gics_hierarchy(sub_industry_name, industry_name, industry_group_name, sector_name)` table from S&P's public GICS taxonomy structure. Derivative from public structure, no licensing risk. View `sec_gold.sp1500_gics_full` left-joins universe_sp1500 to the hierarchy.
+**Approach**: Hardcode a 163-row `sec_gold.gics_hierarchy(sub_industry_name, industry_name, industry_group_name, sector_name)` table from S&P's public GICS taxonomy structure. Derivative from public structure, no licensing risk. View `sec_gold.sp1500_gics_full` left-joins universe_sp1500 to the hierarchy. <!-- check-docs:ignore proposed, does not exist yet -->
 
 **Effort**: 1-2 hours.
 
@@ -406,7 +432,7 @@ Uses the factor library for signals, the price layer for returns. Not a replacem
 - 10-K text: SEC EDGAR raw filings (free but messy HTML).
 - Transcripts: Seeking Alpha (scrape, gray area) or paid providers (AlphaSense, Sentieo).
 
-**Approach**: Extract MD&A section via regex, embed with sentence-transformers, persist as `sec_gold.mda_embeddings`. Compute quarter-over-quarter cosine similarity as a "management tone change" signal.
+**Approach**: Extract MD&A section via regex, embed with sentence-transformers, persist as `sec_gold.mda_embeddings`. Compute quarter-over-quarter cosine similarity as a "management tone change" signal. <!-- check-docs:ignore proposed, does not exist yet -->
 
 **Effort**: Multi-day research project.
 

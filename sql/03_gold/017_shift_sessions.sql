@@ -1,15 +1,14 @@
--- As-of accessors. The knowledge date has NO default anywhere in this
--- file, deliberately: omitting it must be a call-site error, not a
--- silent look-ahead. Every other accessor in gold defaults to something
--- convenient, and that is exactly how a backtest quietly reads the
--- future.
+-- Trading-session arithmetic.
 --
--- p_buffer_sessions is the safety margin, expressed in trading sessions
--- rather than calendar days so a Friday close plus one lands on Monday.
--- It defaults to 0, meaning "the earliest session an investor could
--- genuinely have acted". Re-run a strategy at 1, 2 and 5 to see how
--- fast the edge decays; one that dies at a single extra session was
--- never an edge.
+-- One utility: shift_sessions(p_asof, p_sessions) moves a date back N
+-- TRADING sessions using the dense session_seq, so a Friday minus one
+-- lands on Thursday rather than on a weekend.
+--
+-- Callers pass their own buffer into it -- the as-of accessors in
+-- 065_asof_functions.sql, shares_outstanding_at in 055 and
+-- share_classes_at in 056 all expose it as p_buffer_sessions. The
+-- reasoning for why a backtest wants that margin belongs with those
+-- callers and is documented in 065; this file is only the arithmetic.
 
 -- ---------------------------------------------------------------
 -- Shift a knowledge date back N trading sessions.

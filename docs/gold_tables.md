@@ -17,8 +17,8 @@ For the whole database — including `sec_reference`, which holds the survivorsh
 | [`tradable_financials_pit`](#tradable_financials_pit) | matview | 11.8M | As-first-seen twin of the above |
 | [`peer_stats`](#peer_stats) | matview | ~530K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level` |
 | `share_class_shares` | matview | — | **Per-share-class counts. The market-cap denominator.** |
-| [`canonical_concepts`](#canonical_concepts) | table | 12 | Research-meaningful metric definitions (revenue, capex, …) |
-| [`concept_tag_map`](#concept_tag_map) | table | ~40 | Priority-ordered XBRL tag resolution rules per concept |
+| [`canonical_concepts`](#canonical_concepts) | table | 15 | Research-meaningful metric definitions (revenue, capex, …) |
+| [`concept_tag_map`](#concept_tag_map) | table | 34 | Priority-ordered XBRL tag resolution rules per concept |
 | `concept_formula` | table | 6 | Derived concepts as linear combinations of other concepts |
 | [`metric_aliases`](#metric_aliases) | table | 4 | Legacy display-name remap for `get_pit_financials` |
 | [`get_canonical()`](#get_canonical) | function | — | Resolve (cik, concept, date) → one value: tags first, then formula |
@@ -52,7 +52,7 @@ Nearly everything in gold comes in two flavors, matching the dual ranking comput
 - **`latest`** — the most recently restated value for each fact. Use for fundamental analysis and dashboards ("what do we now believe FY2022 revenue was").
 - **`pit`** (point-in-time) — the value as it was **first reported**, with no look-ahead. Use for backtesting ("what did the market know on the day of filing"). Verified example: GE's FY2022 revenue exists as both the original $76.5B (`pit`) and restated $29.1B (`latest`).
 
-The matviews are split into a `latest` view and a `_pit` twin; the functions take a `p_mode` parameter (default `'latest'`).
+The matviews are split into a `latest` view and a `_pit` twin; the functions take a `p_mode` parameter, **defaulting to `'pit'`**. Handing restated figures to a caller who omitted the argument was judged the most damaging default available, so `'latest'` must be asked for explicitly. Note `'pit'` is still not availability-correct — it carries no knowledge date; use the `as_of_*` family for backtests.
 
 ### The `qtrs` convention
 
@@ -76,14 +76,34 @@ Many large filers have non-December fiscal year ends (Apple → Sep, Microsoft �
 
 ## Materialized views
 
+### `fact_asof`
+
+**The backtest source.** One row per (fact, filing), with every vintage retained — nothing is overwritten by a later restatement. 97.9M rows, 33 GB, covering the full company spine rather than only S&P 1500 constituents, so it carries no survivorship bias of its own.
+
+Slice it with a half-open interval scan, which returns exactly one row per fact key with no window function at query time:
+
+```sql
+WHERE tradable_from <= T
+  AND (superseded_tradable > T OR superseded_tradable IS NULL)
+```
+
+Availability columns: `known_at`, `tradable_from`, `superseded_tradable`, `vintage_seq`, `is_original_disclosure`. Provenance: `adsh`, `form`, `filed_date`. `value_date` is bounded to 2005 → now+1y because DERA publishes filer typos spanning 1980 to 2032.
+
+Prefer the `as_of_*` function family over querying this directly — those take a mandatory knowledge date, so a look-ahead has to be written on purpose rather than by omission.
+
 ### `tradable_financials`
 
-One row per **(company, XBRL tag, value date, period length, unit)** for every S&P 1500 constituent, holding the latest-restated value (`rank_latest = 1` in silver). Built by joining `sec_silver.universe_sp1500` → `sec_silver.ticker_map` → `sec_silver.num_silver`.
+One row per **(company, XBRL tag, value date, period length, unit)** for every S&P 1500 constituent, holding the latest-restated value (`rank_latest = 1` in silver). Built from `sec_silver.num_silver` joined to `sec_reference.company`, `sec_reference.company_label` and the dated `sec_reference.company_ticker` (resolved against each fact's `tradable_from`), with `universe_sp1500` reached through a lateral on the crosswalk. It does **not** use `sec_silver.ticker_map`.
 
 | Column | Type | Description |
 |---|---|---|
 | `ticker` | text | Exchange ticker (class shares use hyphens: `BRK-B`) |
-| `company_name` | text | Company name from the S&P universe list |
+| `ticker_is_asof` | boolean | **`false` for 47.9% of rows** — the ticker is the company's best-known symbol, not the one it traded under on `value_date`. The crosswalk floor is 2019-02; filter on this if you need a date-correct symbol |
+| `company_name` | text | Company name as of the fact, via `sec_reference.company_label` |
+| `gics_sector` | text | GICS sector, resolved once per company (not as of a date) |
+| `gics_sub_industry` | text | GICS sub-industry, same caveat |
+| `known_at` | timestamptz | When the filing was accepted by EDGAR |
+| `tradable_from` | date | First session on which the fact was actionable |
 | `index_name` | text | `SP500`, `SP400`, or `SP600` |
 | `cik` | integer | SEC Central Index Key |
 | `tag` | text | Raw XBRL tag, e.g. `NetIncomeLoss` |
@@ -95,7 +115,7 @@ One row per **(company, XBRL tag, value date, period length, unit)** for every S
 | `value` | numeric | The reported value, in raw units (dollars, not $B) |
 | `adsh` | text | Accession number of the source filing |
 
-**Indexes**: `ticker`, `value_date`, `tag`, `cik` (all btree).
+**Indexes** (six, all btree): `ticker`, `value_date`, `tag`, `cik`, `tradable_from`, `gics_sector`.
 
 ```sql
 -- Microsoft's 20 most recent reported facts
@@ -121,12 +141,12 @@ WHERE ticker = 'NVDA' AND value_date = '2023-01-29' AND qtrs = 4;
 
 Pre-computed cross-sectional scores: one row per **(ticker, canonical concept, fiscal year, peer level)**. 530,324 rows. Sourced from `tradable_financials` (latest-restated values).
 
-**Two peer levels, tagged by `peer_level`.** Sub-industry alone was too granular — only 106 of 155 groups clear the five-member threshold, and the threshold *deletes* a thin group rather than degrading it, so companies vanished with nothing in the output saying so. Both levels are computed:
+**Two peer levels, tagged by `peer_level`.** Sub-industry alone was too granular — only 106 of 156 groups clear the five-member threshold, and the threshold *deletes* a thin group rather than degrading it, so companies vanished with nothing in the output saying so. Both levels are computed:
 
 | `peer_level` | Groups | Companies scored |
 |---|---:|---:|
-| `sector` | 11 | 1,638 |
-| `sub_industry` | 106 | 1,509 |
+| `sector` | 11 | 1,638 tickers / 1,569 CIKs |
+| `sub_industry` | 106 | 1,509 tickers / 1,445 CIKs |
 
 Sector is the sounder default. The standard error of an estimated standard deviation is about σ/√(2(n−1)), so at the sub-industry median of seven companies the z-score denominator is itself uncertain by nearly 30%, against roughly 10% at sector's thinnest group.
 
@@ -134,10 +154,13 @@ Fiscal year is bucketed by `sec_gold.fiscal_year_of(value_date)`, **not** `EXTRA
 
 | Column | Type | Description |
 |---|---|---|
+| `cik` | integer | SEC Central Index Key |
 | `ticker` | text | Exchange ticker |
 | `gics_sector` | text | GICS sector (11 values) |
 | `gics_sub_industry` | text | GICS sub-industry |
 | `peer_level` | text | `sector` or `sub_industry` — **which grouping this row scores against** |
+| `peer_group` | text | The actual group value `peer_level` selects; the composite indexes are keyed on it |
+| `tradable_from` | date | Availability of the underlying fact |
 | `concept` | text | Canonical concept (FK to `canonical_concepts`) |
 | `fact_type` | text | `flow` or `balance` (derived concepts are resolved and included) |
 | `fiscal_year` | integer | Peer-comparison year from `fiscal_year_of(value_date)` |
@@ -147,10 +170,10 @@ Fiscal year is bucketed by `sec_gold.fiscal_year_of(value_date)`, **not** `EXTRA
 | `peer_mean` | numeric | Group mean |
 | `peer_stddev` | numeric | Group sample standard deviation |
 | `peer_min` / `peer_max` | numeric | Group extremes |
-| `zscore` | numeric(12,4) | `(value − peer_mean) / peer_stddev`; NULL if stddev is 0 |
+| `zscore` | numeric | `(value − peer_mean) / peer_stddev`; NULL if stddev is 0 |
 | `peer_percentile` | numeric | Rank within the group; robust to the size skew that makes a raw-dollar z of +4 mean "much bigger than peers" |
 
-**Indexes**: `ticker`; `(concept, fiscal_year)`; `(gics_sub_industry, fiscal_year, concept)`.
+**Indexes**: `(ticker)`; `(cik)`; `(peer_level, concept, fiscal_year)`; `(peer_level, peer_group, fiscal_year, concept)`. Note `peer_level` leads both composite indexes — a query filtered only on `(concept, fiscal_year)` will not use them.
 
 > **Not availability-correct.** Built from restated values, with peer moments computed over the finished panel, so both the inputs and the statistics know the future. This is a dashboard and screening artifact. Anything backtested should read `fact_asof` and build its own cross-section.
 
@@ -175,7 +198,7 @@ LIMIT 20;
 
 ### `canonical_concepts`
 
-The research taxonomy: 12 concepts that mean the same thing across companies regardless of which XBRL tag each company files. `fact_type` drives the `qtrs` branching in `latest_annual()` (`flow` → `qtrs = 4`, `balance` → `qtrs = 0`; `derived` concepts have no tags and are computed client-side).
+The research taxonomy: **15 concepts** that mean the same thing across companies regardless of which XBRL tag each company files. Three of them (`cost_of_revenue`, `debt_current`, `debt_noncurrent`) exist mainly as operands for `concept_formula`. `fact_type` drives the `qtrs` branching in `latest_annual()` (`flow` → `qtrs = 4`, `balance` → `qtrs = 0`; `derived` concepts have no tags and are computed client-side).
 
 | Concept | Display name | Fact type | UoM | Description |
 |---|---|---|---|---|
@@ -213,24 +236,28 @@ The resolution rules that turn a concept into an actual XBRL tag, walked in orde
 | `operating_income` | 1 | any | `OperatingIncomeLoss` | Near-universal for non-financials |
 | `net_income` | 1 | any | `NetIncomeLoss` | Incl. noncontrolling interest |
 | `net_income` | 2 | any | `NetIncomeLossAvailableToCommonStockholdersBasic` | "Available to common" filers |
-| `eps_diluted` | 1 | any | `EarningsPerShareDiluted` | Near-universal (1,449 companies at FY2024) |
+| `eps_diluted` | 1 | any | `EarningsPerShareDiluted` | Near-universal (1,456 companies at FY2024) |
 | `cash` | 1 | any | `CashAndCashEquivalentsAtCarryingValue` | Standard non-bank cash line |
 | `cash` | 2 | any | `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` | ASC 230 total incl. restricted |
 | `cash` | 3 | any | `Cash` | Legacy tag, small population |
 | `cash` | 1 | 60 | `CashAndDueFromBanks` | Primary bank cash line |
 | `cash` | 2 | 60 | `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` | Bank fallback |
-| `total_assets` | 1 | any | `Assets` | Near-universal (1,488 companies) |
-| `total_equity` | 1 | any | `StockholdersEquity` | Most common equity tag (1,419 companies) |
+| `total_assets` | 1 | any | `Assets` | Near-universal (1,569 companies) |
+| `total_equity` | 1 | any | `StockholdersEquity` | Most common equity tag (1,545 companies) |
 | `total_equity` | 2 | any | `StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest` | Consolidated groups w/ minority interest |
-| `total_debt` | 1 | any | `DebtLongtermAndShorttermCombinedAmount` | Cleanest roll-up, only ~17 filers |
+| `total_debt` | 1 | any | `DebtLongtermAndShorttermCombinedAmount` | Cleanest roll-up, only 30 filers |
 | `total_debt` | 2 | any | `LongTermDebt` | Older single-tag usage |
-| `total_debt` | 3 | any | `LongTermDebtNoncurrent` | Most common but excludes current portion |
-| `capex` | 1 | any | `PaymentsToAcquirePropertyPlantAndEquipment` | Most common capex tag (~1,008 companies) |
-| `capex` | 2 | any | `PaymentsToAcquireProductiveAssets` | Industrials/utilities fallback (~210) |
+| `capex` | 1 | any | `PaymentsToAcquirePropertyPlantAndEquipment` | Most common capex tag (1,228 companies) |
+| `capex` | 2 | any | `PaymentsToAcquireProductiveAssets` | Industrials/utilities fallback (365) |
+| `cost_of_revenue` | 1–2 | any | `CostOfRevenue`, `CostOfGoodsAndServicesSold` | Operands for the `gross_profit` formula |
+| `debt_noncurrent` | 1–2 | any | `LongTermDebtNoncurrent`, `LongTermDebtAndCapitalLeaseObligations` | Operand for `total_debt` |
+| `debt_current` | 1–3 | any | `LongTermDebtCurrent`, …`Current`, `DebtCurrent` | Operand for `total_debt` |
+| `operating_cash_flow` | 1 | any | `NetCashProvidedByUsedInOperatingActivities` | Near-universal |
+| `revenue` | 1–2 | 49 | `RegulatedAndUnregulatedOperatingRevenue`, `Revenues` | Regulated utilities (NextEra and 10 others) |
 
-Add coverage for a new tag with a plain `INSERT` — no function changes needed.
+Add coverage for a new tag with a plain `INSERT` — no function changes needed. The table above is representative, not exhaustive; `concept_tag_map` holds 34 rows.
 
-**Known gaps** (tracked in `features.md`): `total_debt` understates companies whose priority-3 tag omits short-term borrowings; a few hundred issuers (notably NVDA capex) use custom extension tags not mapped here; some banks (USB, TFC) file only decomposed revenue components and resolve to no revenue at all.
+**Known gaps** (tracked in `features.md`): a few hundred issuers (notably NVDA capex) use custom extension tags not mapped here. The `total_debt` understatement and the missing bank revenue are both **fixed** — USB and TFC now resolve revenue in `peer_stats` for FY2023–FY2025.
 
 ### `metric_aliases`
 
@@ -255,7 +282,7 @@ sec_gold.get_canonical(
     p_concept    TEXT,
     p_value_date DATE,
     p_qtrs       INTEGER DEFAULT 4,
-    p_mode       TEXT    DEFAULT 'latest'   -- 'latest' | 'pit'
+    p_mode       TEXT    DEFAULT 'pit'      -- 'pit' | 'latest'
 ) RETURNS NUMERIC
 ```
 
@@ -279,7 +306,7 @@ SELECT sec_gold.get_canonical_by_ticker('AAPL', 'revenue', '2025-09-30');
 sec_gold.latest_annual(
     p_cik     INTEGER,
     p_concept TEXT,
-    p_mode    TEXT DEFAULT 'latest'
+    p_mode    TEXT DEFAULT 'pit'
 ) RETURNS TABLE (value_date DATE, filed_date DATE, value NUMERIC, tag TEXT)
 ```
 
@@ -310,12 +337,12 @@ SELECT * FROM sec_gold.latest_annual_by_ticker('NKE', 'revenue');  -- May FYE ha
 ```sql
 sec_gold.company_snapshot(
     p_ticker TEXT,
-    p_mode   TEXT DEFAULT 'latest'
+    p_mode   TEXT DEFAULT 'pit'
 ) RETURNS TABLE (concept TEXT, display_name TEXT, fact_type TEXT,
                  value_date DATE, value NUMERIC, tag TEXT)
 ```
 
-One row per non-derived canonical concept (11 rows), each resolved via `latest_annual_by_ticker()`. The one-call company overview. Flows land on the last fiscal-year end; balances land on the most recent quarterly balance-sheet date, so the two groups can carry different `value_date`s — that is expected.
+One row per canonical concept (**15 rows**), each resolved via `latest_annual_by_ticker()`. Derived concepts are included and computed — `free_cash_flow` returns a value rather than being excluded. The one-call company overview. Flows land on the last fiscal-year end; balances land on the most recent quarterly balance-sheet date, so the two groups can carry different `value_date`s — that is expected.
 
 ```sql
 SELECT * FROM sec_gold.company_snapshot('AAPL');
@@ -324,7 +351,8 @@ SELECT * FROM sec_gold.company_snapshot('AAPL');
 --  net_income          | 2025-09-30 | $112.0B  | NetIncomeLoss
 --  total_assets        | 2025-12-31 | $379.3B  | Assets           ← newer 10-Q date
 --  eps_diluted         | 2025-09-30 | 7.46     | EarningsPerShareDiluted (per-share)
---  ... (11 rows; free_cash_flow excluded — compute as operating_cash_flow − capex)
+--  free_cash_flow      | 2025-09-30 | $98.77B  | (derived: operating_cash_flow − capex)
+--  ... (15 rows)
 ```
 
 ### `get_pit_financials()`
@@ -353,19 +381,19 @@ SELECT * FROM sec_gold.get_financials_by_ticker('AAPL');
 
 ## Caveats and data quirks
 
-- **Stray `value_date`s.** The matviews span 1980-07-31 → 2031-12-31. Old dates are prior-period comparatives re-filed in modern filings; future dates are filer typos that SEC publishes as-is. Bound `value_date` in analyses that aggregate by date.
+- **Stray `value_date`s.** The matviews span 1980-07-31 → 2032-03-31. Old dates are prior-period comparatives re-filed in modern filings; future dates are filer typos that SEC publishes as-is. Bound `value_date` in analyses that aggregate by date.
 - **Universe is current-constituents-only.** `universe_sp1500` is today's S&P 1500 membership scraped from Wikipedia — historical analyses over the matviews carry **survivorship bias** (companies delisted or dropped from the index before today are absent).
 - **Per-share vs. dollar units.** `eps_diluted` is `USD/share`; don't scale it by 1e9 alongside the dollar concepts. Check `uom` when working with raw tags.
-- **`total_debt` is best-effort.** Priority-3 `LongTermDebtNoncurrent` (the most common resolution) excludes the current portion and short-term borrowings — treat cross-company debt comparisons accordingly.
+- **`total_debt` is a roll-up.** Only two tags resolve it directly; otherwise `concept_formula` sums `debt_noncurrent + debt_current`. `LongTermDebtNoncurrent` was once priority 3 here and silently understated the figure by excluding the current portion; it now sits on `debt_noncurrent` where it belongs.
 - **Z-scores are raw-value scores.** `peer_stats` scores raw dollar values, so it mixes company size with performance; a z of +4 on revenue mostly means "much bigger than peers," not "growing faster." `peer_percentile` is robust to that skew. Both degrade in thin groups, which is why `peer_level = 'sector'` is the sounder default.
-- **Concept coverage is not complete.** About 100 of 1,569 companies resolve to no revenue value in a given year because their XBRL tag is unmapped. Regulated utilities are the clearest cluster: 11 companies including NextEra report `RegulatedAndUnregulatedOperatingRevenue`, which is absent from `concept_tag_map`.
+- **Concept coverage is not complete**, though it is much better than it was: **29 of 1,508** companies resolve to no revenue for FY2024. The regulated-utility cluster that used to dominate this gap is fixed — `RegulatedAndUnregulatedOperatingRevenue` is mapped at `sic_prefix='49'` and NextEra resolves.
 - **Ticker collisions.** `ticker_map` keeps the first CIK seen per ticker; a handful of ambiguous tickers may resolve to an unexpected issuer.
 
 ## Rebuilding and refreshing
 
 ```bash
 uv run dera build-gold                 # full DDL rebuild (drops + recreates sec_gold)
-uv run dera build-gold --refresh-only  # just REFRESH the two tradable matviews
+uv run dera build-gold --refresh-only  # REFRESH all five matviews, in order
 ```
 
 Notes:
@@ -422,7 +450,7 @@ and both are cash-flow movements, not balances.
 
 ### Coverage ceilings are sometimes structural
 
-`gross_profit` reaches 857 of 1,569 companies, not 90%. Banks, REITs and
+`gross_profit` reaches 996 of 1,569 companies, not 90%. Banks, REITs and
 insurers do not report a gross profit line at all, so the remainder is not a
 mapping failure and no amount of tag work will close it. Any screen using gross
 margin should say so rather than quietly dropping half the book.
@@ -492,7 +520,7 @@ deterministically and need no mapping at all.
 | `055_shares_outstanding.sql` | `shares_outstanding_at()` |
 | `056_share_class_shares.sql` | `share_class_shares`, `share_classes_at()` |
 | `060_canonical_function.sql` | `resolve_direct()`, `get_canonical()`, `get_canonical_by_ticker()` |
-| `065_asof_functions.sql` | the five `as_of_*` functions |
+| `065_asof_functions.sql` | the six `as_of_*` functions |
 | `070_fiscal_year_views.sql` | `latest_annual()`, `latest_annual_by_ticker()`, `company_snapshot()` |
 | `080_peer_stats.sql` | `peer_stats` (resolves derived concepts too) |
 

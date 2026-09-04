@@ -1,9 +1,24 @@
+-- get_canonical(p_cik, p_concept, p_value_date, p_qtrs, p_mode)
+--
 -- Default mode is 'pit', not 'latest'. A caller who omits p_mode is
 -- most often writing research code, and silently handing them restated
 -- figures is the most damaging default available. 'latest' now requires
 -- asking for it. Note that 'pit' is still not availability-correct:
 -- it has no knowledge date. Use sec_gold.as_of_* for backtests.
--- get_canonical(p_cik, p_concept, p_value_date, p_qtrs, p_mode)
+--
+-- TICKER RESOLUTION CAVEAT. The ticker-keyed functions below resolve
+-- through `sec_silver.ticker_map`, which is SEC's CURRENT-STATE
+-- crosswalk: it lists only companies registered with a ticker today, so
+-- a ticker that has since been retired or reassigned does not resolve,
+-- and a delisted company cannot be looked up by the symbol it traded
+-- under. Measured on this data, today's file is missing 58.5% of 2013
+-- filers.
+--
+-- The sibling matviews (030_tradable_financials, 035_fact_asof,
+-- 056_share_class_shares) use `sec_reference.company_ticker`, which is
+-- dated and survivorship-free. The split is historical, not intentional.
+-- Anything doing research over past universes should resolve the CIK via
+-- `sec_reference.cik_at(ticker, asof)` and call the CIK-keyed function.
 --
 -- Resolves a canonical concept to a single numeric value by walking
 -- sec_gold.concept_tag_map in priority order. Industry-specific
