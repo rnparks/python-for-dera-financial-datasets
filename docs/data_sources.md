@@ -302,7 +302,12 @@ Those are not equally strong claims and the column refuses to blend them.
 before EDGAR existed and **early** for one that reported before its equity
 traded; filings alone cannot tell those apart. Measured: 1,755 of them carry a
 424B pricing after their `first_trade_date`, 1,100 more than three years after.
-`first_pricing_date` exists so a stricter universe can prefer it.
+`first_pricing_date` exists so a stricter universe can prefer it, and
+`filers_10k_15m_strict` does: an `already_reporting` security enters at that
+pricing when one exists later. Measured 2026-09-04 on the 2015-06-30 universe,
+216 of 7,298 members move out, 59 of them companies that filed before 1998 and
+were therefore public before EDGAR, whose later 424B is a follow-on. The strict
+universe is late-but-proven, the base one early-but-inclusive.
 
 ### Where provenance is currently missing
 

@@ -40,7 +40,7 @@ refill.
 
 Verification::
 
-    uv run dera verify        # 53 data-correctness checks
+    uv run dera verify        # 54 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 

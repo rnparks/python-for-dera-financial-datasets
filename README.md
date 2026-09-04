@@ -80,7 +80,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 53 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 54 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -144,6 +144,11 @@ SELECT * FROM sec_gold.as_of_snapshot(1326801, DATE '2015-06-30');
 
 -- Who was actually investable then, delisted companies included
 SELECT * FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30');
+
+-- The same, entering a company only once its equity was priced: the
+-- strict reading of "first trade" for issuers that reported before they
+-- listed (216 fewer members in 2015, 31 fewer in 2024)
+SELECT * FROM sec_reference.universe_at('filers_10k_15m_strict', DATE '2015-06-30');
 
 -- Who was in the S&P 500 then, with the GICS classification of the time
 SELECT * FROM sec_reference.index_members('SP500', DATE '2015-06-30');

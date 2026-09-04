@@ -76,8 +76,8 @@ CREATE TABLE sec_reference.security (
     -- those apart from OTC-quoted companies that later uplisted. Measured
     -- 2026-09-04: of 8,945 securities on this basis, 1,756 have a 424B
     -- pricing AFTER first_trade_date and 1,101 more than three years
-    -- after. first_pricing_date below carries that evidence so a stricter
-    -- universe can prefer it.
+    -- after. first_pricing_date below carries that evidence, and the
+    -- filers_10k_15m_strict universe (06_security/020) prefers it.
     first_trade_date   DATE,
     first_trade_basis  TEXT CHECK (first_trade_basis IN
                           ('8-A','424B','already_reporting','first_edgar_filing')),

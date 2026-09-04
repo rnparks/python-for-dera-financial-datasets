@@ -110,7 +110,7 @@ construction: it holds every CIK that ever filed, not the ones that survived.
 | `index_membership_timeline` | 2,931 | `index_membership` resolved to one non-overlapping interval set per company (1,711 companies; replayed history beats a snapshot, then the later start). What gold joins with a plain range condition; an EXCLUDE constraint enforces the non-overlap |
 | **`security`** | **17,030** | **A tradable instrument, distinct from its issuer.** Listed classes only |
 | `listing` | 28,287 | Security ↔ ticker over time; `source` says observed crosswalk (21,844), extended crosswalk (6,352) or share-class map (91) |
-| `eligibility` | 18,559 | Universe membership intervals (`filers_10k_15m` 17,695, `sp500` 864), with reasons in and out |
+| `eligibility` | 36,199 | Universe membership intervals with reasons in and out: `filers_10k_15m` 17,700, `filers_10k_15m_strict` 17,635 (1,832 of them entering at a 424B pricing rather than a first periodic report), `sp500` 864 |
 | `delisting_event` | 7,119 | Outcomes: 4,498 exchange notices (Form 25), 2,621 deregistrations (Form 15) |
 | `corporate_action` | 0 | Declared, unpopulated |
 | `share_class` | 99 | Share class → ticker allowlist (66 CIKs): 27 hand-mapped rows plus 72 derived from 10-K cover pages, every row citing its filing |
@@ -158,7 +158,15 @@ back-extended ticker flagged `ticker_is_asof = false`, and 1,476 have no ticker
 label at all: they left before the first capture in 2018-12 and SEC's file never
 carried them, or their ticker changed before then.
 
-A second universe, `sp500`, is derived from `index_membership` for every listed
+`filers_10k_15m_strict` is the same population with one change: a security whose
+first trade is known only from its first periodic report enters at its first
+424B pricing when one exists later. 7,082 members on 2015-06-30 against 7,298,
+6,837 against 6,868 on 2024-06-30. The ones that leave are mostly OTC-quoted
+micro-caps before a priced uplisting and non-traded REITs before their IPO
+(Plymouth Industrial, priced 2017-06-09); the known cost is a pre-EDGAR listed
+company whose later 424B was a follow-on (LGL Group would enter in 2017).
+
+A third universe, `sp500`, is derived from `index_membership` for every listed
 security of a member company, clipped to the security's lifecycle like the
 first. `sec_reference.index_members('SP500', DATE '2015-06-30')` gives the
 constituents on a date with their GICS as of that date; `universe_at('sp500',
@@ -212,11 +220,11 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 53 checks; exits non-zero on any FAIL
+uv run dera verify     # 54 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 
 Covers restatement preservation, availability correctness, crosswalk capture
 quality, share-class summing, derived-concept resolution, and the survivorship /
-future-existence tests on the universe. Checks 29–53 each name the defect found
+future-existence tests on the universe. Checks 29–54 each name the defect found
 in the 2026-09-04 review, or the gap closed since, that they guard against.

@@ -17,6 +17,22 @@
 -- year end, so a 12-month window would drop healthy late filers every
 -- year. Long enough to tolerate lateness, short enough that a company
 -- which stops filing leaves within about five quarters.
+--
+-- TWO UNIVERSES FROM ONE DERIVATION. `filers_10k_15m_strict` is the
+-- same population with one change: a security whose first trade is
+-- known only from its first periodic report ('already_reporting') enters
+-- at its first 424B1/424B4 pricing when one exists later. That is the
+-- stricter reading of first_trade_date the security model's own DDL
+-- proposes. Measured 2026-09-04 on the 2015-06-30 universe: 216 of 7,298
+-- members leave, most of them OTC-quoted micro-caps before a priced
+-- uplisting (Bioxytran, GlucoTrack, Worksport) and non-traded REITs
+-- before their IPO (Plymouth Industrial, priced 2017-06-09). The cost,
+-- also measured: 59 of the 216 filed periodic reports before 1998, i.e.
+-- were public before EDGAR, and their later 424B is a follow-on -- LGL
+-- Group, on the NYSE American for decades, would enter in 2017. The
+-- strict universe is late-but-proven; the base one is early-but-
+-- inclusive; neither pretends to know which. By 2024-06-30 the
+-- difference is 31 of 6,868.
 
 INSERT INTO sec_reference.eligibility
     (security_id, universe_name, valid_from, valid_to, reason_in, reason_out,
@@ -48,13 +64,15 @@ merged AS (
     SELECT security_id, MIN(lo) AS lo, MAX(hi) AS hi
     FROM grp GROUP BY security_id, g
 )
-SELECT m.security_id, 'filers_10k_15m',
+SELECT m.security_id, v.universe_name,
        -- Clipped to the security's own lifecycle. The two CHECK
        -- constraints on this table would reject an unclipped row, which
        -- is the point: the invariant is enforced, not merely intended.
-       GREATEST(m.lo, s.first_trade_date),
+       GREATEST(m.lo, v.entry),
        LEAST(m.hi, COALESCE(s.delisting_date, m.hi)),
-       'annual_report_actionable_within_15m',
+       CASE WHEN v.entry > s.first_trade_date
+            THEN 'annual_report_actionable_within_15m_and_priced'
+            ELSE 'annual_report_actionable_within_15m' END,
        -- reason_out is the reason the interval ENDS, and every interval
        -- has an end: valid_to is always set because eligibility runs out
        -- 15 months after the last annual report unless another one lands
@@ -67,8 +85,14 @@ SELECT m.security_id, 'filers_10k_15m',
        s.first_trade_date, s.delisting_date
 FROM merged m
 JOIN sec_reference.security s USING (security_id)
+CROSS JOIN LATERAL (
+    VALUES ('filers_10k_15m',        s.first_trade_date),
+           ('filers_10k_15m_strict', CASE WHEN s.first_trade_basis = 'already_reporting'
+                                          THEN GREATEST(s.first_trade_date, COALESCE(s.first_pricing_date, s.first_trade_date))
+                                          ELSE s.first_trade_date END)
+) v(universe_name, entry)
 WHERE s.first_trade_date IS NOT NULL
-  AND GREATEST(m.lo, s.first_trade_date)
+  AND GREATEST(m.lo, v.entry)
       <= LEAST(m.hi, COALESCE(s.delisting_date, m.hi))
 ON CONFLICT DO NOTHING;
 

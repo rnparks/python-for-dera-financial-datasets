@@ -127,7 +127,11 @@ is not a tradable instrument and is not a universe member.
 
 Two invariants are enforced by CHECK constraint rather than convention: no
 eligibility interval may begin before `first_trade_date`, or outlive
-`delisting_date`.
+`delisting_date`. Two filer universes come from one derivation: `filers_10k_15m`
+enters a security at its first trade as the filings show it, and
+`filers_10k_15m_strict` enters an issuer that reported before it listed only at
+its first priced offering. Neither claims to know which reading is right for a
+given issuer; the security row carries both dates and the basis.
 
 The crosswalk beneath all of this is built from monthly archive captures of
 SEC's ticker file, and a capture is treated as evidence of presence, never as

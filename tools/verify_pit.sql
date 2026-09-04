@@ -930,3 +930,34 @@ FROM (
            (SELECT ROUND(value/1e9) FROM sec_gold.peer_stats WHERE cik = 19617 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS jpm_bn,
            (SELECT value_date FROM sec_gold.peer_stats WHERE cik = 320193 AND fiscal_year = 2024 AND concept = 'total_assets' AND peer_level = 'sector') AS aapl_date
 ) t;
+
+\echo '=== 54. The strict universe is the base universe minus unproven entries, never more ==='
+-- filers_10k_15m_strict enters an already_reporting security at its first
+-- 424B pricing. Every strict interval must lie inside a base interval of
+-- the same security, no strict interval may start before that pricing,
+-- and a named case must move: Plymouth Industrial REIT reported from
+-- 2011 as a non-traded REIT and priced its IPO on 2017-06-09, so it is
+-- in the base 2015 universe and the strict 2018 one, not the strict 2015.
+SELECT CASE WHEN outside_base = 0 AND before_pricing = 0
+             AND plym_base_2015 AND NOT plym_strict_2015 AND plym_strict_2018
+             AND strict_2015 BETWEEN 6900 AND base_2015 - 100
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       base_2015 AS base_members_2015, strict_2015 AS strict_members_2015,
+       outside_base AS strict_intervals_outside_base, before_pricing AS strict_intervals_before_pricing,
+       plym_base_2015, plym_strict_2015, plym_strict_2018
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_reference.universe_at('filers_10k_15m',        DATE '2015-06-30')) AS base_2015,
+           (SELECT COUNT(*) FROM sec_reference.universe_at('filers_10k_15m_strict', DATE '2015-06-30')) AS strict_2015,
+           (SELECT COUNT(*) FROM sec_reference.eligibility st
+             WHERE st.universe_name = 'filers_10k_15m_strict'
+               AND NOT EXISTS (SELECT 1 FROM sec_reference.eligibility b
+                                WHERE b.universe_name = 'filers_10k_15m' AND b.security_id = st.security_id
+                                  AND b.valid_from <= st.valid_from
+                                  AND COALESCE(b.valid_to, DATE '9999-12-31') >= COALESCE(st.valid_to, DATE '9999-12-31'))) AS outside_base,
+           (SELECT COUNT(*) FROM sec_reference.eligibility st JOIN sec_reference.security s USING (security_id)
+             WHERE st.universe_name = 'filers_10k_15m_strict' AND s.first_trade_basis = 'already_reporting'
+               AND s.first_pricing_date IS NOT NULL AND st.valid_from < s.first_pricing_date) AS before_pricing,
+           EXISTS (SELECT 1 FROM sec_reference.universe_at('filers_10k_15m',        DATE '2015-06-30') WHERE cik = 1515816) AS plym_base_2015,
+           EXISTS (SELECT 1 FROM sec_reference.universe_at('filers_10k_15m_strict', DATE '2015-06-30') WHERE cik = 1515816) AS plym_strict_2015,
+           EXISTS (SELECT 1 FROM sec_reference.universe_at('filers_10k_15m_strict', DATE '2018-06-30') WHERE cik = 1515816) AS plym_strict_2018
+) t;
