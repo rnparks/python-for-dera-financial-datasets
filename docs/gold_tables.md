@@ -482,12 +482,12 @@ RETURNS TABLE (value_date DATE, filed_date DATE, metric TEXT, value_billions NUM
 ```bash
 uv run dera build-gold                 # full DDL rebuild (drops + recreates sec_gold), ~32 min
 uv run dera build-gold --refresh-only  # REFRESH all five matviews, in order
-uv run dera rebuild-reference          # after a crosswalk change: spine, security model, then gold
+uv run dera rebuild-reference          # after a reference change: CSVs, spine in place, security model, refresh what changed
 ```
 
 Notes:
 
-- `build-silver` **drops gold's matviews** via `DROP SCHEMA sec_silver CASCADE`, and so does a spine rebuild (they depend on `sec_reference.company`), so a full gold rebuild (not `--refresh-only`) is required after either.
+- `build-silver` **drops gold's matviews** via `DROP SCHEMA sec_silver CASCADE`, so a full gold rebuild (not `--refresh-only`) follows it. A spine rebuild no longer does: the spine tables are refilled in place and `rebuild-reference` refreshes only the matviews whose inputs changed (`--refresh-all` for all five; `--recreate-spine` after a column change in `sql/05_spine`, which drops the spine tables and gold with them).
 - `build-silver` runs `ANALYZE` on `sec_silver.num_silver` and `sub_silver` at the end of the build. Skipping it made the gold matview joins plan against a statistics-less 181M-row table (observed: 9 hours instead of ~1 minute).
 - `--refresh-only` refreshes all five matviews in dependency order, `peer_stats` last.
 - The functions can be re-applied one file at a time with `run_sql_file`; each drops its previous signature first.

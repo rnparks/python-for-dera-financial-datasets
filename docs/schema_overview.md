@@ -119,9 +119,10 @@ construction: it holds every CIK that ever filed, not the ones that survived.
 | `company_name_raw` | 31,093 | Staging: raw name history |
 
 Rebuild the security model with `dera build-security-model` (it needs
-`dera fetch-filing-index` to have run first). After a crosswalk refresh, use
-`dera rebuild-reference`, which runs the spine, the security model and gold in
-order — a spine rebuild drops every gold matview. There is no shell helper — an
+`dera fetch-filing-index` to have run first). After a reference refresh, use
+`dera rebuild-reference`, which reloads the CSVs, refills the spine in place,
+rebuilds the security model and refreshes the gold matviews whose inputs
+changed. There is no shell helper — an
 earlier shell helper under tools/ loaded an 18-CIK slice and would silently
 truncate the model to 18 securities, so it was deleted in favour of the CLI.
 

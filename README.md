@@ -53,8 +53,9 @@ EDGAR bulk submissions archive
 Internet Archive captures of SEC's ticker file; Wikipedia page history
   └─[tools/fetch_ticker_history.py]→ data/reference/ticker_history.csv.gz
   └─[tools/fetch_sp500_history.py]─→ data/reference/sp500_history.csv.gz
-  └─[dera rebuild-reference]───────→ spine (crosswalk, index membership)
-                                     → security model → gold
+  └─[dera rebuild-reference]───────→ reference CSVs → spine (refilled in place)
+                                     → security model → gold matviews whose
+                                       inputs changed
 ```
 
 ## Setup
@@ -100,12 +101,20 @@ uv run dera fetch-filing-index      # EDGAR bulk archive, ~1.5 GB
 uv run dera build-security-model    # securities, listings, delistings, universes
 ```
 
-and a crosswalk refresh ends with a rebuild of everything that joins to it:
+and a reference refresh ends with a rebuild of everything that joins to it:
 
 ```bash
 uv run python tools/fetch_ticker_history.py --batch 0   # monthly archive captures + live file
-uv run dera rebuild-reference                            # spine → security model → gold
+uv run dera rebuild-reference    # CSVs → spine (in place) → security model → refresh what changed
 ```
+
+The spine is refilled in place, so the gold matviews survive and only the ones
+that read what changed are refreshed: a crosswalk change refreshes four of the
+five and leaves the 33 GB `fact_asof` alone (about 6 minutes end to end, against
+a 32-minute gold rebuild before), a share-class mapping change refreshes one,
+and when nothing changed nothing is refreshed (52 seconds). `--recreate-spine`
+drops the spine tables first, which a column change needs; gold goes with them
+and is rebuilt in full.
 
 `run-all` will **not** destroy a populated bronze — that needs an explicit
 `--reinit-bronze`. `build-silver` without the filing index leaves the existing

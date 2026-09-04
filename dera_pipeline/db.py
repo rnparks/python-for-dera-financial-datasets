@@ -7,6 +7,7 @@ file-based SQL runners would be over-engineered.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -64,7 +65,9 @@ def run_sql_dir(
         if path.name.startswith(skip_prefixes):
             print(f"Skipping {rel}")
             continue
-        print(f"Running {rel}")
+        print(f"Running {rel} ...", end="", flush=True)
+        t0 = time.monotonic()
         run_sql_file(conn, path)
+        print(f" {time.monotonic() - t0:,.1f}s")
         ran.append(path)
     return ran

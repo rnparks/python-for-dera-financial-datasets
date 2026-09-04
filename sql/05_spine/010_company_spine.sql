@@ -21,15 +21,32 @@
 -- stage too early it would silently see an empty universe and pick the
 -- wrong primary ticker for every multi-class company.
 --
--- Rebuilding this file alone drops every gold matview (they depend on
--- `company`), so a spine rebuild is always followed by `dera build-gold`.
+-- Every table here is declared with CREATE TABLE IF NOT EXISTS and
+-- refilled in place (TRUNCATE, then INSERT), so a rebuild keeps the gold
+-- matviews -- which depend on `company` and `company_ticker` -- alive;
+-- `dera rebuild-reference` then refreshes only the matviews whose inputs
+-- actually changed. This file used to DROP ... CASCADE, which took every
+-- gold matview with it and turned a two-minute crosswalk change into a
+-- 32-minute gold rebuild. A column change still needs the drop:
+-- `dera rebuild-reference --recreate-spine` does it on purpose.
 
 -- ---------------------------------------------------------------
 -- 1. Identity spine: one row per CIK that has ever filed.
 -- ---------------------------------------------------------------
-DROP TABLE IF EXISTS sec_reference.company CASCADE;
+CREATE TABLE IF NOT EXISTS sec_reference.company (
+    cik                       INTEGER PRIMARY KEY,
+    name_latest               TEXT,
+    sic_latest                INTEGER,
+    first_filed               DATE,
+    last_filed                DATE,
+    filing_count              BIGINT,
+    ever_filed_10k            BOOLEAN,
+    ever_filed_foreign_annual BOOLEAN
+);
+CREATE INDEX IF NOT EXISTS idx_company_last_filed ON sec_reference.company (last_filed);
 
-CREATE TABLE sec_reference.company AS
+TRUNCATE sec_reference.company;
+INSERT INTO sec_reference.company
 SELECT
     s.cik,
     -- Name as of the most recent filing. Names change; this is a label,
@@ -44,9 +61,6 @@ SELECT
     bool_or(s.form IN ('20-F', '40-F', '20-F/A'))      AS ever_filed_foreign_annual
 FROM sec_silver.sub_silver s
 GROUP BY s.cik;
-
-ALTER TABLE sec_reference.company ADD PRIMARY KEY (cik);
-CREATE INDEX idx_company_last_filed ON sec_reference.company (last_filed);
 
 COMMENT ON TABLE sec_reference.company IS
     'Every CIK that has ever filed. Built from filings, so it contains '
@@ -77,9 +91,17 @@ COMMENT ON TABLE sec_reference.company IS
 -- captures either side is partial. Its sightings still count; its
 -- silences cannot close an interval on their own. The table is persisted
 -- so the decision is auditable and `dera verify` can report it.
-DROP TABLE IF EXISTS sec_reference.ticker_capture CASCADE;
+CREATE TABLE IF NOT EXISTS sec_reference.ticker_capture (
+    observed_on DATE PRIMARY KEY,
+    sn          INTEGER,
+    n_rows      BIGINT,
+    window_max  BIGINT,
+    is_partial  BOOLEAN
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ticker_capture_sn ON sec_reference.ticker_capture (sn);
 
-CREATE TABLE sec_reference.ticker_capture AS
+TRUNCATE sec_reference.ticker_capture;
+INSERT INTO sec_reference.ticker_capture
 SELECT observed_on,
        ROW_NUMBER() OVER (ORDER BY observed_on)::INTEGER AS sn,
        n_rows,
@@ -95,9 +117,6 @@ FROM (
           GROUP BY observed_on) c
 ) s;
 
-ALTER TABLE sec_reference.ticker_capture ADD PRIMARY KEY (observed_on);
-CREATE UNIQUE INDEX idx_ticker_capture_sn ON sec_reference.ticker_capture (sn);
-
 COMMENT ON TABLE sec_reference.ticker_capture IS
     'One row per crosswalk capture with its size. is_partial marks a '
     'capture under 85% of the largest capture within six either side; '
@@ -106,9 +125,24 @@ COMMENT ON TABLE sec_reference.ticker_capture IS
 -- ---------------------------------------------------------------
 -- 3. Dated ticker intervals derived from the raw observations.
 -- ---------------------------------------------------------------
-DROP TABLE IF EXISTS sec_reference.company_ticker CASCADE;
+CREATE TABLE IF NOT EXISTS sec_reference.company_ticker (
+    cik        INTEGER NOT NULL,
+    ticker     TEXT    NOT NULL,
+    valid_from DATE    NOT NULL,
+    valid_to   DATE,
+    is_primary BOOLEAN,
+    source     TEXT,
+    PRIMARY KEY (cik, ticker, valid_from)
+);
+CREATE INDEX IF NOT EXISTS idx_compticker_cik    ON sec_reference.company_ticker (cik);
+CREATE INDEX IF NOT EXISTS idx_compticker_ticker ON sec_reference.company_ticker (ticker);
+CREATE INDEX IF NOT EXISTS idx_compticker_range  ON sec_reference.company_ticker (valid_from, valid_to);
+-- Partial index: the safe single-row lookup path.
+CREATE INDEX IF NOT EXISTS idx_compticker_primary ON sec_reference.company_ticker (cik, valid_from)
+    WHERE is_primary;
 
-CREATE TABLE sec_reference.company_ticker AS
+TRUNCATE sec_reference.company_ticker;
+INSERT INTO sec_reference.company_ticker
 WITH runs AS (
     -- Classic gaps-and-islands: subtracting a per-pair row number from
     -- the global capture number gives a constant per unbroken run of
@@ -237,15 +271,6 @@ SELECT
     ) = 1) AS is_primary,
     'observed'::TEXT AS source
 FROM grouped g;
-
-ALTER TABLE sec_reference.company_ticker
-    ADD PRIMARY KEY (cik, ticker, valid_from);
-CREATE INDEX idx_compticker_cik    ON sec_reference.company_ticker (cik);
-CREATE INDEX idx_compticker_ticker ON sec_reference.company_ticker (ticker);
-CREATE INDEX idx_compticker_range  ON sec_reference.company_ticker (valid_from, valid_to);
--- Partial index: the safe single-row lookup path.
-CREATE INDEX idx_compticker_primary ON sec_reference.company_ticker (cik, valid_from)
-    WHERE is_primary;
 
 -- ---------------------------------------------------------------
 -- 3b. Back-extension before the archive floor.

@@ -38,9 +38,22 @@
 -- ---------------------------------------------------------------
 -- 1. Capture quality.
 -- ---------------------------------------------------------------
-DROP TABLE IF EXISTS sec_reference.index_capture CASCADE;
+-- Declared and refilled in place, like every spine table: see the note
+-- at the top of 010_company_spine.sql.
+CREATE TABLE IF NOT EXISTS sec_reference.index_capture (
+    index_name  TEXT NOT NULL,
+    observed_on DATE NOT NULL,
+    revid       BIGINT,
+    sn          INTEGER,
+    n_rows      BIGINT,
+    window_max  BIGINT,
+    is_partial  BOOLEAN,
+    PRIMARY KEY (index_name, observed_on)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_index_capture_sn ON sec_reference.index_capture (index_name, sn);
 
-CREATE TABLE sec_reference.index_capture AS
+TRUNCATE sec_reference.index_capture;
+INSERT INTO sec_reference.index_capture
 SELECT index_name, observed_on, revid,
        ROW_NUMBER() OVER (PARTITION BY index_name ORDER BY observed_on)::INTEGER AS sn,
        n_rows, window_max,
@@ -52,9 +65,6 @@ FROM (
     FROM (SELECT index_name, observed_on, MIN(revid) AS revid, COUNT(*) AS n_rows
           FROM sec_reference.index_observation GROUP BY 1, 2) c
 ) s;
-
-ALTER TABLE sec_reference.index_capture ADD PRIMARY KEY (index_name, observed_on);
-CREATE UNIQUE INDEX idx_index_capture_sn ON sec_reference.index_capture (index_name, sn);
 
 -- ---------------------------------------------------------------
 -- 2. CIK resolution: the page, then continuity, then the name.
@@ -82,10 +92,32 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
              '[^a-z0-9]', '', 'g')
 $$;
 
-DROP TABLE IF EXISTS sec_reference.index_membership_unresolved CASCADE;
-DROP TABLE IF EXISTS sec_reference.index_observation_resolved  CASCADE;
+CREATE TABLE IF NOT EXISTS sec_reference.index_observation_resolved (
+    index_name        TEXT,
+    observed_on       DATE,
+    revid             BIGINT,
+    sn                INTEGER,
+    ticker            TEXT,
+    name              TEXT,
+    cik               INTEGER,
+    cik_source        TEXT,
+    gics_sector       TEXT,
+    gics_sub_industry TEXT,
+    date_added        DATE
+);
+CREATE INDEX IF NOT EXISTS idx_indexobsres_cik
+    ON sec_reference.index_observation_resolved (index_name, cik, observed_on);
+CREATE TABLE IF NOT EXISTS sec_reference.index_membership_unresolved (
+    index_name TEXT,
+    ticker     TEXT,
+    name       TEXT,
+    first_seen DATE,
+    last_seen  DATE,
+    captures   BIGINT
+);
 
-CREATE TABLE sec_reference.index_observation_resolved AS
+TRUNCATE sec_reference.index_observation_resolved, sec_reference.index_membership_unresolved;
+INSERT INTO sec_reference.index_observation_resolved
 WITH obs AS (
     SELECT o.*, c.sn
     FROM sec_reference.index_observation o
@@ -134,9 +166,7 @@ FROM runs r
 JOIN run_cik rc USING (index_name, ticker, run_key)
 LEFT JOIN name_cik nc USING (index_name, ticker, run_key);
 
-CREATE INDEX idx_indexobsres_cik ON sec_reference.index_observation_resolved (index_name, cik, observed_on);
-
-CREATE TABLE sec_reference.index_membership_unresolved AS
+INSERT INTO sec_reference.index_membership_unresolved
 SELECT index_name, ticker, MIN(name) AS name, MIN(observed_on) AS first_seen, MAX(observed_on) AS last_seen,
        COUNT(*) AS captures
 FROM sec_reference.index_observation_resolved
@@ -151,9 +181,23 @@ COMMENT ON TABLE sec_reference.index_membership_unresolved IS
 -- ---------------------------------------------------------------
 -- 3. Membership intervals, GICS as of.
 -- ---------------------------------------------------------------
-DROP TABLE IF EXISTS sec_reference.index_membership CASCADE;
+CREATE TABLE IF NOT EXISTS sec_reference.index_membership (
+    index_name        TEXT,
+    cik               INTEGER,
+    ticker            TEXT,
+    gics_sector       TEXT,
+    gics_sub_industry TEXT,
+    valid_from        DATE,
+    valid_to          DATE,
+    source            TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_index_membership_key ON sec_reference.index_membership
+    (index_name, cik, valid_from, COALESCE(gics_sub_industry, ''));
+CREATE INDEX IF NOT EXISTS idx_index_membership_cik   ON sec_reference.index_membership (cik, valid_from);
+CREATE INDEX IF NOT EXISTS idx_index_membership_range ON sec_reference.index_membership (index_name, valid_from, valid_to);
 
-CREATE TABLE sec_reference.index_membership AS
+TRUNCATE sec_reference.index_membership;
+INSERT INTO sec_reference.index_membership
 WITH obs AS (
     SELECT index_name, cik, observed_on, sn,
            COALESCE(gics_sector, '') AS gics_sector,
@@ -241,11 +285,6 @@ SELECT * FROM history
 UNION ALL
 SELECT * FROM snapshot;
 
-CREATE UNIQUE INDEX idx_index_membership_key ON sec_reference.index_membership
-    (index_name, cik, valid_from, COALESCE(gics_sub_industry, ''));
-CREATE INDEX idx_index_membership_cik   ON sec_reference.index_membership (cik, valid_from);
-CREATE INDEX idx_index_membership_range ON sec_reference.index_membership (index_name, valid_from, valid_to);
-
 COMMENT ON TABLE sec_reference.index_membership IS
     'Dated index membership per company with GICS as of the interval. '
     'source = wikipedia_history where revisions were replayed (S&P 500), '
@@ -260,15 +299,22 @@ COMMENT ON TABLE sec_reference.index_membership IS
 --     needs it for every one of ~110M rows and a per-row LATERAL over
 --     index_membership tripled the gold build (46 minutes against 16).
 -- ---------------------------------------------------------------
-DROP TABLE IF EXISTS sec_reference.index_membership_latest CASCADE;
+CREATE TABLE IF NOT EXISTS sec_reference.index_membership_latest (
+    cik               INTEGER PRIMARY KEY,
+    index_name        TEXT,
+    gics_sector       TEXT,
+    gics_sub_industry TEXT,
+    source            TEXT,
+    valid_from        DATE,
+    valid_to          DATE
+);
 
-CREATE TABLE sec_reference.index_membership_latest AS
+TRUNCATE sec_reference.index_membership_latest;
+INSERT INTO sec_reference.index_membership_latest
 SELECT DISTINCT ON (cik)
        cik, index_name, gics_sector, gics_sub_industry, source, valid_from, valid_to
 FROM sec_reference.index_membership
 ORDER BY cik, (valid_to IS NULL) DESC, valid_from DESC;
-
-ALTER TABLE sec_reference.index_membership_latest ADD PRIMARY KEY (cik);
 
 COMMENT ON TABLE sec_reference.index_membership_latest IS
     'One row per company: its current membership if it has one, else its '

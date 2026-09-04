@@ -138,9 +138,19 @@ start in 2018-12; a company that has only ever had one primary ticker is
 extended back to its first filing (`source = 'extended'`), and every as-of flag
 downstream is true for observed intervals only, so an inferred label never
 passes as a date-correct one. `data_sources.md` records the measured cases.
-Because the spine is what every gold matview joins to, a crosswalk change is
-applied with `dera rebuild-reference`, which runs spine, security model and gold
-in the only order that works.
+
+The spine tables are declared once and refilled in place, so a rebuild keeps
+every gold matview alive. `dera rebuild-reference` reloads the reference files,
+refills the spine, rebuilds the security model and then refreshes only the
+matviews whose inputs changed, decided by digesting the five spine tables gold
+reads before and after: a crosswalk change refreshes the two
+`tradable_financials` views, `share_class_shares` and `peer_stats` and leaves
+the 33 GB `fact_asof` alone (measured 2026-09-04: 2:13, 2:11, 0:22 and 0:23,
+about 6 minutes with the reload, spine and security stages); a membership
+change is the reverse; a mapping change touches one; nothing changed is 52
+seconds. Until 2026-09-04 the spine was dropped with CASCADE, every gold
+matview went with it, and each crosswalk change cost a 32-minute gold rebuild. `--recreate-spine` restores that drop deliberately, for a column
+change.
 
 ## Gold: two sibling matviews
 
@@ -149,6 +159,7 @@ in the only order that works.
 ```bash
 uv run dera build-gold                 # full DDL rebuild
 uv run dera build-gold --refresh-only  # REFRESH the five matviews instead
+uv run dera rebuild-reference          # REFRESH only the matviews whose spine inputs changed
 ```
 
 A plain `build-gold` re-runs the DDL, and `CREATE MATERIALIZED VIEW ... AS

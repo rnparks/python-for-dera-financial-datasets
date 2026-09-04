@@ -18,13 +18,18 @@ The security lifecycle model, an additive second path::
     uv run dera fetch-filing-index      # EDGAR bulk archive, ~1.5 GB
     uv run dera build-security-model
 
-and the iteration loop for everything downstream of the crosswalk::
+and the iteration loop for everything downstream of the reference files::
 
-    uv run dera rebuild-reference       # spine -> security model -> gold
+    uv run dera rebuild-reference       # reference CSVs -> spine -> security model -> gold refresh
 
-which exists because rebuilding the company spine drops every gold
-matview (they depend on ``sec_reference.company``), so a crosswalk change
-always means those three stages in that order.
+which reloads the tracked reference files, refills the spine in place,
+rebuilds the security model and then refreshes only the gold matviews
+whose inputs changed: a crosswalk change touches four of the five, a
+mapping change one, and when nothing changed nothing is refreshed. The
+spine used to be dropped with CASCADE, which took every gold matview
+with it and made each crosswalk change a 32-minute gold rebuild.
+``--recreate-spine`` does that on purpose, for a column change in
+``sql/05_spine``; ``--refresh-all`` refreshes all five regardless.
 
 ``build-silver`` also builds the security model when the archive is
 present. When it is not, the stage is skipped with a message AND the
@@ -45,6 +50,7 @@ import argparse
 import asyncio
 import subprocess
 import sys
+import time
 
 from . import config, db, downloader, filings, loader, reference
 
@@ -224,6 +230,79 @@ GOLD_MATVIEWS = (
     "sec_gold.peer_stats",
 )
 
+# The spine tables gold reads, and which matview reads which (from
+# pg_depend, 2026-09-04). `rebuild-reference` digests these tables before
+# and after the spine refill and refreshes only the matviews whose inputs
+# changed. fact_asof -- 33 GB and by far the slowest refresh -- carries
+# no ticker at all, so a crosswalk change leaves it alone.
+SPINE_TABLES = (
+    "company",
+    "company_ticker",
+    "index_membership",
+    "index_membership_latest",
+    "share_class",
+)
+GOLD_INPUTS: dict[str, frozenset[str]] = {
+    "sec_gold.tradable_financials": frozenset(
+        {"company", "company_ticker", "index_membership", "index_membership_latest"}),
+    "sec_gold.tradable_financials_pit": frozenset(
+        {"company", "company_ticker", "index_membership", "index_membership_latest"}),
+    "sec_gold.fact_asof": frozenset(
+        {"company", "index_membership", "index_membership_latest"}),
+    "sec_gold.share_class_shares": frozenset(
+        {"company", "company_ticker", "share_class"}),
+    "sec_gold.peer_stats": frozenset(
+        {"company", "index_membership", "sec_gold.tradable_financials"}),
+}
+# Everything 05_spine declares, for --recreate-spine.
+SPINE_DECLARED = (
+    "company", "ticker_capture", "company_ticker",
+    "index_capture", "index_observation_resolved", "index_membership_unresolved",
+    "index_membership", "index_membership_latest",
+)
+
+
+def gold_refresh_plan(changed: set[str]) -> list[str]:
+    """The matviews to REFRESH, in dependency order, given the spine
+    tables whose contents changed.
+
+    A matview is in the plan when it reads a changed table or a matview
+    that is already in the plan (peer_stats follows tradable_financials).
+    Nothing changed, nothing refreshed.
+    """
+    plan: list[str] = []
+    for matview in GOLD_MATVIEWS:
+        if GOLD_INPUTS[matview] & (set(changed) | set(plan)):
+            plan.append(matview)
+    return plan
+
+
+def _spine_digests(conn) -> dict[str, str | None]:
+    """md5 of each spine table's ordered contents, None where the table
+    does not exist yet. Cheap: the largest of them has 42k rows."""
+    out: dict[str, str | None] = {}
+    with conn.cursor() as cur:
+        for table in SPINE_TABLES:
+            cur.execute("SELECT to_regclass(%s)", (f"sec_reference.{table}",))
+            if cur.fetchone()[0] is None:
+                out[table] = None
+                continue
+            cur.execute(
+                f"SELECT md5(string_agg(t::text, E'\\n' ORDER BY t::text)) "
+                f"FROM sec_reference.{table} t")
+            out[table] = cur.fetchone()[0]
+    return out
+
+
+def _missing_matviews(conn) -> list[str]:
+    missing: list[str] = []
+    with conn.cursor() as cur:
+        for matview in GOLD_MATVIEWS:
+            cur.execute("SELECT to_regclass(%s)", (matview,))
+            if cur.fetchone()[0] is None:
+                missing.append(matview)
+    return missing
+
 
 def cmd_build_gold(args: argparse.Namespace) -> int:
     """Build (or refresh) the gold layer.
@@ -294,23 +373,39 @@ def cmd_build_security_model(args: argparse.Namespace) -> int:
 
 
 def cmd_rebuild_reference(args: argparse.Namespace) -> int:
-    """Rebuild everything downstream of the ticker crosswalk.
+    """Rebuild everything downstream of the tracked reference files.
 
-    Three stages, three transactions, in the only order that works:
+    Four stages, each its own transaction:
 
-    1. the company spine (``sql/05_spine``), which reads
-       ``ticker_observation`` and DROPs ``sec_reference.company`` with
-       CASCADE -- taking every gold matview with it;
+    0. reload the reference CSVs: crosswalk observations, S&P 500
+       history, share-class map, trading calendar, today's S&P 1500. The
+       fetch tools write files, never the database, and this stage used
+       to be missing -- a freshly fetched crosswalk was "rebuilt" from
+       the previous observations;
+    1. the company spine (``sql/05_spine``), refilled in place so the
+       gold matviews survive. ``--recreate-spine`` drops the spine tables
+       first, which a column change needs; gold goes with them;
     2. the security model, whose listings read the spine;
-    3. gold, which reads both.
-
-    A crosswalk change used to mean remembering that sequence and
-    running the middle of it by hand with ``psql -f``. Each stage commits
-    on its own so a failure in gold does not force the spine to rebuild
-    again.
+    3. gold: the matviews whose inputs changed are refreshed, the rest
+       left alone. ``--refresh-all`` refreshes all five; a missing
+       matview means the full DDL build.
     """
+    t_start = time.monotonic()
     with db.get_conn() as conn:
-        print("Stage 1/3: company spine (drops gold matviews)...")
+        before = _spine_digests(conn)
+        print("Stage 0/3: reference files...")
+        reference.load_calendar_only(conn)
+        reference.load_all_reference(conn)
+        if args.recreate_spine:
+            print("  --recreate-spine: dropping the spine tables, and with "
+                  "them every gold matview")
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DROP TABLE IF EXISTS "
+                    + ", ".join(f"sec_reference.{t}" for t in SPINE_DECLARED)
+                    + " CASCADE")
+    with db.get_conn() as conn:
+        print("Stage 1/3: company spine (refilled in place)...")
         db.run_sql_dir(conn, config.SQL_DIR / "05_spine")
     with db.get_conn() as conn:
         print("Stage 2/3: security model...")
@@ -319,8 +414,31 @@ def cmd_rebuild_reference(args: argparse.Namespace) -> int:
                   "`dera fetch-filing-index` first.", file=sys.stderr)
             return 1
         _build_security_model(conn)
+        after = _spine_digests(conn)
+        missing = _missing_matviews(conn)
+    changed = [t for t in SPINE_TABLES if before[t] != after[t]]
     print("Stage 3/3: gold...")
-    return cmd_build_gold(argparse.Namespace(refresh_only=False))
+    print(f"  spine tables whose contents changed: {', '.join(changed) or 'none'}")
+    if missing:
+        print(f"  {len(missing)} matview(s) absent ({', '.join(missing)}): "
+              "full gold build")
+        rc = cmd_build_gold(argparse.Namespace(refresh_only=False))
+    else:
+        plan = list(GOLD_MATVIEWS) if args.refresh_all else gold_refresh_plan(set(changed))
+        if not plan:
+            print("  nothing to refresh")
+        with db.get_conn() as conn, conn.cursor() as cur:
+            for matview in plan:
+                print(f"  REFRESH {matview} ...", end="", flush=True)
+                t0 = time.monotonic()
+                cur.execute(f"REFRESH MATERIALIZED VIEW {matview}")
+                print(f" {time.monotonic() - t0:,.0f}s")
+        skipped = [m for m in GOLD_MATVIEWS if m not in plan]
+        if skipped:
+            print(f"  inputs unchanged, not refreshed: {', '.join(skipped)}")
+        rc = 0
+    print(f"rebuild-reference finished in {(time.monotonic() - t_start) / 60:,.1f} min")
+    return rc
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -492,7 +610,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_rref = sub.add_parser(
         "rebuild-reference",
-        help="rebuild spine, security model and gold after a crosswalk change")
+        help="reload the reference files, refill the spine in place, rebuild "
+             "the security model and refresh the gold matviews whose inputs "
+             "changed")
+    p_rref.add_argument(
+        "--recreate-spine", action="store_true", default=False,
+        help="DROP the spine tables first (needed after a column change in "
+             "sql/05_spine); every gold matview goes with them and gold is "
+             "rebuilt in full",
+    )
+    p_rref.add_argument(
+        "--refresh-all", action="store_true", default=False,
+        help="REFRESH all five gold matviews regardless of what changed",
+    )
     p_rref.set_defaults(func=cmd_rebuild_reference)
 
     p_verify = sub.add_parser(

@@ -339,9 +339,10 @@ uv run python tools/fetch_ticker_history.py --batch 0   # all captures + live fi
 uv run python tools/fetch_sp500_history.py --batch 0    # S&P 500 revisions (resumes)
 uv run python tools/fetch_sp1500.py              # today's S&P 1500
 uv run python tools/fetch_cover_page_classes.py --sp500 --write-map   # dual-class mappings
-uv run dera rebuild-reference                    # spine -> security model -> gold
+uv run dera rebuild-reference                    # CSVs -> spine (in place) -> security model -> refresh what changed
 ```
 
-A crosswalk, membership or mapping refresh always ends with `rebuild-reference`:
-rebuilding the spine drops the gold matviews, so the three stages have to run in
-that order.
+A crosswalk, membership or mapping refresh always ends with `rebuild-reference`.
+The fetch tools write files, never the database, so it reloads these files
+first, then refills the spine in place and refreshes only the gold matviews
+whose inputs changed.

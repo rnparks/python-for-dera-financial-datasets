@@ -311,3 +311,48 @@ def test_dbobj_three_part_regex():
 def test_cli_regex():
     assert check_docs.RE_CLI.findall("run `uv run dera build-gold --refresh-only` now") == [
         ("build-gold", " --refresh-only")]
+
+
+# ---------------------------------------------------------------------
+# rebuild-reference: refresh only the gold matviews whose inputs changed
+# ---------------------------------------------------------------------
+
+def test_refresh_plan_nothing_changed_nothing_refreshed():
+    from dera_pipeline import cli
+    assert cli.gold_refresh_plan(set()) == []
+
+
+def test_refresh_plan_crosswalk_change_skips_fact_asof():
+    from dera_pipeline import cli
+    assert cli.gold_refresh_plan({"company_ticker"}) == [
+        "sec_gold.tradable_financials",
+        "sec_gold.tradable_financials_pit",
+        "sec_gold.share_class_shares",
+        "sec_gold.peer_stats",
+    ]
+
+
+def test_refresh_plan_membership_change_refreshes_fact_asof_not_shares():
+    from dera_pipeline import cli
+    plan = cli.gold_refresh_plan({"index_membership", "index_membership_latest"})
+    assert "sec_gold.fact_asof" in plan
+    assert "sec_gold.share_class_shares" not in plan
+    assert plan[-1] == "sec_gold.peer_stats"
+
+
+def test_refresh_plan_mapping_change_refreshes_only_share_classes():
+    from dera_pipeline import cli
+    assert cli.gold_refresh_plan({"share_class"}) == ["sec_gold.share_class_shares"]
+
+
+def test_refresh_plan_everything_changed_is_the_full_list_in_order():
+    from dera_pipeline import cli
+    assert cli.gold_refresh_plan(set(cli.SPINE_TABLES)) == list(cli.GOLD_MATVIEWS)
+
+
+def test_every_gold_matview_declares_its_inputs():
+    from dera_pipeline import cli
+    assert set(cli.GOLD_INPUTS) == set(cli.GOLD_MATVIEWS)
+    for inputs in cli.GOLD_INPUTS.values():
+        for name in inputs:
+            assert name in cli.SPINE_TABLES or name in cli.GOLD_MATVIEWS
