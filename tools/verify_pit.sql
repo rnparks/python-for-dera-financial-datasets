@@ -205,8 +205,108 @@ FROM (
 \echo ''
 \echo '=== 15. Equivalent share classes are not double counted ==='
 -- Berkshire publishes one total twice, converted into each class's
--- units. Summing them double counts the company.
-SELECT CASE WHEN method = 'class_equivalent' AND shares < 2.2e9
+-- units: EquivalentClassA 1,438,223 and EquivalentClassB 2,157,335,139,
+-- a ratio of exactly 1500. Summing them double counts the company.
+--
+-- This check originally asserted method='class_equivalent', the label of
+-- a string-sniffing branch that detected "Equivalent" in the segment
+-- text. That branch is gone: the A-side expression is now marked
+-- is_excluded in sec_reference.share_class, so it cannot enter the sum
+-- at all and the path is the ordinary mapped one. Asserting the label
+-- tested the implementation; asserting the value tests the behaviour,
+-- which is what should have been checked from the start.
+--
+-- The number that matters: 2.1572B (B-equivalent alone), NOT the
+-- 2.1586B that summing both expressions produced before the fix.
+SELECT CASE WHEN shares BETWEEN 2.15e9 AND 2.158e9
+                 AND EXISTS (SELECT 1 FROM sec_reference.share_class
+                              WHERE cik=1067983 AND class_label='EquivalentClassA'
+                                AND is_excluded)
             THEN 'PASS' ELSE 'FAIL' END AS status,
-       to_char(shares/1e9,'FM990.000')||'B' AS brk_shares, method, source_tag
+       to_char(shares/1e9,'FM990.0000')||'B' AS brk_shares, method, source_tag
 FROM sec_gold.shares_outstanding_at(1067983, CURRENT_DATE);
+
+\echo ''
+\echo '=== 16. Multi-class issuers resolve each listed class separately ==='
+-- Fox is the control: two classes, two tickers, one to one. If Fox
+-- fails the mechanism is broken. Alphabet must show three classes (two
+-- listed plus the unlisted B), Liberty Media six across two tracking
+-- families that must NOT be pooled.
+SELECT CASE WHEN fox=2 AND alphabet=3 AND liberty=6 AND newscorp=2 AND ua=3
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       fox, alphabet, liberty, newscorp, ua
+FROM (
+    SELECT COUNT(*) FILTER (WHERE cik=1754301) AS fox,
+           COUNT(*) FILTER (WHERE cik=1652044) AS alphabet,
+           COUNT(*) FILTER (WHERE cik=1560385) AS liberty,
+           COUNT(*) FILTER (WHERE cik=1564708) AS newscorp,
+           COUNT(*) FILTER (WHERE cik=1336917) AS ua
+    FROM (
+        SELECT DISTINCT cik, class_label FROM sec_gold.share_class_shares
+        WHERE cik IN (1754301,1652044,1560385,1564708,1336917)
+    ) d
+) t;
+
+\echo ''
+\echo '=== 17. Alphabet classes reconcile to the consolidated total ==='
+-- Class A + Class B + Class C must reach ~12.1B. If the unlisted Class B
+-- were dropped the sum would fall about 7% short, so this proves it is
+-- carried rather than silently excluded.
+SELECT CASE WHEN total BETWEEN 11.5e9 AND 12.7e9 AND n_classes=3 AND n_unlisted=1
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       to_char(total/1e9,'FM990.000')||'B' AS class_sum, n_classes, n_unlisted
+FROM (
+    SELECT SUM(shares) AS total, COUNT(*) AS n_classes,
+           COUNT(*) FILTER (WHERE is_unlisted_class) AS n_unlisted
+    FROM sec_gold.share_classes_at(1652044, CURRENT_DATE)
+) t;
+
+\echo ''
+\echo '=== 18. Berkshire is not double counted ==='
+-- Berkshire publishes the whole company twice, in A-equivalent and
+-- B-equivalent units. Only the B-equivalent expression is mapped; the A
+-- one is is_excluded. So exactly one row, priced at BRK-B, and NOT the
+-- 2.1586B that summing the two produced before.
+SELECT CASE WHEN n_rows=1 AND price_ticker='BRK-B' AND shares < 2.158e9
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       n_rows, price_ticker, to_char(shares/1e9,'FM990.000')||'B' AS shares
+FROM (
+    SELECT COUNT(*) OVER () AS n_rows, price_ticker, shares
+    FROM sec_gold.share_classes_at(1067983, CURRENT_DATE) LIMIT 1
+) t;
+
+\echo ''
+\echo '=== 19. Negative cases produce nothing rather than a wrong number ==='
+-- Symbotic (combined V1AndV3 label overlapping its own parts), Xanadu
+-- (a literal TotalCommonShares member) and Kodiak (a redemption subset).
+-- Each broke a different assumption in the summing logic. None is
+-- mapped, so none may contribute a single row.
+SELECT CASE WHEN COUNT(*)=0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       COUNT(*) AS rows_from_unmapped_overlapping_issuers
+FROM sec_gold.share_class_shares
+WHERE cik IN (1837240, 2097163, 1853138)  -- Symbotic, Xanadu, Kodiak
+  AND method = 'mapped_class';
+
+\echo ''
+\echo '=== 20. Every class row traces to a mapping or a single ticker ==='
+-- The allowlist invariant. A row can only exist by explicit mapping or
+-- by single-ticker inference; nothing arrives by pattern match.
+SELECT CASE WHEN bad=0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       total_rows, bad AS rows_with_no_provenance
+FROM (
+    SELECT COUNT(*) AS total_rows,
+           COUNT(*) FILTER (WHERE method NOT IN ('mapped_class','inferred_single')
+                               OR price_ticker IS NULL) AS bad
+    FROM sec_gold.share_class_shares
+) t;
+
+\echo ''
+\echo '=== 21. No preferred or compound-axis segment leaked in ==='
+-- Regression guard on the contamination bug: the old filter matched
+-- ClassOfStock=SeriesAPreferredStock and rows carrying a second axis.
+SELECT CASE WHEN COUNT(*)=0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       COUNT(*) AS contaminated_mappings
+FROM sec_reference.share_class
+WHERE NOT is_excluded
+  AND (class_label ILIKE '%preferred%' OR class_label ILIKE '%treasury%'
+       OR class_label LIKE '%=%');

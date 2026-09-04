@@ -27,7 +27,7 @@ Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 **Missing for serious research**:
 - **Prices.** Still the biggest gap and nothing else is testable without it. The share-count denominator already exists (`shares_outstanding_at`, availability-correct) — prices are the only missing input.
 - **Point-in-time universe.** `universe_sp1500` is today's membership with no dates, so the PIT fact layer still joins to a look-ahead universe. The largest remaining correctness hole.
-- **Multi-class market cap.** 329 of 1,504 issuers report more than one share class. Market cap needs each class priced separately; `is_primary` collapses to one. Do this before prices, since the price schema depends on it.
+- **Multi-class market cap.** Denominator now built: `sec_gold.share_class_shares` gives per-class counts for mapped issuers, and `share_classes_at(cik, asof)` returns one row per class. 177 of 1,500 issuers hold multiple listed tickers, 131 file multiple common classes. Remaining: the class-to-ticker mapping covers only 9 companies by hand so far. A cover-page scraper can derive the rest exactly — every 10-K since 2019 carries `dei:TradingSymbol` dimensioned by `StatementClassOfStockAxis`, whose member string matches `num_silver.segments` character for character.
 - Scale-free metrics: margins, ROIC, FCF yield, growth. `concept_formula` is the mechanism; nothing uses it for ratios yet.
 - Factor library — requires prices.
 - Incremental silver rebuild. Full rebuild is now ~39 min and is a single transaction, so a late failure discards everything.
@@ -80,11 +80,16 @@ In reverse chronological order on `refactor/medallion-cleanup`:
 > 3. It joins `ticker_map`, which is survivorship-biased. Use
 >    `sec_reference.cik_at(ticker, asof)`.
 >
-> And a fourth that no existing code fixes: **multi-class issuers**. 329 of
-> 1,504 report more than one share class, and market cap needs each class
-> priced separately. Berkshire publishes one total twice in different units,
-> so summing double counts it. Settle the per-class share model before
-> writing the price loader, because the schema depends on it.
+> The fourth defect, **multi-class issuers**, is now addressed on the share
+> side. `sec_gold.share_class_shares` holds per-class counts and
+> `share_classes_at(cik, asof)` returns one row per class with the ticker whose
+> price applies. So the price loader should be keyed on **(ticker, trade_date)
+> where ticker is a listed share class**, and market cap is
+> `SUM(shares * price(price_ticker))` across the classes a company returns.
+>
+> Note an unlisted class such as Alphabet Class B carries
+> `prices_with_ticker` rather than a ticker of its own, so it needs a price
+> lookup against its reference class rather than being skipped.
 
 **Proposed schema** (superseded — see warning above):
 ```sql

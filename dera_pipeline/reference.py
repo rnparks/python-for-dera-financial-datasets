@@ -169,6 +169,66 @@ def load_ticker_history(conn: psycopg.Connection, csv_path: Path) -> int:
     return len(rows)
 
 
+def load_share_class_map(conn: psycopg.Connection, csv_path: Path) -> int:
+    """Load data/reference/share_class_map.csv → sec_reference.share_class.
+
+    Explicit mappings only. Single-class issuers are inferred
+    deterministically downstream and must NOT appear here, so this file
+    stays small enough to review in a pull request.
+
+    Blank strings become NULL rather than empty text, because the table's
+    CHECK constraints distinguish "no ticker" from "" and would otherwise
+    accept a row that is neither listed, priced-with, nor excluded.
+    """
+    def nn(v: str | None) -> str | None:
+        v = (v or "").strip()
+        return v or None
+
+    rows: list[tuple] = []
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        for r in csv.DictReader(f):
+            try:
+                cik = int(r["cik"])
+            except (KeyError, ValueError):
+                continue
+            label = nn(r.get("class_label"))
+            if not label:
+                continue
+            ratio = nn(r.get("conversion_ratio"))
+            rows.append((
+                cik,
+                label,
+                nn(r.get("ticker")),
+                nn(r.get("prices_with_ticker")),
+                float(ratio) if ratio else None,
+                (r.get("is_excluded") or "false").strip().lower() == "true",
+                nn(r.get("effective_from")) or "1900-01-01",
+                nn(r.get("effective_to")),
+                nn(r.get("source")) or "mapped_filing",
+                nn(r.get("source_note")),
+            ))
+
+    if not rows:
+        raise ValueError(f"{csv_path} contained no share-class mappings")
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE TABLE sec_reference.share_class")
+        with cur.copy(
+            # Text format, not CSV: psycopg writes None as the \N NULL
+            # marker, which CSV mode treats as the literal two-character
+            # string and rejects on a numeric column. Several columns here
+            # are legitimately NULL (an unlisted class has no ticker), so
+            # text format is the correct choice rather than a workaround.
+            "COPY sec_reference.share_class "
+            "(cik, class_label, ticker, prices_with_ticker, conversion_ratio, "
+            " is_excluded, effective_from, effective_to, source, source_note) "
+            "FROM STDIN"
+        ) as cp:
+            for row in rows:
+                cp.write_row(row)
+    return len(rows)
+
+
 def load_calendar_only(conn: psycopg.Connection) -> int:
     """Load just the trading calendar. Called before the silver build."""
     calendar = config.REFERENCE_DIR / "trading_calendar.csv"
@@ -192,6 +252,15 @@ def load_calendar_only(conn: psycopg.Connection) -> int:
             "current-only (survivorship biased). Build it with "
             "`uv run python tools/fetch_ticker_history.py`."
         )
+
+    # Optional: without it, multi-class issuers simply resolve no
+    # per-class shares rather than resolving wrong ones.
+    sc = config.REFERENCE_DIR / "share_class_map.csv"
+    if sc.exists():
+        m = load_share_class_map(conn, sc)
+        print(f"  share_class      → {m:>6,} class mappings")
+    else:
+        print("  share_class_map.csv absent — no per-class share data")
     return n
 
 

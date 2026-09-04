@@ -13,7 +13,8 @@ The gold layer is the query-facing top of the medallion pipeline: SEC DERA funda
 | [`fact_asof`](#fact_asof) | matview | 98M | **Bitemporal facts, every vintage. The correct backtest source.** |
 | [`tradable_financials`](#tradable_financials) | matview | 11.8M | Latest-restated facts, one row per fact |
 | [`tradable_financials_pit`](#tradable_financials_pit) | matview | 11.8M | As-first-seen twin of the above |
-| [`peer_stats`](#peer_stats) | matview | ~220K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level` |
+| [`peer_stats`](#peer_stats) | matview | ~530K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level` |
+| `share_class_shares` | matview | — | **Per-share-class counts. The market-cap denominator.** |
 | [`canonical_concepts`](#canonical_concepts) | table | 12 | Research-meaningful metric definitions (revenue, capex, …) |
 | [`concept_tag_map`](#concept_tag_map) | table | ~40 | Priority-ordered XBRL tag resolution rules per concept |
 | `concept_formula` | table | 6 | Derived concepts as linear combinations of other concepts |
@@ -32,7 +33,8 @@ The gold layer is the query-facing top of the medallion pipeline: SEC DERA funda
 | `as_of_latest_annual()` | function | — | Most recent annual value knowable on a date |
 | `as_of_latest_annual_by_ticker()` | function | — | Ticker wrapper, resolves the ticker as of the same date |
 | `as_of_snapshot()` | function | — | Every concept for a ticker as of a date |
-| `shares_outstanding_at()` | function | — | Share count with share-class summation |
+| `shares_outstanding_at()` | function | — | Single collapsed share count. NOT sufficient for multi-class market cap |
+| `share_classes_at()` | function | — | Every share class for a company as of a date, one row per class |
 | `norm_ticker()` | function | — | Ticker to stored form (`BRK.B` → `BRK-B`) |
 | `fiscal_year_of()` | function | — | Peer-comparison year key for non-December filers |
 | `shift_sessions()` | function | — | Move a date back N trading sessions |
@@ -355,7 +357,7 @@ Notes:
 
 - `build-silver` **drops gold's matviews** via `DROP SCHEMA sec_silver CASCADE`, so a full gold rebuild (not `--refresh-only`) is required after every silver rebuild.
 - `build-silver` now runs `ANALYZE` on `sec_silver.num_silver` and `sub_silver` at the end of the build. Previously this was documented as a manual step and lived in no code path; skipping it made the gold matview joins plan against a statistics-less 181M-row table (observed: 9 hours instead of ~1 minute).
-- `--refresh-only` refreshes all four matviews in dependency order, `peer_stats` last. `fact_asof` was previously missing from that list, which left the availability-correct table stale behind every `as_of_*` function.
+- `--refresh-only` refreshes all five matviews in dependency order, `peer_stats` last. `fact_asof` was previously missing from that list, which left the availability-correct table stale behind every `as_of_*` function.
 
 ## Derived concepts
 
@@ -410,6 +412,55 @@ insurers do not report a gross profit line at all, so the remainder is not a
 mapping failure and no amount of tag work will close it. Any screen using gross
 margin should say so rather than quietly dropping half the book.
 
+## Multi-class issuers and market cap
+
+Market cap for a multi-class issuer is the sum over classes of shares times
+**that class's** price. It cannot be computed from a single collapsed share
+count: GOOGL and GOOG trade a percent or two apart, but BRK.A is roughly 1,500
+times BRK.B. `shares_outstanding_at()` returns one number and is explicitly not
+sufficient here. Use `share_class_shares` / `share_classes_at()`.
+
+In the tracked universe, 177 of 1,500 companies hold more than one listed
+ticker and 131 file two or more genuine common share classes.
+
+### Why the class filter is an allowlist, not a pattern match
+
+The obvious approach is to match the `ClassOfStock` axis and sum what matches.
+That was tried and it is wrong. Against issuers publishing both a consolidated
+total and clean per-class rows, summing the classes disagreed with the total in
+**312 of 1,033 cases**, because the axis is free text whose members routinely
+overlap one another:
+
+| Issuer | Members filed | Effect of summing |
+|---|---|---|
+| Symbotic | ClassA, V1, V3 **and** V1AndV3 | 82% too high |
+| Kodiak | ClassA **and** ClassANotSubjectToRedemption | subset counted twice |
+| Xanadu | ten members including a literal `TotalCommonShares` | nonsense |
+
+No regex separates those from genuine classes. So a class contributes only if
+explicitly mapped in `sec_reference.share_class`. An unmapped member yields
+nothing, which makes those failures structurally impossible rather than
+filtered against. A new multi-class issuer therefore needs a mapping row before
+it gets a market cap, and never gets a wrong one in the meantime.
+
+### Three states a class can be in
+
+- **Listed.** `ticker` set; price it directly.
+- **Unlisted but real equity.** `ticker` NULL, `prices_with_ticker` set.
+  Alphabet Class B is 849M shares with no ticker; dropping it understates
+  market cap by roughly 7%, pricing it at zero is worse. It is priced at the
+  class it converts into, with the ratio cited rather than assumed.
+- **Excluded.** Not common equity, or a duplicate expression of another row.
+  Berkshire publishes the whole company twice, in A-equivalent and B-equivalent
+  units at exactly 1,500 to 1; counting both double counts the company.
+
+### Provenance
+
+Every mapping row carries `source` and `source_note`. Filing-sourced and
+vendor-sourced rows can coexist and be audited separately, and a row can be
+re-derived without touching the rest. Single-ticker issuers are inferred
+deterministically and need no mapping at all.
+
 ## Source files
 
 | File | Creates |
@@ -424,6 +475,7 @@ margin should say so rather than quietly dropping half the book.
 | `040_helper_functions.sql` | `get_pit_financials()`, `get_financials_by_ticker()` |
 | `050_canonical_concepts.sql` | `canonical_concepts`, `concept_tag_map`, `concept_formula` |
 | `055_shares_outstanding.sql` | `shares_outstanding_at()` |
+| `056_share_class_shares.sql` | `share_class_shares`, `share_classes_at()` |
 | `060_canonical_function.sql` | `resolve_direct()`, `get_canonical()`, `get_canonical_by_ticker()` |
 | `065_asof_functions.sql` | the five `as_of_*` functions |
 | `070_fiscal_year_views.sql` | `latest_annual()`, `latest_annual_by_ticker()`, `company_snapshot()` |

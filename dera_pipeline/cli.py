@@ -152,6 +152,7 @@ GOLD_MATVIEWS = (
     "sec_gold.tradable_financials",
     "sec_gold.tradable_financials_pit",
     "sec_gold.fact_asof",
+    "sec_gold.share_class_shares",
     "sec_gold.peer_stats",
 )
 

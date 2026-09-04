@@ -112,25 +112,51 @@ LANGUAGE sql STABLE AS $$
     -- computing market cap.
     by_class AS (
         SELECT
-            CASE WHEN bool_or(v.segments ILIKE '%Equivalent%')
-                 THEN MAX(v.value)
-                 ELSE SUM(v.value)
-            END AS shares,
+            -- Plain SUM is now safe: only mapped classes reach here, and
+            -- Berkshire's duplicate A-equivalent expression is marked
+            -- is_excluded in the mapping rather than being detected by
+            -- string matching. The label sniff it replaces caught one
+            -- instance of a general problem.
+            SUM(v.value) AS shares,
             v.value_date,
             MAX(v.tradable_from) AS tradable_from, v.tag AS source_tag,
-            CASE WHEN bool_or(v.segments ILIKE '%Equivalent%')
-                 THEN 'class_equivalent'::TEXT
-                 ELSE 'class_sum'::TEXT
-            END AS method,
+            'class_sum_mapped'::TEXT AS method,
             CASE v.tag
                 WHEN 'CommonStockSharesOutstanding' THEN 4
                 WHEN 'CommonStockSharesIssued'      THEN 5
                 ELSE 9
             END AS rung
         FROM visible v
-        WHERE v.segments LIKE 'ClassOfStock=%'
-          AND v.segments NOT ILIKE '%treasury%'
-          AND NOT EXISTS (
+        -- ALLOWLIST, not a pattern match. The previous filter was
+        -- `segments LIKE 'ClassOfStock=%' AND NOT ILIKE '%treasury%'`,
+        -- which had two defects found by testing rather than reading:
+        --
+        --   1. It matched ClassOfStock=SeriesAPreferredStock (97 issuers)
+        --      and rows carrying a second axis such as
+        --      SubsequentEventType or RelatedPartyTransaction (966
+        --      issuers), summing non-common and non-class rows into a
+        --      common share count. 78 tracked issuers were exposed.
+        --   2. More fundamentally, summing class members is wrong in
+        --      general: against issuers publishing both a consolidated
+        --      total and clean per-class rows, the sum disagreed with the
+        --      total in 312 of 1,033 cases, because the axis contains
+        --      aggregates, subsets and duplicates of its own members.
+        --
+        -- No regex fixes (2). So the fallback now sums only classes that
+        -- sec_reference.share_class explicitly maps. Where an issuer has
+        -- unmapped classes it yields nothing and the ladder falls back to
+        -- a consolidated figure, which is the honest outcome.
+        --
+        -- sec_gold.share_class_shares is the correct object for anything
+        -- needing per-class detail; this stays a single-number
+        -- convenience.
+        JOIN sec_reference.share_class sc
+          ON sc.cik = p_cik
+         AND v.segments = 'ClassOfStock=' || sc.class_label || ';'
+         AND NOT sc.is_excluded
+         AND v.value_date >= sc.effective_from
+         AND (sc.effective_to IS NULL OR v.value_date < sc.effective_to)
+        WHERE NOT EXISTS (
               SELECT 1 FROM consolidated c
               WHERE c.source_tag = v.tag AND c.value_date = v.value_date
           )
