@@ -906,3 +906,27 @@ FROM (
            (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2024-12-31') m
              WHERE EXISTS (SELECT 1 FROM sec_gold.peer_stats p WHERE p.cik = m.cik AND p.fiscal_year = 2024 AND p.concept = 'revenue')) AS sp500_rev
 ) t;
+
+\echo '=== 53. A fiscal-year cross-section carries the fiscal year-end balance, not a later quarter ==='
+-- 91% of FY2024 balance rows (6,739 of 7,378) were Q1 10-Q balances,
+-- because fiscal_year_of() puts a March period end in the prior year
+-- and peer_stats took the latest date in the window. Every balance row
+-- must now sit on one of the company's annual period ends: JPMorgan's
+-- FY2024 debt is the 2024-12-31 figure, Apple's FY2024 assets the
+-- September one (DERA rounds period ends to month end).
+SELECT CASE WHEN off_annual_end = 0 AND jpm_date = DATE '2024-12-31' AND jpm_bn = 401
+             AND aapl_date = DATE '2024-09-30' AND balance_rows > 7000
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       balance_rows AS fy2024_balance_rows, off_annual_end AS not_on_an_annual_period_end,
+       jpm_date AS jpm_fy2024_debt_date, jpm_bn, aapl_date AS apple_fy2024_assets_date
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_gold.peer_stats p JOIN sec_gold.canonical_concepts c USING (concept)
+             WHERE p.fiscal_year = 2024 AND p.peer_level = 'sector' AND c.fact_type = 'balance') AS balance_rows,
+           (SELECT COUNT(*) FROM sec_gold.peer_stats p JOIN sec_gold.canonical_concepts c USING (concept)
+             WHERE p.fiscal_year = 2024 AND p.peer_level = 'sector' AND c.fact_type = 'balance'
+               AND NOT EXISTS (SELECT 1 FROM sec_gold.tradable_financials ae
+                                WHERE ae.cik = p.cik AND ae.value_date = p.value_date AND ae.qtrs = 4)) AS off_annual_end,
+           (SELECT value_date FROM sec_gold.peer_stats WHERE cik = 19617 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS jpm_date,
+           (SELECT ROUND(value/1e9) FROM sec_gold.peer_stats WHERE cik = 19617 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS jpm_bn,
+           (SELECT value_date FROM sec_gold.peer_stats WHERE cik = 320193 AND fiscal_year = 2024 AND concept = 'total_assets' AND peer_level = 'sector') AS aapl_date
+) t;

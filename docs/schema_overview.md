@@ -212,11 +212,11 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 52 checks; exits non-zero on any FAIL
+uv run dera verify     # 53 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 
 Covers restatement preservation, availability correctness, crosswalk capture
 quality, share-class summing, derived-concept resolution, and the survivorship /
-future-existence tests on the universe. Checks 29–52 each name the defect found
+future-existence tests on the universe. Checks 29–53 each name the defect found
 in the 2026-09-04 review, or the gap closed since, that they guard against.

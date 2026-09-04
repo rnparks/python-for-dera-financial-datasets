@@ -91,6 +91,20 @@ WITH direct AS (
      AND (mem.valid_to IS NULL OR mem.valid_to > tf.value_date)
     WHERE tf.qtrs = CASE WHEN c.fact_type = 'balance' THEN 0 ELSE 4 END
       AND tf.value IS NOT NULL
+      -- A BALANCE BELONGS TO ITS FISCAL YEAR-END. fiscal_year_of() maps a
+      -- period ending January to May to the prior year (so NVIDIA's
+      -- January close aligns with December filers), and a December
+      -- filer's Q1 balance dated 2025-03-31 therefore sits inside
+      -- "FY2024" too -- and, being the latest date in the window, won
+      -- the DISTINCT ON: 86% of FY2024 balance rows (6,324 of 7,378)
+      -- were Q1 10-Q balances, so a FY2024 leverage ratio divided
+      -- December flows by March debt. A balance is admitted only when
+      -- the company reports an annual (qtrs = 4) period ending on that
+      -- same date, which is what "the fiscal year-end balance" means
+      -- here without trusting SEC's inconsistent fy field.
+      AND (c.fact_type <> 'balance'
+           OR EXISTS (SELECT 1 FROM sec_gold.tradable_financials ae
+                       WHERE ae.cik = tf.cik AND ae.value_date = tf.value_date AND ae.qtrs = 4))
       AND (m.sic_prefix = '' OR co.sic_latest::TEXT LIKE m.sic_prefix || '%')
       -- DERA publishes filer typos as-is, spanning 1980 to 2031. Left
       -- unbounded they poison the peer moments.

@@ -165,6 +165,8 @@ Sector is the sounder default. The standard error of an estimated standard devia
 
 Fiscal year is bucketed by `sec_gold.fiscal_year_of(value_date)`, **not** `EXTRACT(YEAR FROM value_date)` — see [Fiscal years ≠ calendar years](#fiscal-years--calendar-years).
 
+A **balance** concept is taken at the company's fiscal year-end only: a balance is admitted when the company reports an annual (`qtrs = 4`) period ending on the same date. Without that rule the latest instant inside the fiscal-year window won, and because `fiscal_year_of` puts a March period end in the prior year, 91% of FY2024 balance rows were Q1 10-Q balances (measured 2026-09-04: 6,739 of 7,378) — a FY2024 leverage ratio divided December flows by March debt. Flow concepts were never affected (`qtrs = 4` is the annual period by definition). `latest_annual()` deliberately keeps the latest instant for balances: a snapshot wants the newest balance sheet, a cross-section wants the year-end one.
+
 S&P 500 revenue coverage by fiscal year, members of the time: 457 companies in FY2009, 476 in FY2012, 473 in FY2015, 499 in FY2024 (of roughly 500 resolved members each year). Before dated membership the FY2012 panel was today's surviving constituents only; before the pre-2018 revenue tags were mapped, FY2015 covered 628 of the whole tracked population.
 
 | Column | Type | Description |
@@ -176,7 +178,7 @@ S&P 500 revenue coverage by fiscal year, members of the time: 457 companies in F
 | `gics_sub_industry` | text | GICS sub-industry as of the fact |
 | `peer_level` | text | `sector` or `sub_industry` — **which grouping this row scores against** |
 | `peer_group` | text | The actual group value `peer_level` selects; the composite indexes are keyed on it |
-| `tradable_from` | date | Availability of the underlying fact |
+| `tradable_from` | date | Availability of the **vintage carried**, which is the latest restatement — for 97% of FY2024 revenue rows (1,388 of 1,438) that is the comparative reprinted in the following year's 10-K, so Apple's FY2024 revenue shows 2025-10-31 although it was first disclosed 2024-11-01. **Do not lag on this column**; first disclosure lives in `fact_asof` |
 | `concept` | text | Canonical concept (FK to `canonical_concepts`) |
 | `fact_type` | text | `flow` or `balance` (derived concepts are resolved and included) |
 | `fiscal_year` | integer | Peer-comparison year from `fiscal_year_of(value_date)` |
