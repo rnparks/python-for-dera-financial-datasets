@@ -35,3 +35,6 @@ examples/data/
 
 # Build logs
 *.log
+
+# EDGAR bulk submissions archive (1.5 GB) — refetch with `dera fetch-filing-index`
+data/edgar/

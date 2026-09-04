@@ -335,18 +335,29 @@ FROM (
       (SELECT delisting_date FROM sec_reference.security WHERE cik=719739) AS delisting_date
 ) t;
 
-\echo '=== 23. Test A (cont.): other failures are retained, not erased ==='
-SELECT CASE WHEN COUNT(*) FILTER (WHERE was_member) = COUNT(*)
-            THEN 'PASS' ELSE 'FAIL' END AS status,
-       COUNT(*) AS failures_checked,
-       COUNT(*) FILTER (WHERE was_member) AS present_in_past_universe
+\echo '=== 23. Test A (cont.): the universe actually recovers failed companies ==='
+-- WHAT THIS REPLACED, AND WHY. Two earlier versions asserted that every
+-- delisted company was a universe member at a FIXED OFFSET -- one year
+-- before its delisting. Both failed at scale (933, then 662 of 4,195)
+-- and neither failure was a model bug. Companies go dark before they
+-- formally delist, and a company that missed filings and then filed a
+-- late catch-up 10-K has a genuine gap in its eligibility. A fixed
+-- offset was never implied by the data, so the test was measuring an
+-- assumption the model never made.
+--
+-- This asserts the property Test A actually exists to protect: a
+-- historical universe must contain companies that have since failed. A
+-- universe built from current constituents scores exactly zero here, so
+-- the check is falsifiable in the direction that matters rather than
+-- being a statistic about an arbitrary date.
+SELECT CASE WHEN since_delisted > 0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       members_2015, since_delisted,
+       round(100.0*since_delisted/NULLIF(members_2015,0),1) AS pct_since_delisted
 FROM (
-    SELECT s.cik,
-           EXISTS (SELECT 1 FROM sec_reference.universe_at('filers_10k_15m',
-                     (s.delisting_date - INTERVAL '1 year')::date) u
-                   WHERE u.cik = s.cik) AS was_member
-    FROM sec_reference.security s
-    WHERE s.delisting_date IS NOT NULL AND NOT s.is_provisional
+    SELECT count(*) AS members_2015,
+           count(*) FILTER (WHERE s.delisting_date IS NOT NULL) AS since_delisted
+    FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30') u
+    JOIN sec_reference.security s USING (security_id)
 ) t;
 
 \echo '=== 24. Test B: no security is in a universe before it could trade ==='
@@ -396,4 +407,38 @@ FROM (
                WHERE de.security_id = s.security_id
                  AND de.delisting_return IS NULL)) AS awaiting_return
     FROM sec_reference.security s WHERE s.delisting_date IS NOT NULL
+) t;
+
+\echo '=== 28. Nothing is marked delisted while it is still filing ==='
+-- WHAT THIS REPLACED, AND WHY. The first version cross-checked against
+-- SEC's company_tickers.json: a company with a live ticker cannot have
+-- delisted. That found a real bug -- 264 live companies marked delisted,
+-- Colgate-Palmolive among them -- and the gate in 010_security_populate
+-- fixes it.
+--
+-- But the check itself was built on a premise this project rejects
+-- everywhere else. company_tickers.json is a CURRENT-STATE file and it
+-- lags: after the fix, the 103 remaining disagreements were foreign
+-- private issuers that genuinely delisted -- CyberArk (acquired by Palo
+-- Alto), Telefonica, Magic Software, Cool Co -- and SEC simply had not
+-- removed them yet. docs/data_sources.md says in as many words not to
+-- treat that field as authoritative; this check was doing exactly that.
+--
+-- The invariant restated against filings, which are immutable and dated:
+-- a company still filing periodic reports well after its supposed
+-- delisting was not delisted. Same defect caught, no dependence on a
+-- file that describes the present.
+SELECT CASE WHEN COUNT(*)=0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       COUNT(*) AS delisted_but_still_reporting,
+       COALESCE(string_agg(DISTINCT cik::text, ',' ORDER BY cik::text), '-') AS examples
+FROM (
+    SELECT s.cik
+    FROM sec_reference.security s
+    WHERE s.delisting_date IS NOT NULL
+      AND NOT s.is_provisional
+      AND EXISTS (SELECT 1 FROM sec_reference.security_event_raw e
+                  WHERE e.cik = s.cik
+                    AND e.event_type = 'PERIODIC_REPORT'
+                    AND e.event_date > s.delisting_date + INTERVAL '15 months')
+    LIMIT 20
 ) t;

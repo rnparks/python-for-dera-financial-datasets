@@ -31,8 +31,6 @@
 -- that would clear it, because not enough time has passed for a following
 -- report to exist. Those are marked is_provisional rather than asserted.
 
-\set GRACE 180
-
 DROP TABLE IF EXISTS sec_reference.security_event_raw CASCADE;
 CREATE TABLE sec_reference.security_event_raw (
     cik        INTEGER,
@@ -49,3 +47,11 @@ CREATE TABLE sec_reference.company_name_raw (
     valid_from TEXT,
     valid_to   TEXT
 );
+
+-- Indexes on staging. At slice scale (1,815 rows) these were irrelevant;
+-- at full scale the event table holds millions of rows and the delisting
+-- rule runs two correlated NOT EXISTS per notice, so without them the
+-- derivation degrades to a quadratic scan.
+CREATE INDEX idx_sev_cik_type_date
+    ON sec_reference.security_event_raw (cik, event_type, event_date);
+CREATE INDEX idx_cnr_cik ON sec_reference.company_name_raw (cik);

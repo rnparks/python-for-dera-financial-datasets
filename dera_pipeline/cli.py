@@ -23,7 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import config, db, downloader, loader, reference
+from . import config, db, downloader, filings, loader, reference
 
 
 def _add_range_args(p: argparse.ArgumentParser) -> None:
@@ -128,6 +128,24 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
         if spine_dir.exists():
             db.run_sql_dir(conn, spine_dir)
 
+        # Security lifecycle. Its staging tables are created by
+        # 00_reference above and filled here, so the derivation in
+        # 06_security must run after this call rather than alongside the
+        # rest of the DDL. Skipped with a message when the archive is
+        # absent: a missing optional input should not destroy a 39-minute
+        # silver build that is otherwise complete.
+        sec_dir = config.SQL_DIR / "06_security"
+        if sec_dir.exists():
+            if filings.BULK_PATH.exists():
+                print("Loading EDGAR filing index...")
+                stats = filings.load_security_events(conn)
+                print(f"  {stats['events']:,} events, {stats['names']:,} names "
+                      f"across {stats['ciks_requested']:,} CIKs")
+                db.run_sql_dir(conn, sec_dir)
+            else:
+                print(f"Skipping security model: {filings.BULK_PATH} not found "
+                      "(run `dera fetch-filing-index`)")
+
         # Gold's matview joins plan catastrophically against a
         # statistics-less 181M-row table (observed: 9 hours instead of
         # ~1 minute). This was documented but lived in no code path.
@@ -178,6 +196,44 @@ def cmd_build_gold(args: argparse.Namespace) -> int:
                     cur.execute(f"REFRESH MATERIALIZED VIEW {matview}")
         else:
             db.run_sql_dir(conn, gold_dir)
+    return 0
+
+
+def cmd_fetch_filing_index(args: argparse.Namespace) -> int:
+    """Download the EDGAR bulk submissions archive.
+
+    One request instead of roughly 25,000 per-CIK API calls, and a single
+    reproducible artifact. ~1.5 GB, gitignored.
+    """
+    import urllib.request
+
+    filings.BULK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading {filings.BULK_URL}")
+    req = urllib.request.Request(
+        filings.BULK_URL, headers={"User-Agent": config.sec_user_agent()})
+    with urllib.request.urlopen(req, timeout=1800) as resp, \
+            open(filings.BULK_PATH, "wb") as fh:
+        while chunk := resp.read(1 << 20):
+            fh.write(chunk)
+    size_mb = filings.BULK_PATH.stat().st_size / (1 << 20)
+    print(f"Wrote {filings.BULK_PATH} ({size_mb:,.0f} MB)")
+    return 0
+
+
+def cmd_build_security_model(args: argparse.Namespace) -> int:
+    """Rebuild the security lifecycle model without a full silver rebuild.
+
+    The iteration loop for this work: the derivation rules change far
+    more often than the 185M-row silver layer does.
+    """
+    with db.get_conn() as conn:
+        db.run_sql_file(conn, config.SQL_DIR / "00_reference" / "040_security_model.sql")
+        db.run_sql_file(conn, config.SQL_DIR / "00_reference" / "041_security_derive.sql")
+        print("Loading EDGAR filing index...")
+        stats = filings.load_security_events(conn)
+        print(f"  {stats['events']:,} events, {stats['names']:,} names "
+              f"across {stats['ciks_requested']:,} CIKs")
+        db.run_sql_dir(conn, config.SQL_DIR / "06_security")
     return 0
 
 
@@ -318,6 +374,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the full DDL rebuild without REFRESH (this is the default)",
     )
     p_gold.set_defaults(func=cmd_build_gold)
+
+    p_fidx = sub.add_parser(
+        "fetch-filing-index",
+        help="download the EDGAR bulk submissions archive (~1.5 GB)")
+    p_fidx.set_defaults(func=cmd_fetch_filing_index)
+
+    p_secm = sub.add_parser(
+        "build-security-model",
+        help="rebuild the security lifecycle model from the filing index")
+    p_secm.set_defaults(func=cmd_build_security_model)
 
     p_verify = sub.add_parser(
         "verify", help="run the point-in-time verification suite")
