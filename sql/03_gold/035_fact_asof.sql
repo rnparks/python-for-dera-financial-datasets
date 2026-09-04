@@ -30,6 +30,12 @@ CREATE MATERIALIZED VIEW sec_gold.fact_asof AS
 SELECT
     n.cik,
     co.name_latest          AS company_name,
+    -- Carried here so a cross-sectional as-of screen can group by
+    -- sector without re-joining 98M rows back to the universe.
+    -- Resolved once per company, not as of a date: the universe is a
+    -- present-day snapshot with no classification history.
+    u.gics_sector,
+    u.gics_sub_industry,
     n.tag,
     n.tlabel                AS metric,
     n.value_date,
@@ -48,6 +54,16 @@ SELECT
     n.is_original_disclosure
 FROM sec_silver.num_silver n
 JOIN sec_reference.company co ON co.cik = n.cik
+-- Single-valued: at most one row, so this cannot multiply facts even
+-- for a company holding several share classes.
+LEFT JOIN LATERAL (
+    SELECT u2.gics_sector, u2.gics_sub_industry
+    FROM sec_reference.company_ticker ct2
+    JOIN sec_silver.universe_sp1500   u2 ON u2.ticker = ct2.ticker
+    WHERE ct2.cik = n.cik
+    ORDER BY ct2.is_primary DESC, ct2.valid_from DESC
+    LIMIT 1
+) u ON TRUE
 WHERE n.segments IS NULL
   AND n.coreg    IS NULL
   -- DERA carries filer typos: value_dates as early as 1980 and as late
@@ -66,6 +82,7 @@ CREATE INDEX idx_factasof_window ON sec_gold.fact_asof
     (tradable_from, superseded_tradable);
 CREATE INDEX idx_factasof_tag    ON sec_gold.fact_asof (tag, value_date);
 CREATE INDEX idx_factasof_cik    ON sec_gold.fact_asof (cik);
+CREATE INDEX idx_factasof_sector ON sec_gold.fact_asof (gics_sector, tradable_from);
 
 COMMENT ON MATERIALIZED VIEW sec_gold.fact_asof IS
     'Bitemporal fact table: one row per (fact, filing). Every vintage '

@@ -137,13 +137,21 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
     return 0
 
 
-# Gold materialized views, in dependency order. peer_zscore_by_sub_industry
-# reads tradable_financials, so it must come after it. Declared once here
-# so --refresh-only cannot drift out of sync with the DDL again.
+# Gold materialized views, in dependency order. The first three read
+# silver directly; peer_stats reads tradable_financials, so it must come
+# last. Declared once here so --refresh-only cannot drift out of sync
+# with the DDL again.
+#
+# fact_asof was missing from this tuple until now, which meant
+# `build-gold --refresh-only` refreshed the two display matviews and the
+# peer scores while leaving stale the one availability-correct table
+# that every as_of_* function reads. That is exactly the failure this
+# constant exists to prevent.
 GOLD_MATVIEWS = (
     "sec_gold.tradable_financials",
     "sec_gold.tradable_financials_pit",
-    "sec_gold.peer_zscore_by_sub_industry",
+    "sec_gold.fact_asof",
+    "sec_gold.peer_stats",
 )
 
 
@@ -153,7 +161,7 @@ def cmd_build_gold(args: argparse.Namespace) -> int:
     On first build, ``sql/03_gold/030_tradable_financials.sql`` creates
     the matviews with ``CREATE MATERIALIZED VIEW ... AS SELECT`` which
     populates them immediately — no separate REFRESH is needed. On a
-    rebuild against an existing gold schema, pass ``--refresh`` to run
+    rebuild against an existing gold schema, pass ``--refresh-only`` to run
     ``REFRESH MATERIALIZED VIEW`` *instead of* re-running the DDL.
     """
     with db.get_conn() as conn:
@@ -161,11 +169,8 @@ def cmd_build_gold(args: argparse.Namespace) -> int:
         if args.refresh_only:
             print("Refreshing materialized views...")
             with conn.cursor() as cur:
-                # Order matters: peer_zscore_by_sub_industry is derived
-                # from tradable_financials, so it must refresh last.
-                # It was previously omitted entirely, which left the
-                # z-scores silently stale against freshly refreshed
-                # inputs.
+                # Order matters: peer_stats is derived from
+                # tradable_financials, so it must refresh last.
                 for matview in GOLD_MATVIEWS:
                     print(f"  REFRESH {matview}")
                     cur.execute(f"REFRESH MATERIALIZED VIEW {matview}")

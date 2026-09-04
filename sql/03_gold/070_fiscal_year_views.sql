@@ -19,6 +19,13 @@
 -- snapshots). It honors the same mode parameter as get_canonical()
 -- so backtests and fundamental analysis share one function family.
 
+-- Explicit drop: CREATE OR REPLACE cannot change a RETURNS TABLE
+-- shape, so editing this signature and re-applying the single file
+-- against a live schema fails with "cannot change return type of
+-- existing function". A full build-gold drops the schema first and
+-- would not notice; the iteration loop does.
+DROP FUNCTION IF EXISTS sec_gold.latest_annual(INTEGER, TEXT, TEXT);
+
 CREATE OR REPLACE FUNCTION sec_gold.latest_annual(
     p_cik     INTEGER,
     p_concept TEXT,
@@ -73,6 +80,8 @@ $$;
 
 
 -- Convenience wrapper — ticker lookup
+DROP FUNCTION IF EXISTS sec_gold.latest_annual_by_ticker(TEXT, TEXT, TEXT);
+
 CREATE OR REPLACE FUNCTION sec_gold.latest_annual_by_ticker(
     p_ticker  TEXT,
     p_concept TEXT,

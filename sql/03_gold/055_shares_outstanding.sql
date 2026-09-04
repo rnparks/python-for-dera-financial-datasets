@@ -34,6 +34,13 @@
 -- a caller can see when it was used rather than silently blending it
 -- with instant counts.
 
+-- Explicit drop: CREATE OR REPLACE cannot change a RETURNS TABLE
+-- shape, so editing this signature and re-applying the single file
+-- against a live schema fails with "cannot change return type of
+-- existing function". A full build-gold drops the schema first and
+-- would not notice; the iteration loop does.
+DROP FUNCTION IF EXISTS sec_gold.shares_outstanding_at(INTEGER, DATE, INTEGER);
+
 CREATE OR REPLACE FUNCTION sec_gold.shares_outstanding_at(
     p_cik              INTEGER,
     p_asof             DATE,

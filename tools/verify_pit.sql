@@ -136,3 +136,32 @@ FROM (
     SELECT MAX(filed_date) AS max_filed, COUNT(*) AS sub_rows
     FROM sec_silver.sub_silver
 ) t;
+
+\echo ''
+\echo '=== 11. Ticker coverage (regression guard) ==='
+-- Resolving the ticker as of each fact's own availability date left
+-- 47.6% of rows NULL, because the crosswalk only covers 2019-02 onward.
+-- The fallback should bring that to near zero, and ticker_is_asof says
+-- how many carry a date-correct label rather than today's symbol.
+SELECT CASE WHEN pct_null < 3 THEN 'PASS' ELSE 'FAIL' END AS status,
+       pct_null AS pct_null_ticker,
+       pct_asof AS pct_date_correct
+FROM (
+    SELECT ROUND(100.0*COUNT(*) FILTER (WHERE ticker IS NULL)/COUNT(*),1) AS pct_null,
+           ROUND(100.0*COUNT(*) FILTER (WHERE ticker_is_asof)/COUNT(*),1) AS pct_asof
+    FROM sec_gold.tradable_financials
+) t;
+
+\echo ''
+\echo '=== 12. Peer stats carry both levels, sector drops nobody ==='
+-- Sub-industry deletes groups below five members outright. Sector
+-- should score materially more companies across far fewer groups.
+SELECT CASE WHEN sector_cos >= 1490 AND sub_cos > 0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       sector_groups, sector_cos, sub_groups, sub_cos
+FROM (
+    SELECT COUNT(DISTINCT peer_group) FILTER (WHERE peer_level='sector')       AS sector_groups,
+           COUNT(DISTINCT cik)        FILTER (WHERE peer_level='sector')       AS sector_cos,
+           COUNT(DISTINCT peer_group) FILTER (WHERE peer_level='sub_industry') AS sub_groups,
+           COUNT(DISTINCT cik)        FILTER (WHERE peer_level='sub_industry') AS sub_cos
+    FROM sec_gold.peer_stats
+) t;

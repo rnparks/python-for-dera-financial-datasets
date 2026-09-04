@@ -4,6 +4,13 @@
 -- the display-name remapping that used to live in a hardcoded CASE is
 -- now data-driven.
 
+-- Explicit drop: CREATE OR REPLACE cannot change a RETURNS TABLE
+-- shape, so editing this signature and re-applying the single file
+-- against a live schema fails with "cannot change return type of
+-- existing function". A full build-gold drops the schema first and
+-- would not notice; the iteration loop does.
+DROP FUNCTION IF EXISTS sec_gold.get_pit_financials(INTEGER);
+
 CREATE OR REPLACE FUNCTION sec_gold.get_pit_financials(p_cik INTEGER)
 RETURNS TABLE (
     value_date     DATE,
@@ -27,6 +34,8 @@ AS $$
     ORDER BY tf.value_date DESC;
 $$;
 
+
+DROP FUNCTION IF EXISTS sec_gold.get_financials_by_ticker(TEXT);
 
 CREATE OR REPLACE FUNCTION sec_gold.get_financials_by_ticker(p_ticker TEXT)
 RETURNS TABLE (

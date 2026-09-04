@@ -10,9 +10,10 @@ The gold layer is the query-facing top of the medallion pipeline: SEC DERA funda
 
 | Object | Kind | Rows | One-line description |
 |---|---|---:|---|
-| [`tradable_financials`](#tradable_financials) | matview | 11.3M | Latest-restated facts for S&P 1500 companies |
-| [`tradable_financials_pit`](#tradable_financials_pit) | matview | 11.3M | Point-in-time (as-first-reported) twin of the above |
-| [`peer_zscore_by_sub_industry`](#peer_zscore_by_sub_industry) | matview | 182K | Cross-sectional z-scores vs. GICS sub-industry peers |
+| [`fact_asof`](#fact_asof) | matview | 98M | **Bitemporal facts, every vintage. The correct backtest source.** |
+| [`tradable_financials`](#tradable_financials) | matview | 11.8M | Latest-restated facts, one row per fact |
+| [`tradable_financials_pit`](#tradable_financials_pit) | matview | 11.8M | As-first-seen twin of the above |
+| [`peer_stats`](#peer_stats) | matview | ~220K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level` |
 | [`canonical_concepts`](#canonical_concepts) | table | 12 | Research-meaningful metric definitions (revenue, capex, …) |
 | [`concept_tag_map`](#concept_tag_map) | table | 27 | Priority-ordered XBRL tag resolution rules per concept |
 | [`metric_aliases`](#metric_aliases) | table | 4 | Legacy display-name remap for `get_pit_financials` |
@@ -23,6 +24,15 @@ The gold layer is the query-facing top of the medallion pipeline: SEC DERA funda
 | [`company_snapshot()`](#company_snapshot) | function | — | One row per canonical concept for a ticker |
 | [`get_pit_financials()`](#get_pit_financials) | function | — | Legacy: revenue/net-income history in $B by CIK |
 | [`get_financials_by_ticker()`](#get_financials_by_ticker) | function | — | Legacy: ticker wrapper for `get_pit_financials` |
+| `as_of_facts()` | function | — | Every fact for a company as it stood on a date |
+| `as_of_canonical()` | function | — | One concept as of a date |
+| `as_of_latest_annual()` | function | — | Most recent annual value knowable on a date |
+| `as_of_latest_annual_by_ticker()` | function | — | Ticker wrapper, resolves the ticker as of the same date |
+| `as_of_snapshot()` | function | — | Every concept for a ticker as of a date |
+| `shares_outstanding_at()` | function | — | Share count with share-class summation |
+| `norm_ticker()` | function | — | Ticker to stored form (`BRK.B` → `BRK-B`) |
+| `fiscal_year_of()` | function | — | Peer-comparison year key for non-December filers |
+| `shift_sessions()` | function | — | Move a date back N trading sessions |
 
 ---
 
@@ -53,7 +63,7 @@ The matviews contain **only consolidated, parent-entity facts**: rows with non-n
 
 ### Fiscal years ≠ calendar years
 
-Many large filers have non-December fiscal year ends (Apple → Sep, Microsoft → Jun, NVIDIA → Jan, Nike → May). A filter like `value_date = '2025-12-31' AND qtrs = 4` silently drops them all. Use `latest_annual()` / `company_snapshot()` for FY-aware lookups, or bucket by `EXTRACT(YEAR FROM value_date)` as `peer_zscore_by_sub_industry` does.
+Many large filers have non-December fiscal year ends (Apple → Sep, Microsoft → Jun, NVIDIA → Jan, Nike → May). A filter like `value_date = '2025-12-31' AND qtrs = 4` silently drops them all. Use `latest_annual()` / `company_snapshot()` for FY-aware lookups, or bucket with `sec_gold.fiscal_year_of(value_date)` as `peer_stats` does. Do NOT use `EXTRACT(YEAR FROM value_date)`: it pushes January year-ends such as NVIDIA and Walmart into the following calendar year, comparing eleven months against a peer's full year.
 
 ---
 
@@ -100,7 +110,7 @@ FROM sec_gold.tradable_financials_pit
 WHERE ticker = 'NVDA' AND value_date = '2023-01-29' AND qtrs = 4;
 ```
 
-### `peer_zscore_by_sub_industry`
+### `peer_stats`
 
 Pre-computed cross-sectional z-scores: one row per **(ticker, canonical concept, fiscal year)**, scored against all S&P 1500 peers in the same **GICS sub-industry** and fiscal year. Covers fiscal years 2006–2026, 1,355 tickers, 101 sub-industries. Sourced from `tradable_financials` (latest-restated values, generic tag rules only).
 
@@ -127,13 +137,13 @@ Fiscal year is bucketed by `EXTRACT(YEAR FROM value_date)`, so NVDA's Jan-2025 F
 ```sql
 -- NVDA revenue vs. semiconductor peers (z=4.2 in FY2025, 31 peers)
 SELECT fiscal_year, value, zscore, peer_count
-FROM sec_gold.peer_zscore_by_sub_industry
+FROM sec_gold.peer_stats
 WHERE ticker = 'NVDA' AND concept = 'revenue'
 ORDER BY fiscal_year DESC;
 
 -- Cheapest-by-nothing screen: most extreme net-income outliers, FY2025
 SELECT ticker, gics_sub_industry, zscore
-FROM sec_gold.peer_zscore_by_sub_industry
+FROM sec_gold.peer_stats
 WHERE concept = 'net_income' AND fiscal_year = 2025
 ORDER BY zscore DESC
 LIMIT 20;
@@ -327,7 +337,8 @@ SELECT * FROM sec_gold.get_financials_by_ticker('AAPL');
 - **Universe is current-constituents-only.** `universe_sp1500` is today's S&P 1500 membership scraped from Wikipedia — historical analyses over the matviews carry **survivorship bias** (companies delisted or dropped from the index before today are absent).
 - **Per-share vs. dollar units.** `eps_diluted` is `USD/share`; don't scale it by 1e9 alongside the dollar concepts. Check `uom` when working with raw tags.
 - **`total_debt` is best-effort.** Priority-3 `LongTermDebtNoncurrent` (the most common resolution) excludes the current portion and short-term borrowings — treat cross-company debt comparisons accordingly.
-- **Z-scores are raw-value scores.** `peer_zscore_by_sub_industry` scores raw dollar values, so it mixes company size with performance; a z of +4 on revenue mostly means "much bigger than peers," not "growing faster."
+- **Z-scores are raw-value scores.** `peer_stats` scores raw dollar values, so it mixes company size with performance; a z of +4 on revenue mostly means "much bigger than peers," not "growing faster." `peer_percentile` is robust to that skew. Both degrade in thin groups, which is why `peer_level = 'sector'` is the sounder default.
+- **Concept coverage is not complete.** About 100 of 1,569 companies resolve to no revenue value in a given year because their XBRL tag is unmapped. Regulated utilities are the clearest cluster: 11 companies including NextEra report `RegulatedAndUnregulatedOperatingRevenue`, which is absent from `concept_tag_map`.
 - **Ticker collisions.** `ticker_map` keeps the first CIK seen per ticker; a handful of ambiguous tickers may resolve to an unexpected issuer.
 
 ## Rebuilding and refreshing
@@ -341,17 +352,27 @@ Notes:
 
 - `build-silver` **drops gold's matviews** via `DROP SCHEMA sec_silver CASCADE`, so a full gold rebuild (not `--refresh-only`) is required after every silver rebuild.
 - `build-silver` now runs `ANALYZE` on `sec_silver.num_silver` and `sub_silver` at the end of the build. Previously this was documented as a manual step and lived in no code path; skipping it made the gold matview joins plan against a statistics-less 181M-row table (observed: 9 hours instead of ~1 minute).
-- `--refresh-only` refreshes all three matviews in dependency order, `peer_zscore_by_sub_industry` last. It previously refreshed only the two `tradable_financials` views, silently leaving the z-scores stale against freshly refreshed inputs.
+- `--refresh-only` refreshes all four matviews in dependency order, `peer_stats` last. `fact_asof` was previously missing from that list, which left the availability-correct table stale behind every `as_of_*` function.
 
 ## Source files
 
 | File | Creates |
 |---|---|
-| `sql/03_gold/010_schema.sql` | `sec_gold` schema (drop + recreate) |
-| `sql/03_gold/020_metric_aliases.sql` | `metric_aliases` |
-| `sql/03_gold/030_tradable_financials.sql` | `tradable_financials`, `tradable_financials_pit` + indexes |
-| `sql/03_gold/040_helper_functions.sql` | `get_pit_financials`, `get_financials_by_ticker` |
-| `sql/03_gold/050_canonical_concepts.sql` | `canonical_concepts`, `concept_tag_map` |
-| `sql/03_gold/060_canonical_function.sql` | `get_canonical`, `get_canonical_by_ticker` |
-| `sql/03_gold/070_fiscal_year_views.sql` | `latest_annual`, `latest_annual_by_ticker`, `company_snapshot` |
-| `sql/03_gold/080_peer_zscores.sql` | `peer_zscore_by_sub_industry` + indexes |
+| `010_schema.sql` | drops and recreates the `sec_gold` schema |
+| `015_ticker_normalize.sql` | `norm_ticker()` |
+| `016_fiscal_year.sql` | `fiscal_year_of()` |
+| `017_shift_sessions.sql` | `shift_sessions()` |
+| `020_metric_aliases.sql` | `metric_aliases` |
+| `030_tradable_financials.sql` | `tradable_financials`, `tradable_financials_pit` |
+| `035_fact_asof.sql` | `fact_asof` |
+| `040_helper_functions.sql` | `get_pit_financials()`, `get_financials_by_ticker()` |
+| `050_canonical_concepts.sql` | `canonical_concepts`, `concept_tag_map` |
+| `055_shares_outstanding.sql` | `shares_outstanding_at()` |
+| `060_canonical_function.sql` | `get_canonical()`, `get_canonical_by_ticker()` |
+| `065_asof_functions.sql` | the five `as_of_*` functions |
+| `070_fiscal_year_views.sql` | `latest_annual()`, `latest_annual_by_ticker()`, `company_snapshot()` |
+| `080_peer_stats.sql` | `peer_stats` |
+
+Files run in lexical order within the directory, so the numeric prefix is
+load-bearing. `065_asof_functions.sql` sits after `050` because it resolves
+canonical concepts and `concept_tag_map` does not exist before then.
