@@ -77,17 +77,15 @@ LEFT JOIN sec_reference.company_ticker ct
       AND ct.is_primary
       AND ct.valid_from <= n.tradable_from
       AND (ct.valid_to > n.tradable_from OR ct.valid_to IS NULL)
--- Membership AS OF the fact: replayed history beats a snapshot when
--- both cover the date (a company now in the 400 that was in the 500).
-LEFT JOIN LATERAL (
-    SELECT m.index_name, m.gics_sector, m.gics_sub_industry
-    FROM sec_reference.index_membership m
-    WHERE m.cik = n.cik
-      AND m.valid_from <= n.tradable_from
-      AND (m.valid_to IS NULL OR m.valid_to > n.tradable_from)
-    ORDER BY (m.source = 'wikipedia_history') DESC, m.valid_from DESC
-    LIMIT 1
-) asof ON TRUE
+-- Membership AS OF the fact, from the non-overlapping timeline: at
+-- most one row per company and date, so a plain join the planner can
+-- hash rather than a per-fact LATERAL (05_spine/020, section 3c).
+-- Replayed history beats a snapshot when both cover the date (a
+-- company now in the 400 that was in the 500) -- decided there, once.
+LEFT JOIN sec_reference.index_membership_timeline asof
+       ON asof.cik = n.cik
+      AND asof.valid_from <= n.tradable_from
+      AND (asof.valid_to IS NULL OR asof.valid_to > n.tradable_from)
 -- The label fallback, and the population filter: a company with no
 -- membership at all is not in these views.
 JOIN sec_reference.index_membership_latest latest ON latest.cik = n.cik
@@ -131,15 +129,10 @@ LEFT JOIN sec_reference.company_ticker ct
       AND ct.is_primary
       AND ct.valid_from <= n.tradable_from
       AND (ct.valid_to > n.tradable_from OR ct.valid_to IS NULL)
-LEFT JOIN LATERAL (
-    SELECT m.index_name, m.gics_sector, m.gics_sub_industry
-    FROM sec_reference.index_membership m
-    WHERE m.cik = n.cik
-      AND m.valid_from <= n.tradable_from
-      AND (m.valid_to IS NULL OR m.valid_to > n.tradable_from)
-    ORDER BY (m.source = 'wikipedia_history') DESC, m.valid_from DESC
-    LIMIT 1
-) asof ON TRUE
+LEFT JOIN sec_reference.index_membership_timeline asof
+       ON asof.cik = n.cik
+      AND asof.valid_from <= n.tradable_from
+      AND (asof.valid_to IS NULL OR asof.valid_to > n.tradable_from)
 JOIN sec_reference.index_membership_latest latest ON latest.cik = n.cik
 WHERE n.rank_pit = 1
   AND n.segments IS NULL

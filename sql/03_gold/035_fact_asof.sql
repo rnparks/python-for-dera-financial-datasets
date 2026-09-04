@@ -56,17 +56,13 @@ SELECT
     n.is_original_disclosure
 FROM sec_silver.num_silver n
 JOIN sec_reference.company co ON co.cik = n.cik
--- Both laterals are single-valued (LIMIT 1), so they cannot multiply
--- facts even for a company holding several share classes.
-LEFT JOIN LATERAL (
-    SELECT m.gics_sector, m.gics_sub_industry
-    FROM sec_reference.index_membership m
-    WHERE m.cik = n.cik
-      AND m.valid_from <= n.tradable_from
-      AND (m.valid_to IS NULL OR m.valid_to > n.tradable_from)
-    ORDER BY (m.source = 'wikipedia_history') DESC, m.valid_from DESC
-    LIMIT 1
-) asof ON TRUE
+-- The timeline never overlaps (05_spine/020, section 3c), so this join
+-- is single-valued and cannot multiply facts; being a plain join rather
+-- than a per-fact LATERAL is what keeps this 33 GB build hashable.
+LEFT JOIN sec_reference.index_membership_timeline asof
+       ON asof.cik = n.cik
+      AND asof.valid_from <= n.tradable_from
+      AND (asof.valid_to IS NULL OR asof.valid_to > n.tradable_from)
 LEFT JOIN sec_reference.index_membership_latest latest ON latest.cik = n.cik
 WHERE n.segments IS NULL
   AND n.coreg    IS NULL
@@ -85,7 +81,8 @@ CREATE INDEX idx_factasof_lookup ON sec_gold.fact_asof
 CREATE INDEX idx_factasof_window ON sec_gold.fact_asof
     (tradable_from, superseded_tradable);
 CREATE INDEX idx_factasof_tag    ON sec_gold.fact_asof (tag, value_date);
-CREATE INDEX idx_factasof_cik    ON sec_gold.fact_asof (cik);
+-- No cik-only index: cik leads idx_factasof_lookup, which serves every
+-- per-company predicate. The separate one was 653 MB of duplicate work.
 CREATE INDEX idx_factasof_sector ON sec_gold.fact_asof (gics_sector, tradable_from);
 
 COMMENT ON MATERIALIZED VIEW sec_gold.fact_asof IS

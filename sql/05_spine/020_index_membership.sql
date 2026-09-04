@@ -322,6 +322,96 @@ COMMENT ON TABLE sec_reference.index_membership_latest IS
     'fact''s date (index_is_asof = FALSE).';
 
 -- ---------------------------------------------------------------
+-- 3c. The membership timeline: one NON-OVERLAPPING interval set per
+--     company, so gold can join it with a plain range condition.
+-- ---------------------------------------------------------------
+-- index_membership can hold several intervals covering one date for a
+-- company: a replayed S&P 500 span inside a snapshot S&P 400 span that
+-- starts at 1900-01-01, or a GICS reclassification. Gold used to resolve
+-- that per fact with LATERAL ... ORDER BY ... LIMIT 1, which forces a
+-- nested loop with a sort for every one of ~100M rows and took the gold
+-- build from 16 to 32 minutes. Here the same precedence -- replayed
+-- history beats a snapshot, then the later start -- is applied once per
+-- boundary segment and stored as a timeline that never overlaps, so a
+-- join on cik plus the date range is single-valued by construction and
+-- the planner is free to hash it. The EXCLUDE constraint makes the
+-- non-overlap a property of the table rather than a convention.
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE TABLE IF NOT EXISTS sec_reference.index_membership_timeline (
+    cik               INTEGER NOT NULL,
+    valid_from        DATE    NOT NULL,
+    valid_to          DATE,
+    index_name        TEXT    NOT NULL,
+    gics_sector       TEXT,
+    gics_sub_industry TEXT,
+    source            TEXT    NOT NULL,
+    PRIMARY KEY (cik, valid_from),
+    CONSTRAINT index_membership_timeline_ordered
+        CHECK (valid_to IS NULL OR valid_to > valid_from),
+    CONSTRAINT index_membership_timeline_no_overlap
+        EXCLUDE USING gist (cik WITH =, daterange(valid_from, valid_to) WITH &&)
+);
+
+TRUNCATE sec_reference.index_membership_timeline;
+INSERT INTO sec_reference.index_membership_timeline
+WITH bounds AS (
+    SELECT cik, valid_from AS b FROM sec_reference.index_membership
+    UNION
+    SELECT cik, valid_to FROM sec_reference.index_membership WHERE valid_to IS NOT NULL
+),
+segments AS (
+    SELECT cik, b AS seg_from,
+           LEAD(b) OVER (PARTITION BY cik ORDER BY b) AS seg_to
+    FROM bounds
+),
+-- The winner for each segment, by the precedence gold used per fact.
+-- A segment nothing covers (after every interval closed) has no row.
+resolved AS (
+    SELECT s.cik, s.seg_from, s.seg_to,
+           w.index_name, w.gics_sector, w.gics_sub_industry, w.source
+    FROM segments s
+    JOIN LATERAL (
+        SELECT m.index_name, m.gics_sector, m.gics_sub_industry, m.source
+        FROM sec_reference.index_membership m
+        WHERE m.cik = s.cik
+          AND m.valid_from <= s.seg_from
+          AND (m.valid_to IS NULL OR m.valid_to > s.seg_from)
+        ORDER BY (m.source = 'wikipedia_history') DESC, m.valid_from DESC
+        LIMIT 1
+    ) w ON TRUE
+),
+-- Adjacent segments with the same answer collapse into one interval.
+flagged AS (
+    SELECT r.*,
+           CASE WHEN LAG(r.seg_to) OVER w = r.seg_from
+                 AND LAG(r.index_name) OVER w = r.index_name
+                 AND LAG(r.gics_sector) OVER w IS NOT DISTINCT FROM r.gics_sector
+                 AND LAG(r.gics_sub_industry) OVER w IS NOT DISTINCT FROM r.gics_sub_industry
+                 AND LAG(r.source) OVER w = r.source
+                THEN 0 ELSE 1 END AS new_run
+    FROM resolved r
+    WINDOW w AS (PARTITION BY r.cik ORDER BY r.seg_from)
+),
+runs AS (
+    SELECT f.*,
+           SUM(f.new_run) OVER (PARTITION BY f.cik ORDER BY f.seg_from
+                                ROWS UNBOUNDED PRECEDING) AS run_id
+    FROM flagged f
+)
+SELECT cik,
+       MIN(seg_from),
+       CASE WHEN bool_or(seg_to IS NULL) THEN NULL ELSE MAX(seg_to) END,
+       MIN(index_name), MIN(gics_sector), MIN(gics_sub_industry), MIN(source)
+FROM runs
+GROUP BY cik, run_id;
+
+COMMENT ON TABLE sec_reference.index_membership_timeline IS
+    'index_membership resolved to one non-overlapping interval set per '
+    'company (replayed history beats a snapshot, then the later start). '
+    'What gold joins on: member on date D is the single row with '
+    'valid_from <= D AND (valid_to IS NULL OR valid_to > D).';
+
+-- ---------------------------------------------------------------
 -- 4. As-of accessor.
 -- ---------------------------------------------------------------
 CREATE OR REPLACE FUNCTION sec_reference.index_members(p_index TEXT, p_asof DATE)

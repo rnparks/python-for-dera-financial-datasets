@@ -842,3 +842,35 @@ FROM (
         ORDER BY l.valid_from DESC LIMIT 1
     ) l ON TRUE
 ) t;
+
+\echo '=== 51. The membership timeline reproduces the per-fact precedence and never overlaps ==='
+-- Gold joins sec_reference.index_membership_timeline with a plain range
+-- condition instead of a per-fact LATERAL over index_membership. The
+-- timeline must give the same answer as that LATERAL at every interval
+-- boundary and the day before it, and its non-overlap is an EXCLUDE
+-- constraint, which must exist.
+SELECT CASE WHEN mismatches = 0 AND probes > 5000 AND has_exclusion THEN 'PASS' ELSE 'FAIL' END AS status,
+       probes AS boundary_probes, mismatches, has_exclusion AS exclude_constraint_present,
+       (SELECT COUNT(*) FROM sec_reference.index_membership_timeline) AS timeline_rows
+FROM (
+    SELECT COUNT(*) AS probes,
+           COUNT(*) FILTER (WHERE (lat.index_name, lat.gics_sector, lat.gics_sub_industry)
+                                  IS DISTINCT FROM (tl.index_name, tl.gics_sector, tl.gics_sub_industry)) AS mismatches,
+           EXISTS (SELECT 1 FROM pg_constraint
+                    WHERE conname = 'index_membership_timeline_no_overlap' AND contype = 'x') AS has_exclusion
+    FROM (
+        SELECT DISTINCT cik, d
+        FROM (SELECT cik, valid_from AS d FROM sec_reference.index_membership
+              UNION ALL SELECT cik, valid_from - 1 FROM sec_reference.index_membership
+              UNION ALL SELECT cik, valid_to FROM sec_reference.index_membership WHERE valid_to IS NOT NULL
+              UNION ALL SELECT cik, valid_to - 1 FROM sec_reference.index_membership WHERE valid_to IS NOT NULL) b
+    ) p
+    LEFT JOIN LATERAL (
+        SELECT m.index_name, m.gics_sector, m.gics_sub_industry
+        FROM sec_reference.index_membership m
+        WHERE m.cik = p.cik AND m.valid_from <= p.d AND (m.valid_to IS NULL OR m.valid_to > p.d)
+        ORDER BY (m.source = 'wikipedia_history') DESC, m.valid_from DESC LIMIT 1
+    ) lat ON TRUE
+    LEFT JOIN sec_reference.index_membership_timeline tl
+           ON tl.cik = p.cik AND tl.valid_from <= p.d AND (tl.valid_to IS NULL OR tl.valid_to > p.d)
+) t;

@@ -149,7 +149,18 @@ the 33 GB `fact_asof` alone (measured 2026-09-04: 2:13, 2:11, 0:22 and 0:23,
 about 6 minutes with the reload, spine and security stages); a membership
 change is the reverse; a mapping change touches one; nothing changed is 52
 seconds. Until 2026-09-04 the spine was dropped with CASCADE, every gold
-matview went with it, and each crosswalk change cost a 32-minute gold rebuild. `--recreate-spine` restores that drop deliberately, for a column
+matview went with it, and each crosswalk change cost a 32-minute gold rebuild.
+
+The three membership-reading matviews join `sec_reference.index_membership_timeline`,
+the membership resolved once into non-overlapping intervals per company, with
+a plain range condition; a per-fact `LATERAL ... ORDER BY ... LIMIT 1` over
+`index_membership` forced a nested loop with a sort on every row. Measured
+2026-09-04: the full gold build went from 32 to 25:42 minutes, of which
+`fact_asof` is 19:36, and its refresh alone is 19:00. The bare query behind it
+(EXPLAIN ANALYZE, three hash joins, 97.9M rows) runs in 64 seconds; what
+remains is Postgres writing the 22 GB heap and its 10 GB of indexes. Cutting
+that further means a narrower row — the repeated `company_name` and `metric`
+text joined at read time instead — which is a schema change, not a tuning. `--recreate-spine` restores that drop deliberately, for a column
 change.
 
 ## Gold: two sibling matviews

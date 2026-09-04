@@ -28,7 +28,7 @@ one document. A confidently wrong doc is worse than no doc.
 
 ```bash
 uv run dera verify-docs    # object names (prose and SQL), paths, CLI commands, cross-links
-uv run dera verify         # 50 data-correctness checks
+uv run dera verify         # 51 data-correctness checks
 uv run pytest              # unit tests, no database
 uv run ruff check .        # what CI runs
 ```

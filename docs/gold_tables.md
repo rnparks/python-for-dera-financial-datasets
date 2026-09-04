@@ -480,7 +480,7 @@ RETURNS TABLE (value_date DATE, filed_date DATE, metric TEXT, value_billions NUM
 ## Rebuilding and refreshing
 
 ```bash
-uv run dera build-gold                 # full DDL rebuild (drops + recreates sec_gold), ~32 min
+uv run dera build-gold                 # full DDL rebuild (drops + recreates sec_gold), ~26 min; each file's seconds are printed
 uv run dera build-gold --refresh-only  # REFRESH all five matviews, in order
 uv run dera rebuild-reference          # after a reference change: CSVs, spine in place, security model, refresh what changed
 ```

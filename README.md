@@ -60,7 +60,7 @@ Internet Archive captures of SEC's ticker file; Wikipedia page history
 
 ## Setup
 
-Requires Python ≥ 3.11 and Postgres ≥ 14. Install [uv](https://docs.astral.sh/uv/) if you don't have it.
+Requires Python ≥ 3.11 and Postgres ≥ 14 with the `btree_gist` contrib extension (the spine creates it; it enforces that the membership timeline never overlaps). Install [uv](https://docs.astral.sh/uv/) if you don't have it.
 
 ```bash
 uv sync
@@ -80,7 +80,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 50 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 51 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -91,7 +91,7 @@ uv run dera download --from 2009q1 --to 2026q2   # ~29 GB on disk; default --to 
 uv run dera init-db                               # bronze DDL
 uv run dera load                                  # COPY → bronze (incremental; refuses a quarter twice)
 uv run dera build-silver                          # ~39 min
-uv run dera build-gold                            # ~32 min (was 16 before the per-fact membership lookup)
+uv run dera build-gold                            # ~26 min, 20 of them fact_asof (22 GB plus 10 GB of indexes)
 ```
 
 The security lifecycle model is a separate, additive path:

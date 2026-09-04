@@ -107,6 +107,7 @@ construction: it holds every CIK that ever filed, not the ones that survived.
 | `index_membership_unresolved` | 40 | Tickers that never resolved to a CIK — the members the historical universe is missing, listed rather than guessed |
 | **`index_membership`** | **2,708** | **Dated membership with GICS as of the interval**: 1,738 replayed S&P 500 intervals over 840 companies (`wikipedia_history`), 970 S&P 400/600 snapshot intervals (`current_snapshot`) |
 | `index_membership_latest` | 1,711 | One row per company: its current or most recent membership, the label gold falls back to |
+| `index_membership_timeline` | 2,931 | `index_membership` resolved to one non-overlapping interval set per company (1,711 companies; replayed history beats a snapshot, then the later start). What gold joins with a plain range condition; an EXCLUDE constraint enforces the non-overlap |
 | **`security`** | **17,030** | **A tradable instrument, distinct from its issuer.** Listed classes only |
 | `listing` | 28,287 | Security ↔ ticker over time; `source` says observed crosswalk (21,844), extended crosswalk (6,352) or share-class map (91) |
 | `eligibility` | 18,559 | Universe membership intervals (`filers_10k_15m` 17,695, `sp500` 864), with reasons in and out |
@@ -211,11 +212,11 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 50 checks; exits non-zero on any FAIL
+uv run dera verify     # 51 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 
 Covers restatement preservation, availability correctness, crosswalk capture
 quality, share-class summing, derived-concept resolution, and the survivorship /
-future-existence tests on the universe. Checks 29–50 each name the defect found
+future-existence tests on the universe. Checks 29–51 each name the defect found
 in the 2026-09-04 review, or the gap closed since, that they guard against.

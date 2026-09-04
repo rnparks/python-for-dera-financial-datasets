@@ -329,7 +329,7 @@ the specific archived captures a run resolved to, so the run is reproducible.
 uv run dera download --from 2026q2 --to 2026q2   # new DERA quarter
 uv run dera load --quarter 2026q2                # into bronze (refuses a quarter already loaded)
 uv run dera build-silver                         # ~39 min, single transaction
-uv run dera build-gold                           # ~32 min
+uv run dera build-gold                           # ~26 min
 uv run dera verify                               # correctness suite
 
 uv run dera fetch-filing-index                   # EDGAR archive, ~1.5 GB

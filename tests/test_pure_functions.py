@@ -334,7 +334,7 @@ def test_refresh_plan_crosswalk_change_skips_fact_asof():
 
 def test_refresh_plan_membership_change_refreshes_fact_asof_not_shares():
     from dera_pipeline import cli
-    plan = cli.gold_refresh_plan({"index_membership", "index_membership_latest"})
+    plan = cli.gold_refresh_plan({"index_membership_timeline", "index_membership_latest"})
     assert "sec_gold.fact_asof" in plan
     assert "sec_gold.share_class_shares" not in plan
     assert plan[-1] == "sec_gold.peer_stats"

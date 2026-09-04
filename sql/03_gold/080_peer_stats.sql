@@ -47,8 +47,8 @@ DROP MATERIALIZED VIEW IF EXISTS sec_gold.peer_stats                  CASCADE;
 
 -- MEMBERSHIP IS AS OF THE FISCAL PERIOD END. A company enters a fiscal
 -- year's cross-section only if it was an index constituent on that
--- period's end date, resolved directly against index_membership here
--- rather than through tradable_financials.index_is_asof: that flag is
+-- period's end date, resolved directly against the membership timeline
+-- here rather than through tradable_financials.index_is_asof: that flag is
 -- evaluated at the availability of the LATEST vintage, and for an
 -- annual fact the latest vintage is usually the comparative reprinted
 -- in a 10-K one or two years on -- Tesla's FY2018 revenue survives as
@@ -83,16 +83,12 @@ WITH direct AS (
     JOIN sec_gold.concept_tag_map      m ON m.tag = tf.tag
     JOIN sec_gold.canonical_concepts   c ON c.concept = m.concept
     LEFT JOIN sec_reference.company    co ON co.cik = tf.cik
-    -- Membership and classification on the period end date.
-    JOIN LATERAL (
-        SELECT im.index_name, im.gics_sector, im.gics_sub_industry
-        FROM sec_reference.index_membership im
-        WHERE im.cik = tf.cik
-          AND im.valid_from <= tf.value_date
-          AND (im.valid_to IS NULL OR im.valid_to > tf.value_date)
-        ORDER BY (im.source = 'wikipedia_history') DESC, im.valid_from DESC
-        LIMIT 1
-    ) mem ON TRUE
+    -- Membership and classification on the period end date, from the
+    -- non-overlapping timeline (05_spine/020, section 3c).
+    JOIN sec_reference.index_membership_timeline mem
+      ON mem.cik = tf.cik
+     AND mem.valid_from <= tf.value_date
+     AND (mem.valid_to IS NULL OR mem.valid_to > tf.value_date)
     WHERE tf.qtrs = CASE WHEN c.fact_type = 'balance' THEN 0 ELSE 4 END
       AND tf.value IS NOT NULL
       AND (m.sic_prefix = '' OR co.sic_latest::TEXT LIKE m.sic_prefix || '%')

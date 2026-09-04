@@ -40,7 +40,7 @@ refill.
 
 Verification::
 
-    uv run dera verify        # 50 data-correctness checks
+    uv run dera verify        # 51 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 
@@ -238,27 +238,27 @@ GOLD_MATVIEWS = (
 SPINE_TABLES = (
     "company",
     "company_ticker",
-    "index_membership",
+    "index_membership_timeline",
     "index_membership_latest",
     "share_class",
 )
 GOLD_INPUTS: dict[str, frozenset[str]] = {
     "sec_gold.tradable_financials": frozenset(
-        {"company", "company_ticker", "index_membership", "index_membership_latest"}),
+        {"company", "company_ticker", "index_membership_timeline", "index_membership_latest"}),
     "sec_gold.tradable_financials_pit": frozenset(
-        {"company", "company_ticker", "index_membership", "index_membership_latest"}),
+        {"company", "company_ticker", "index_membership_timeline", "index_membership_latest"}),
     "sec_gold.fact_asof": frozenset(
-        {"company", "index_membership", "index_membership_latest"}),
+        {"company", "index_membership_timeline", "index_membership_latest"}),
     "sec_gold.share_class_shares": frozenset(
         {"company", "company_ticker", "share_class"}),
     "sec_gold.peer_stats": frozenset(
-        {"company", "index_membership", "sec_gold.tradable_financials"}),
+        {"company", "index_membership_timeline", "sec_gold.tradable_financials"}),
 }
 # Everything 05_spine declares, for --recreate-spine.
 SPINE_DECLARED = (
     "company", "ticker_capture", "company_ticker",
     "index_capture", "index_observation_resolved", "index_membership_unresolved",
-    "index_membership", "index_membership_latest",
+    "index_membership", "index_membership_latest", "index_membership_timeline",
 )
 
 
