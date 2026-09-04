@@ -144,12 +144,20 @@ The checker deliberately does not validate prose or figures — a check that is
 wrong often enough to ignore is worse than none. Figures are date-stamped
 instead, so you can see their vintage.
 
-Optionally enforce it locally:
+Optionally enforce it locally with the tracked hook:
 
 ```bash
-printf '#!/bin/sh\nuv run dera verify-docs\n' > .git/hooks/pre-commit
-chmod +x .git/hooks/pre-commit
+ln -sf ../../tools/hooks/pre-commit .git/hooks/pre-commit
 ```
+
+It blocks any commit whose docs reference a database object, file, command or
+link that does not exist, and prints `file:line` for each. `git commit
+--no-verify` bypasses it. If Postgres is unreachable the hook warns and allows
+the commit rather than blocking — a database being down is not a documentation
+problem, and a hook that fires on the wrong thing trains you to bypass it.
+
+`.git/hooks` is not tracked, so each clone installs its own; this is a local
+convenience, not a guarantee about the repository.
 
 ## Repository layout
 
