@@ -13,8 +13,9 @@ without survivorship bias.
 
 1. **Availability, not filing date.** Every fact records when it became
    *actionable* — the EDGAR acceptance timestamp resolved against a real NYSE
-   calendar. **57%** of filings (247,216 of 433,717) are accepted after the close and
-   stamped that same `filed_date`; **210,683** of them roll to a later session.
+   calendar. **57%** of filings (247,216 of 433,717) are accepted after the close;
+   **48%** of all filings still carry that day's `filed_date` and would look a
+   session early to anything keyed on it.
 2. **Every vintage is kept.** A restatement does not overwrite history. GE's
    fiscal 2022 revenue exists as four vintages across three values — $76.555B as
    first filed, $58.100B after an 8-K, $29.139B after a 2025 restatement — and
@@ -48,6 +49,10 @@ EDGAR bulk submissions archive
   └─[dera fetch-filing-index]──→ data/edgar/submissions.zip
   └─[dera build-security-model]→ sec_reference.{security,listing,      SPINE
                                  eligibility,delisting_event}
+
+Internet Archive captures of SEC's ticker file
+  └─[tools/fetch_ticker_history.py]→ data/reference/ticker_history.csv.gz
+  └─[dera rebuild-reference]───────→ spine → security model → gold
 ```
 
 ## Setup
@@ -64,7 +69,7 @@ cp .env.example .env      # then set SEC_USER_AGENT and PG_DSN
 | `SEC_USER_AGENT` | SEC rate-limits generic agents — use a descriptive string with a contact email, e.g. `"Jane Doe <jane@example.com>"`. |
 | `PG_DSN` | Postgres connection string, e.g. `postgresql://user:pass@localhost:5432/dera`. |
 
-Expect roughly **141 GB** of Postgres and **31 GB** on disk for a full build.
+Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 **Figures throughout this file are as of 2026-09-04.**
 
@@ -72,15 +77,16 @@ Expect roughly **141 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 28 correctness checks; non-zero exit on failure
+uv run dera verify         # 42 data-correctness checks; non-zero exit on failure
+uv run pytest              # unit tests for the pure Python (no database)
 ```
 
 Or one stage at a time:
 
 ```bash
-uv run dera download --from 2009q1 --to 2026q2   # ~29 GB on disk
+uv run dera download --from 2009q1 --to 2026q2   # ~29 GB on disk; default --to is the last full quarter
 uv run dera init-db                               # bronze DDL
-uv run dera load                                  # COPY → bronze (incremental)
+uv run dera load                                  # COPY → bronze (incremental; refuses a quarter twice)
 uv run dera build-silver                          # ~39 min
 uv run dera build-gold                            # ~16 min
 ```
@@ -92,8 +98,16 @@ uv run dera fetch-filing-index      # EDGAR bulk archive, ~1.5 GB
 uv run dera build-security-model    # securities, listings, delistings, universes
 ```
 
+and a crosswalk refresh ends with a rebuild of everything that joins to it:
+
+```bash
+uv run python tools/fetch_ticker_history.py --batch 0   # monthly archive captures + live file
+uv run dera rebuild-reference                            # spine → security model → gold
+```
+
 `run-all` will **not** destroy a populated bronze — that needs an explicit
-`--reinit-bronze`.
+`--reinit-bronze`. `build-silver` without the filing index leaves the existing
+security model in place rather than emptying it.
 
 ## Querying
 
@@ -106,24 +120,30 @@ SELECT * FROM sec_gold.latest_annual_by_ticker('NKE', 'revenue');
 
 -- BACKTESTING: what was knowable on a date. No default knowledge date,
 -- deliberately — omitting it is an error rather than a silent look-ahead.
-SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2015-06-30');
+SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2022-06-30');
+
+-- The ticker crosswalk starts in 2019; before that, key on the CIK.
+-- (The ticker form raises for a date it cannot resolve, rather than
+-- returning fifteen empty rows.)
+SELECT * FROM sec_gold.as_of_snapshot(320193, DATE '2015-06-30');
 
 -- Who was actually investable then, delisted companies included
 SELECT * FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30');
 ```
 
-That last query returns 7,418 members, of which **1,925 (26%) have since
-delisted**. A universe built from today's index membership returns none of them.
+That last query returns 7,293 members, of which **3,012 (41%) have since
+delisted or deregistered**. A universe built from today's index membership
+returns none of them.
 
 ## Reference data
 
-Tracked CSVs under `data/reference/`, all regenerable — see
+Tracked files under `data/reference/`, all regenerable — see
 [`docs/data_sources.md`](docs/data_sources.md) for provenance and known gaps.
 
 ```bash
-uv run python tools/fetch_sp1500.py           # S&P 1500 membership (Wikipedia)
-uv run python tools/fetch_ticker_history.py   # CIK↔ticker via Wayback; resumes
-uv run python tools/build_calendar.py         # NYSE trading calendar
+uv run python tools/fetch_sp1500.py                     # S&P 1500 membership (Wikipedia)
+uv run python tools/fetch_ticker_history.py --batch 0   # CIK↔ticker via the Internet Archive; resumes
+uv run python tools/build_calendar.py                   # NYSE trading calendar, two years ahead
 ```
 
 ## Keeping the documentation current
@@ -137,8 +157,9 @@ Two habits keep that from recurring:
 1. **Update docs in the same commit as the change.** `CLAUDE.md` carries a table
    mapping what you changed to what needs updating.
 2. **Run the checker.** `uv run dera verify-docs` validates every database object
-   name, file path, CLI command and cross-document link in the Markdown against
-   the live repository and database. It exits non-zero on failure.
+   name (in prose and inside SQL examples), file path, CLI command and
+   cross-document link in the Markdown against the live repository and
+   database. It exits non-zero on failure.
 
 The checker deliberately does not validate prose or figures — a check that is
 wrong often enough to ignore is worse than none. Figures are date-stamped
@@ -157,7 +178,8 @@ the commit rather than blocking — a database being down is not a documentation
 problem, and a hook that fires on the wrong thing trains you to bypass it.
 
 `.git/hooks` is not tracked, so each clone installs its own; this is a local
-convenience, not a guarantee about the repository.
+convenience, not a guarantee about the repository. GitHub Actions runs `ruff`
+and `pytest` on every push; the database-backed suites stay local.
 
 ## Repository layout
 
@@ -177,16 +199,17 @@ sql/                 # executed in lexical order by directory
 ├── 02_silver/      # typed bitemporal tables + financials() function
 ├── 03_gold/        # matviews, canonical concepts, as-of accessors
 ├── 04_reference/   # universe_sp1500, ticker_map
-├── 05_spine/       # company spine (needs 04 to be loaded first)
+├── 05_spine/       # company spine and dated crosswalk (needs 04 to be loaded first)
 └── 06_security/    # security model (needs the filing index loaded first)
 
 data/
 ├── raw/            # DERA quarterly dumps      (gitignored, 29 GB)
 ├── edgar/          # EDGAR submissions archive (gitignored, 1.5 GB)
-└── reference/      # tracked reference CSVs
+└── reference/      # tracked reference files (the crosswalk is gzipped)
 
+tests/               # pytest, pure functions only
 docs/                # architecture, schema, data sources, SEC references
-tools/               # standalone utilities and verify_pit.sql
+tools/               # standalone utilities, verify_pit.sql, the pre-commit hook
 notebooks/
 ├── sec_examples/   # original SEC DERA tutorials (upstream)
 └── scratch/        # one-off analysis

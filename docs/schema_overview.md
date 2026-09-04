@@ -13,15 +13,17 @@ document is the map.
 
 ```
 sec_raw          bronze    37 GB   raw SEC text, all TEXT, no constraints
-   └─ sec_silver silver    64 GB   typed, deduplicated, bitemporal facts
+   └─ sec_silver silver    62 GB   typed, deduplicated, bitemporal facts
         └─ sec_gold  gold  40 GB   query-facing views, concepts, peer stats
-   sec_reference  spine   166 MB   companies, securities, universes, calendar
+   sec_reference  spine   269 MB   companies, securities, universes, calendar
 ```
 
 `sec_reference` deliberately sits **outside** the bronze→silver→gold chain.
 `build-silver` opens with `DROP SCHEMA sec_silver CASCADE`, and the trading
 calendar, company spine and security model must survive that — `sub_silver`
-resolves `tradable_from` against the calendar during its own build.
+resolves `tradable_from` against the calendar during its own build. When the
+filing index is absent, `build-silver` also leaves the security model's DDL
+untouched rather than dropping tables it cannot refill.
 
 ---
 
@@ -38,7 +40,7 @@ reasoned about rather than at ingest.
 | `pre_raw` | 44.1M | 6.7 GB | Presentation: how facts map to statement lines |
 | `tag_raw` | 4.7M | 1.2 GB | XBRL taxonomy: tag names, labels, definitions |
 | `sub_raw` | 419.8K | 141 MB | Submissions: one row per filing |
-| `load_log` | 70 | 32 kB | Which quarters have been loaded (drives incremental load) |
+| `load_log` | 70 | 32 kB | Which quarters have been loaded (drives incremental load; a logged quarter is refused a second time) |
 
 ## `sec_silver` — silver
 
@@ -47,7 +49,7 @@ is established.
 
 | Table | Rows | Size | What it is |
 |---|---:|---:|---|
-| `num_silver` | 185.0M | 62 GB | **The core fact table.** Every vintage of every fact |
+| `num_silver` | 185.0M | 60 GB | **The core fact table.** Every vintage of every fact |
 | `tag_silver` | 4.5M | 1.5 GB | Deduplicated taxonomy |
 | `sub_silver` | 433.7K | 111 MB | Filings with `known_at` (acceptance instant) and `tradable_from` |
 | `ticker_map` | 10.2K | 1.3 MB | Legacy CIK ↔ ticker crosswalk (superseded by `sec_reference`) |
@@ -57,7 +59,8 @@ is established.
 `known_at`, `tradable_from`, `vintage_seq`, `superseded_known_at`,
 `superseded_tradable`, `is_original_disclosure`. An as-of query is a half-open
 interval scan returning exactly one row per fact, with no window function at
-query time.
+query time. (It no longer carries indexes on `rank_pit` and `rank_latest`: 2.4 GB
+that the planner never used, since `= 1` matches most of the table.)
 
 > **Caveat — `universe_sp1500` is current-constituents-only.** It has no date
 > columns at all, so anything joining to it inherits survivorship bias. The
@@ -94,43 +97,56 @@ construction: it holds every CIK that ever filed, not the ones that survived.
 |---|---:|---|
 | `company` | 17,015 | Every CIK that ever filed. The survivorship-free population |
 | `company_name` | 31,090 | Historical names with validity intervals |
-| `company_ticker` | 36,032 | Dated CIK ↔ ticker intervals with `is_primary` |
-| `ticker_observation` | 154,431 | Raw dated crosswalk observations (Wayback replay) |
-| **`security`** | **17,031** | **A tradable instrument, distinct from its issuer** |
-| `listing` | 20,711 | Security ↔ exchange ↔ ticker over time |
-| `eligibility` | 17,727 | Universe membership intervals, with reasons in and out |
-| `delisting_event` | 4,553 | Delistings as investment events, not missing data |
+| `ticker_observation` | 861,755 | Raw dated crosswalk observations: 81 captures, monthly from 2018-12 |
+| `ticker_capture` | 81 | One row per capture with its size and whether it is partial |
+| `company_ticker` | 35,520 | Dated CIK ↔ ticker intervals with `is_primary`; 20,326 CIKs, 12,321 of them absent from SEC's live file |
+| **`security`** | **17,025** | **A tradable instrument, distinct from its issuer.** Listed classes only |
+| `listing` | 21,970 | Security ↔ ticker over time |
+| `eligibility` | 17,695 | Universe membership intervals, with reasons in and out |
+| `delisting_event` | 7,119 | Outcomes: 4,498 exchange notices (Form 25), 2,621 deregistrations (Form 15) |
 | `corporate_action` | 0 | Declared, unpopulated |
 | `share_class` | 27 | Hand-mapped share class → ticker allowlist (9 CIKs) |
 | `company_label` | *(view)* | Best-known display name per CIK — joined by both `tradable_financials` matviews |
-| `trading_calendar` | 4,947 | NYSE sessions, for availability arithmetic |
-| `security_event_raw` | 910,661 | Staging: raw EDGAR lifecycle events |
+| `trading_calendar` | 4,947 | NYSE sessions to 2028-09-01, for availability arithmetic |
+| `security_event_raw` | 905,049 | Staging: raw EDGAR lifecycle events |
+| `company_name_raw` | 31,093 | Staging: raw name history |
 
 Rebuild the security model with `dera build-security-model` (it needs
-`dera fetch-filing-index` to have run first). There is no shell helper — an
+`dera fetch-filing-index` to have run first). After a crosswalk refresh, use
+`dera rebuild-reference`, which runs the spine, the security model and gold in
+order — a spine rebuild drops every gold matview. There is no shell helper — an
 earlier shell helper under tools/ loaded an 18-CIK slice and would silently
 truncate the model to 18 securities, so it was deleted in favour of the CLI.
-| `company_name_raw` | 31,093 | Staging: raw name history |
 
 ### The company/security distinction
 
 This is the part most worth understanding. `company_ticker` maps a CIK to a
 ticker with no notion of an instrument that begins and ends. `security` is the
-tradable thing, and it carries the two dates that make a historical universe
+tradable thing, and it carries the dates that make a historical universe
 possible:
 
 - `first_trade_date` + `first_trade_basis` — when it became tradable, and on what
   evidence. The basis matters: `8-A` is a listing registration, `424B` a pricing,
-  `already_reporting` a conservative upper bound for companies public before
-  EDGAR existed, `first_edgar_filing` only a floor on company existence. Measured
-  distribution: 44.5% / 2.5% / 52.5% / 0.5%.
-- `delisting_date` — when it stopped being tradable, derived from Form 25 by a
-  behavioural rule, not by the presence of the form. Colgate-Palmolive has filed
-  five Form 25s and JPMorgan forty-six; neither has ever delisted.
+  `already_reporting` the first periodic report, `first_edgar_filing` only a floor
+  on company existence. Measured distribution: 44.5% / 2.5% / 52.5% / 0.5%.
+  `already_reporting` is late-but-true for a company public before EDGAR and
+  **early** for one that reported before its equity traded; `first_pricing_date`
+  (the earliest 424B pricing, populated for 7,981 securities) is kept as evidence
+  for a stricter reading.
+- `delisting_date` — when it stopped being tradable, derived from a Form 25 or,
+  failing that, a Form 15, by a behavioural rule rather than by the presence of
+  the form. Colgate-Palmolive has filed five Form 25s and JPMorgan forty-six;
+  neither has ever delisted. `delisting_event.reason` records which evidence
+  class ended it.
 
 Two invariants are enforced by CHECK constraint, not convention: no eligibility
 interval may begin before `first_trade_date` (blocks future-existence bias) or
 outlive `delisting_date` (blocks survivorship bias).
+
+`sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30')` returns 7,293
+members, 3,012 of them (41%) since delisted or deregistered. 2,420 have no
+ticker label at all: they left before the crosswalk's 2019 floor and SEC's file
+never carried them afterwards.
 
 ## `sec_gold` — gold
 
@@ -141,17 +157,18 @@ full reference including every function signature.
 |---|---|---:|---:|---|
 | `fact_asof` | matview | 97.9M | 33 GB | **Bitemporal facts, every vintage. The backtest source** |
 | `tradable_financials` | matview | 11.8M | 3.4 GB | Latest-restated facts, one row per fact |
-| `tradable_financials_pit` | matview | 11.8M | 3.5 GB | As-first-reported twin |
-| `peer_stats` | matview | 530.3K | 126 MB | Cross-sectional scores at sector and sub-industry |
-| `share_class_shares` | matview | 504.8K | 138 MB | Per-class share counts, the market-cap denominator |
+| `tradable_financials_pit` | matview | 11.8M | 3.5 GB | As-first-seen twin |
+| `peer_stats` | matview | 538.5K | 127 MB | Cross-sectional scores at sector and sub-industry |
+| `share_class_shares` | matview | 618.2K | 174 MB | Per-class share counts for 8,228 companies, delisted included — the market-cap denominator |
 | `canonical_concepts` | table | 15 | — | Research taxonomy (revenue, total_debt, …) |
-| `concept_tag_map` | table | 34 | — | Priority-ordered XBRL tag resolution |
+| `concept_tag_map` | table | 38 | — | Priority-ordered XBRL tag resolution |
 | `concept_formula` | table | 6 | — | Derived concepts as linear combinations |
 | `metric_aliases` | table | 4 | — | Legacy display-name remap |
 
 Plus roughly twenty functions — `get_canonical()`, `latest_annual()`,
-`company_snapshot()`, the six `as_of_*` accessors, `shares_outstanding_at()`,
-`share_classes_at()`. All documented in `docs/gold_tables.md`.
+`company_snapshot()`, the `as_of_*` accessors (with `as_of_snapshot` keyed by
+CIK or by ticker), `shares_outstanding_at()`, `share_classes_at()`. All
+documented in `docs/gold_tables.md`.
 
 ---
 
@@ -165,19 +182,23 @@ Plus roughly twenty functions — `get_canonical()`, `latest_annual()`,
 | Screen cross-sectionally today | `peer_stats` | — |
 | Resolve one metric across companies | `get_canonical()` | raw XBRL tags |
 | Know when a security began or stopped trading | `sec_reference.security` | `company_ticker` |
+| Count shares per class for a market cap | `share_class_shares` | `shares_outstanding_at()` alone |
 
 Two rules worth internalising. **`peer_stats` is not availability-correct** — it
 is built from restated values with moments computed over the finished panel, so
 it knows the future; it is for dashboards and screens, never backtests. And the
 `as_of_*` functions **have no default knowledge date**, deliberately: omitting it
-is a call-site error rather than a silent look-ahead.
+is a call-site error rather than a silent look-ahead — and a ticker the
+crosswalk cannot resolve on that date raises rather than returning empty rows.
 
 ## Verifying
 
 ```bash
-uv run dera verify     # 28 checks; exits non-zero on any FAIL
+uv run dera verify     # 42 checks; exits non-zero on any FAIL
+uv run pytest          # unit tests for the pure Python
 ```
 
-Covers restatement preservation, availability correctness, crosswalk fan-out,
-share-class summing, and the survivorship / future-existence tests on the
-universe.
+Covers restatement preservation, availability correctness, crosswalk capture
+quality, share-class summing, derived-concept resolution, and the survivorship /
+future-existence tests on the universe. Checks 29–42 each name the defect found
+in the 2026-09-04 review that they guard against.

@@ -2,7 +2,7 @@
 
 The gold layer is the query-facing top of the medallion pipeline: SEC DERA fundamentals filtered to the S&P 1500 tradable universe, keyed by ticker, with a canonical-concept taxonomy and pre-computed peer statistics on top. Everything here is derived from `sec_silver` — rebuild it any time with `uv run dera build-gold`.
 
-**Data coverage** (as of the 2026q2 load): filings from 2009-04-15 through 2026-06-30, ~11.8M rows per display matview and 97.9M in `fact_asof`.
+**Data coverage** (as of the 2026q2 load, figures dated 2026-09-04): filings from 2009-04-15 through 2026-06-30, 11.8M rows per display matview and 97.9M in `fact_asof`.
 
 For the whole database — including `sec_reference`, which holds the survivorship-free company and security spine — see [`schema_overview.md`](schema_overview.md).
 
@@ -12,34 +12,34 @@ For the whole database — including `sec_reference`, which holds the survivorsh
 
 | Object | Kind | Rows | One-line description |
 |---|---|---:|---|
-| [`fact_asof`](#fact_asof) | matview | 98M | **Bitemporal facts, every vintage. The correct backtest source.** |
+| [`fact_asof`](#fact_asof) | matview | 97.9M | **Bitemporal facts, every vintage. The correct backtest source.** |
 | [`tradable_financials`](#tradable_financials) | matview | 11.8M | Latest-restated facts, one row per fact |
-| [`tradable_financials_pit`](#tradable_financials_pit) | matview | 11.8M | As-first-seen twin of the above |
-| [`peer_stats`](#peer_stats) | matview | ~530K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level` |
-| `share_class_shares` | matview | — | **Per-share-class counts. The market-cap denominator.** |
+| [`tradable_financials_pit`](#tradable_financials_pit) | matview | 11.8M | Earliest-sighting twin of the above |
+| [`peer_stats`](#peer_stats) | matview | 538K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level` |
+| [`share_class_shares`](#share_class_shares) | matview | 618K | **Per-share-class counts for 8,228 companies, delisted included. The market-cap denominator.** |
 | [`canonical_concepts`](#canonical_concepts) | table | 15 | Research-meaningful metric definitions (revenue, capex, …) |
-| [`concept_tag_map`](#concept_tag_map) | table | 34 | Priority-ordered XBRL tag resolution rules per concept |
+| [`concept_tag_map`](#concept_tag_map) | table | 38 | Priority-ordered XBRL tag resolution rules per concept |
 | `concept_formula` | table | 6 | Derived concepts as linear combinations of other concepts |
 | [`metric_aliases`](#metric_aliases) | table | 4 | Legacy display-name remap for `get_pit_financials` |
 | [`get_canonical()`](#get_canonical) | function | — | Resolve (cik, concept, date) → one value: tags first, then formula |
 | `resolve_direct()` | function | — | Tag-walk only, no formula. Operand resolver for derived concepts |
 | `as_of_resolve_direct()` | function | — | Same, against `fact_asof` at a knowledge date |
 | [`get_canonical_by_ticker()`](#get_canonical_by_ticker) | function | — | Ticker wrapper for `get_canonical` |
-| [`latest_annual()`](#latest_annual) | function | — | Most recent annual value, fiscal-year-end aware |
+| [`latest_annual()`](#latest_annual) | function | — | Most recent annual value, fiscal-year-end aware, formula fallback |
 | [`latest_annual_by_ticker()`](#latest_annual_by_ticker) | function | — | Ticker wrapper for `latest_annual` |
 | [`company_snapshot()`](#company_snapshot) | function | — | One row per canonical concept for a ticker |
 | [`get_pit_financials()`](#get_pit_financials) | function | — | Legacy: revenue/net-income history in $B by CIK |
 | [`get_financials_by_ticker()`](#get_financials_by_ticker) | function | — | Legacy: ticker wrapper for `get_pit_financials` |
 | `as_of_facts()` | function | — | Every fact for a company as it stood on a date |
 | `as_of_canonical()` | function | — | One concept as of a date |
-| `as_of_latest_annual()` | function | — | Most recent annual value knowable on a date |
-| `as_of_latest_annual_by_ticker()` | function | — | Ticker wrapper, resolves the ticker as of the same date |
-| `as_of_snapshot()` | function | — | Every concept for a ticker as of a date |
-| `shares_outstanding_at()` | function | — | Single collapsed share count. NOT sufficient for multi-class market cap |
-| `share_classes_at()` | function | — | Every share class for a company as of a date, one row per class |
+| [`as_of_latest_annual()`](#as_of_latest_annual) | function | — | Most recent annual value knowable on a date, formula fallback |
+| `as_of_latest_annual_by_ticker()` | function | — | Ticker wrapper; resolves the ticker as of the same date, raises if it cannot |
+| [`as_of_snapshot()`](#as_of_snapshot) | function | — | Every concept as of a date, keyed by CIK or by ticker |
+| [`shares_outstanding_at()`](#shares_outstanding_at) | function | — | Single collapsed share count. NOT sufficient for multi-class market cap |
+| [`share_classes_at()`](#share_classes_at) | function | — | Every share class for a company as of a date, one row per class |
 | `norm_ticker()` | function | — | Ticker to stored form (`BRK.B` → `BRK-B`) |
 | `fiscal_year_of()` | function | — | Peer-comparison year key for non-December filers |
-| `shift_sessions()` | function | — | Move a date back N trading sessions |
+| `shift_sessions()` | function | — | Move a date back N trading sessions; raises if none exists |
 
 ---
 
@@ -50,9 +50,11 @@ For the whole database — including `sec_reference`, which holds the survivorsh
 Nearly everything in gold comes in two flavors, matching the dual ranking computed in `sec_silver.num_silver`:
 
 - **`latest`** — the most recently restated value for each fact. Use for fundamental analysis and dashboards ("what do we now believe FY2022 revenue was").
-- **`pit`** (point-in-time) — the value as it was **first reported**, with no look-ahead. Use for backtesting ("what did the market know on the day of filing"). Verified example: GE's FY2022 revenue exists as both the original $76.5B (`pit`) and restated $29.1B (`latest`).
+- **`pit`** — the **earliest sighting of the fact in this dataset**. Coverage begins 2009-04-15 and registration statements backfill years of history, so this is not always "as originally filed": 27.8% of `rank_pit = 1` annual rows are prior-period comparatives, flagged by `is_original_disclosure`. Verified example: GE's FY2022 revenue exists as the original $76.5B (`pit`) and restated $29.1B (`latest`).
 
-The matviews are split into a `latest` view and a `_pit` twin; the functions take a `p_mode` parameter, **defaulting to `'pit'`**. Handing restated figures to a caller who omitted the argument was judged the most damaging default available, so `'latest'` must be asked for explicitly. Note `'pit'` is still not availability-correct — it carries no knowledge date; use the `as_of_*` family for backtests.
+The matviews are split into a `latest` view and a `_pit` twin; the functions take a `p_mode` parameter, **defaulting to `'pit'`**. Handing restated figures to a caller who omitted the argument was judged the most damaging default available, so `'latest'` must be asked for explicitly.
+
+**Neither mode is availability-correct.** Both carry no knowledge date, so a loop over historical dates against either will read facts filed after the date it simulates. Backtests use the `as_of_*` family, which has no default knowledge date.
 
 ### The `qtrs` convention
 
@@ -66,11 +68,21 @@ Income-statement and cash-flow analysis at annual grain should filter `qtrs = 4`
 
 ### Consolidated-only filtering
 
-The matviews contain **only consolidated, parent-entity facts**: rows with non-null `segments` (business-segment breakdowns) or `coreg` (subsidiary co-registrants) are excluded upstream. You never need to re-apply this filter on gold objects.
+The matviews contain **only consolidated, parent-entity facts**: rows with non-null `segments` (business-segment breakdowns) or `coreg` (subsidiary co-registrants) are excluded upstream. You never need to re-apply this filter on gold objects. The one exception is `share_class_shares`, which reads the `ClassOfStock` axis on purpose.
 
 ### Fiscal years ≠ calendar years
 
 Many large filers have non-December fiscal year ends (Apple → Sep, Microsoft → Jun, NVIDIA → Jan, Nike → May). A filter like `value_date = '2025-12-31' AND qtrs = 4` silently drops them all. Use `latest_annual()` / `company_snapshot()` for FY-aware lookups, or bucket with `sec_gold.fiscal_year_of(value_date)` as `peer_stats` does. Do NOT use `EXTRACT(YEAR FROM value_date)`: it pushes January year-ends such as NVIDIA and Walmart into the following calendar year, comparing eleven months against a peer's full year.
+
+### How a derived concept is resolved
+
+`gross_profit`, `free_cash_flow` and `total_debt` can come from a filed tag or from a formula over other concepts (`concept_formula`). Both the `latest_annual` family and the `as_of_*` family resolve them the same way:
+
+1. Find the newest period at which any **direct** tag resolves.
+2. Find the newest period at which the **formula** resolves — candidate periods are every period at which any operand exists, newest first, up to twelve, and the formula is evaluated at each until one succeeds. A period missing a required operand falls through to the next rather than ending the search.
+3. **The newer period wins.** At the same period a filed figure beats a reconstruction.
+
+Rule 3 matters: before it, Apple's `total_debt` resolved to a 2015 `LongTermDebt` row ($40.1B) while its 2026 balance sheet carried the components ($82.7B), because "direct always wins" was applied across periods. And before rule 2, `total_debt` — whose operands are both optional — never derived at all in `latest_annual`.
 
 ---
 
@@ -98,7 +110,7 @@ One row per **(company, XBRL tag, value date, period length, unit)** for every S
 | Column | Type | Description |
 |---|---|---|
 | `ticker` | text | Exchange ticker (class shares use hyphens: `BRK-B`) |
-| `ticker_is_asof` | boolean | **`false` for 47.9% of rows** — the ticker is the company's best-known symbol, not the one it traded under on `value_date`. The crosswalk floor is 2019-02; filter on this if you need a date-correct symbol |
+| `ticker_is_asof` | boolean | **`false` for 47.8% of rows** — the ticker is the company's best-known symbol, not the one it traded under on `value_date`. The crosswalk floor is 2019; filter on this if you need a date-correct symbol |
 | `company_name` | text | Company name as of the fact, via `sec_reference.company_label` |
 | `gics_sector` | text | GICS sector, resolved once per company (not as of a date) |
 | `gics_sub_industry` | text | GICS sub-industry, same caveat |
@@ -128,10 +140,10 @@ LIMIT 20;
 
 ### `tradable_financials_pit`
 
-Identical columns and indexes to `tradable_financials`, but holds the **as-first-reported** value for each fact (`rank_pit = 1`). This is the view to join against in any backtest: for a given `filed_date`, every row was genuinely knowable on that date, with no restatement look-ahead.
+Identical columns and indexes to `tradable_financials`, but holds the **earliest sighting** of each fact (`rank_pit = 1`) rather than the latest restatement. It has no knowledge date, so it is **not** a backtest source on its own: a loop over historical dates against it will read facts filed after the date it simulates. It exists for callers that want one row per fact without restatements. Use `fact_asof` and the `as_of_*` family for anything backtested.
 
 ```sql
--- What did NVDA report for FY-end 2023-01-29, as originally filed?
+-- What did NVDA report for FY-end 2023-01-29, as first seen in the dataset?
 SELECT metric, value_date, filed_date, value
 FROM sec_gold.tradable_financials_pit
 WHERE ticker = 'NVDA' AND value_date = '2023-01-29' AND qtrs = 4;
@@ -139,18 +151,20 @@ WHERE ticker = 'NVDA' AND value_date = '2023-01-29' AND qtrs = 4;
 
 ### `peer_stats`
 
-Pre-computed cross-sectional scores: one row per **(ticker, canonical concept, fiscal year, peer level)**. 530,324 rows. Sourced from `tradable_financials` (latest-restated values).
+Pre-computed cross-sectional scores: one row per **(ticker, canonical concept, fiscal year, peer level)**. 538,466 rows. Sourced from `tradable_financials` (latest-restated values).
 
 **Two peer levels, tagged by `peer_level`.** Sub-industry alone was too granular — only 106 of 156 groups clear the five-member threshold, and the threshold *deletes* a thin group rather than degrading it, so companies vanished with nothing in the output saying so. Both levels are computed:
 
 | `peer_level` | Groups | Companies scored |
 |---|---:|---:|
-| `sector` | 11 | 1,638 tickers / 1,569 CIKs |
-| `sub_industry` | 106 | 1,509 tickers / 1,445 CIKs |
+| `sector` | 11 | 1,573 CIKs |
+| `sub_industry` | 106 | 1,449 CIKs |
 
 Sector is the sounder default. The standard error of an estimated standard deviation is about σ/√(2(n−1)), so at the sub-industry median of seven companies the z-score denominator is itself uncertain by nearly 30%, against roughly 10% at sector's thinnest group.
 
-Fiscal year is bucketed by `sec_gold.fiscal_year_of(value_date)`, **not** `EXTRACT(YEAR FROM value_date)` — see [Fiscal years ≠ calendar years](#fiscal-years--calendar-years). Extracting the calendar year pushes January year-ends such as NVIDIA and Walmart into the following year, comparing eleven months against a peer's full year.
+Fiscal year is bucketed by `sec_gold.fiscal_year_of(value_date)`, **not** `EXTRACT(YEAR FROM value_date)` — see [Fiscal years ≠ calendar years](#fiscal-years--calendar-years).
+
+Revenue coverage by fiscal year, tracked universe: 1,105 companies in FY2010, 1,283 in FY2015, 1,479 in FY2024. Before the pre-2018 revenue tags were mapped, FY2015 covered 628.
 
 | Column | Type | Description |
 |---|---|---|
@@ -166,7 +180,7 @@ Fiscal year is bucketed by `sec_gold.fiscal_year_of(value_date)`, **not** `EXTRA
 | `fiscal_year` | integer | Peer-comparison year from `fiscal_year_of(value_date)` |
 | `value_date` | date | Actual period end date behind the bucketed year |
 | `value` | numeric | Resolved value (sign-adjusted, best-priority tag) |
-| `peer_count` | bigint | Companies in the (concept, year, sub-industry) group |
+| `peer_count` | bigint | Companies in the (concept, year, group) |
 | `peer_mean` | numeric | Group mean |
 | `peer_stddev` | numeric | Group sample standard deviation |
 | `peer_min` / `peer_max` | numeric | Group extremes |
@@ -178,19 +192,38 @@ Fiscal year is bucketed by `sec_gold.fiscal_year_of(value_date)`, **not** `EXTRA
 > **Not availability-correct.** Built from restated values, with peer moments computed over the finished panel, so both the inputs and the statistics know the future. This is a dashboard and screening artifact. Anything backtested should read `fact_asof` and build its own cross-section.
 
 ```sql
--- NVDA revenue vs. semiconductor peers (z=4.2 in FY2025, 31 peers)
+-- NVDA revenue vs. semiconductor peers
 SELECT fiscal_year, value, zscore, peer_count
 FROM sec_gold.peer_stats
-WHERE ticker = 'NVDA' AND concept = 'revenue'
+WHERE ticker = 'NVDA' AND concept = 'revenue' AND peer_level = 'sub_industry'
 ORDER BY fiscal_year DESC;
 
--- Cheapest-by-nothing screen: most extreme net-income outliers, FY2025
-SELECT ticker, gics_sub_industry, zscore
+-- Most extreme net-income outliers within sector, FY2025
+SELECT ticker, gics_sector, zscore
 FROM sec_gold.peer_stats
-WHERE concept = 'net_income' AND fiscal_year = 2025
+WHERE concept = 'net_income' AND fiscal_year = 2025 AND peer_level = 'sector'
 ORDER BY zscore DESC
 LIMIT 20;
 ```
+
+### `share_class_shares`
+
+**The market-cap denominator.** One row per (company, share class, period, vintage, source tag): 618,158 rows across 8,228 companies, delisted ones included. A class appears in one of two ways:
+
+- **Mapped.** The issuer has rows in `sec_reference.share_class` and the class label matches the `ClassOfStock` member exactly (`method = 'mapped_class'`, 1,684 rows across 9 issuers).
+- **Inferred single-class.** The issuer has no mapping and never held two tickers at once — every one of its `company_ticker` intervals is `is_primary` (`method = 'inferred_single'`, 616,474 rows). A ticker change keeps a company here; a second listed line, such as a preferred, removes it.
+
+The second rule replaced "has exactly one ticker current today", which excluded every company that had delisted — 4,998 of them — from the one table that exists to compute historical market caps.
+
+| Column | Description |
+|---|---|
+| `class_label` | The `ClassOfStock` member, or `(single class)` |
+| `price_ticker` | The ticker whose price applies: the class's own, the listed class an unlisted one converts into, or — for inferred rows — the ticker held on `tradable_from` |
+| `price_ticker_is_asof` | `TRUE` for mapped rows and for inferred rows whose ticker the crosswalk covers on `tradable_from`; `FALSE` (348,705 rows, all before the 2019 floor) means `price_ticker` is the company's best-known symbol |
+| `is_unlisted_class`, `conversion_ratio` | An unlisted class priced through a listed one, and at what ratio |
+| `shares`, `value_date`, `source_tag`, `rung` | The count, its period, the tag it came from, and the tag's preference rank (1 best) |
+| `known_at`, `tradable_from`, `superseded_tradable`, `vintage_seq` | The usual availability interval, inherited from `num_silver` per class |
+| `method`, `mapping_source`, `adsh`, `company_name` | Provenance |
 
 ---
 
@@ -198,7 +231,7 @@ LIMIT 20;
 
 ### `canonical_concepts`
 
-The research taxonomy: **15 concepts** that mean the same thing across companies regardless of which XBRL tag each company files. Three of them (`cost_of_revenue`, `debt_current`, `debt_noncurrent`) exist mainly as operands for `concept_formula`. `fact_type` drives the `qtrs` branching in `latest_annual()` (`flow` → `qtrs = 4`, `balance` → `qtrs = 0`; `derived` concepts have no tags and are computed client-side).
+The research taxonomy: **15 concepts** that mean the same thing across companies regardless of which XBRL tag each company files. Three of them (`cost_of_revenue`, `debt_current`, `debt_noncurrent`) exist mainly as operands for `concept_formula`. `fact_type` drives the `qtrs` branching in `latest_annual()` (`flow` → `qtrs = 4`, `balance` → `qtrs = 0`). Derived concepts are computed in the database through `concept_formula`; see [How a derived concept is resolved](#how-a-derived-concept-is-resolved).
 
 | Concept | Display name | Fact type | UoM | Description |
 |---|---|---|---|---|
@@ -210,10 +243,13 @@ The research taxonomy: **15 concepts** that mean the same thing across companies
 | `cash` | Cash and Equivalents | balance | USD | Cash, equivalents and (for non-banks) short-term investments |
 | `total_assets` | Total Assets | balance | USD | Balance sheet total assets |
 | `total_equity` | Total Equity | balance | USD | Stockholders equity (incl. noncontrolling interest when available) |
-| `total_debt` | Total Debt | balance | USD | Best-effort total interest-bearing debt from the dominant XBRL tag |
+| `total_debt` | Total Debt | balance | USD | Total interest-bearing debt: a combined tag, else the sum of the two components |
 | `operating_cash_flow` | Cash from Operations | flow | USD | Net cash provided by operating activities |
 | `capex` | Capital Expenditures | flow | USD | Payments to acquire property, plant and equipment |
-| `free_cash_flow` | Free Cash Flow | derived | USD | Operating cash flow minus capex (computed client-side) |
+| `free_cash_flow` | Free Cash Flow | derived | USD | Operating cash flow minus capex |
+| `cost_of_revenue` | Cost of Revenue | flow | USD | Operand for `gross_profit` |
+| `debt_noncurrent` | Long-Term Debt | balance | USD | Operand for `total_debt` |
+| `debt_current` | Current Debt | balance | USD | Operand for `total_debt` |
 
 ### `concept_tag_map`
 
@@ -229,35 +265,38 @@ The resolution rules that turn a concept into an actual XBRL tag, walked in orde
 | `revenue` | 2 | any | `Revenues` | Pre-ASC 606 fallback; some financials (BAC, C, PNC) |
 | `revenue` | 3 | any | `RevenuesNetOfInterestExpense` | Large-bank headline revenue (JPM, WFC) |
 | `revenue` | 4 | any | `RevenueFromContractWithCustomerIncludingAssessedTax` | ASC 606 variant incl. sales taxes |
+| `revenue` | 5 | any | `SalesRevenueNet` | Pre-2018 total sales; 470 tracked issuers used it for FY2015 |
+| `revenue` | 6 | any | `RealEstateRevenueNet` | REIT rental revenue total |
+| `revenue` | 7–8 | any | `SalesRevenueGoodsNet`, `SalesRevenueServicesNet` | Pre-2018 components; safe only while no issuer files both without a total (check 37 asserts it) |
 | `revenue` | 1 | 60 | `Revenues` | Some banks file plain Revenues |
 | `revenue` | 2 | 60 | `RevenuesNetOfInterestExpense` | Large-bank headline revenue |
 | `revenue` | 3 | 60 | `InterestAndDividendIncomeOperating` | Fallback: gross interest income |
+| `revenue` | 1–2 | 49 | `RegulatedAndUnregulatedOperatingRevenue`, `Revenues` | Regulated utilities (NextEra and 10 others) |
 | `gross_profit` | 1 | any | `GrossProfit` | Companies that file a gross-profit line |
 | `operating_income` | 1 | any | `OperatingIncomeLoss` | Near-universal for non-financials |
 | `net_income` | 1 | any | `NetIncomeLoss` | Incl. noncontrolling interest |
 | `net_income` | 2 | any | `NetIncomeLossAvailableToCommonStockholdersBasic` | "Available to common" filers |
-| `eps_diluted` | 1 | any | `EarningsPerShareDiluted` | Near-universal (1,456 companies at FY2024) |
+| `eps_diluted` | 1 | any | `EarningsPerShareDiluted` | Near-universal |
 | `cash` | 1 | any | `CashAndCashEquivalentsAtCarryingValue` | Standard non-bank cash line |
 | `cash` | 2 | any | `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` | ASC 230 total incl. restricted |
 | `cash` | 3 | any | `Cash` | Legacy tag, small population |
 | `cash` | 1 | 60 | `CashAndDueFromBanks` | Primary bank cash line |
 | `cash` | 2 | 60 | `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` | Bank fallback |
-| `total_assets` | 1 | any | `Assets` | Near-universal (1,569 companies) |
-| `total_equity` | 1 | any | `StockholdersEquity` | Most common equity tag (1,545 companies) |
+| `total_assets` | 1 | any | `Assets` | Near-universal |
+| `total_equity` | 1 | any | `StockholdersEquity` | Most common equity tag |
 | `total_equity` | 2 | any | `StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest` | Consolidated groups w/ minority interest |
-| `total_debt` | 1 | any | `DebtLongtermAndShorttermCombinedAmount` | Cleanest roll-up, only 30 filers |
+| `total_debt` | 1 | any | `DebtLongtermAndShorttermCombinedAmount` | Cleanest roll-up, few filers |
 | `total_debt` | 2 | any | `LongTermDebt` | Older single-tag usage |
-| `capex` | 1 | any | `PaymentsToAcquirePropertyPlantAndEquipment` | Most common capex tag (1,228 companies) |
-| `capex` | 2 | any | `PaymentsToAcquireProductiveAssets` | Industrials/utilities fallback (365) |
-| `cost_of_revenue` | 1–2 | any | `CostOfRevenue`, `CostOfGoodsAndServicesSold` | Operands for the `gross_profit` formula |
+| `capex` | 1 | any | `PaymentsToAcquirePropertyPlantAndEquipment` | Most common capex tag |
+| `capex` | 2 | any | `PaymentsToAcquireProductiveAssets` | Industrials/utilities fallback |
+| `cost_of_revenue` | 1–2 | any | `CostOfGoodsAndServicesSold`, `CostOfRevenue` | Operands for the `gross_profit` formula |
 | `debt_noncurrent` | 1–2 | any | `LongTermDebtNoncurrent`, `LongTermDebtAndCapitalLeaseObligations` | Operand for `total_debt` |
-| `debt_current` | 1–3 | any | `LongTermDebtCurrent`, …`Current`, `DebtCurrent` | Operand for `total_debt` |
+| `debt_current` | 1–3 | any | `LongTermDebtCurrent`, `…Current`, `DebtCurrent` | Operand for `total_debt` |
 | `operating_cash_flow` | 1 | any | `NetCashProvidedByUsedInOperatingActivities` | Near-universal |
-| `revenue` | 1–2 | 49 | `RegulatedAndUnregulatedOperatingRevenue`, `Revenues` | Regulated utilities (NextEra and 10 others) |
 
-Add coverage for a new tag with a plain `INSERT` — no function changes needed. The table above is representative, not exhaustive; `concept_tag_map` holds 34 rows.
+Add coverage for a new tag with a plain `INSERT` — no function changes needed. `concept_tag_map` holds 38 rows.
 
-**Known gaps** (tracked in `features.md`): a few hundred issuers (notably NVDA capex) use custom extension tags not mapped here. The `total_debt` understatement and the missing bank revenue are both **fixed** — USB and TFC now resolve revenue in `peer_stats` for FY2023–FY2025.
+**Known gaps** (tracked in `features.md`): a few hundred issuers (notably NVDA capex) use custom extension tags not mapped here.
 
 ### `metric_aliases`
 
@@ -286,7 +325,7 @@ sec_gold.get_canonical(
 ) RETURNS NUMERIC
 ```
 
-Resolves one concept to one value for an exact `(cik, value_date, qtrs)` by walking `concept_tag_map` (industry-specific rules first, then priority). Returns NULL if no mapped tag has a value there. Because it requires the exact period-end date, prefer `latest_annual()` unless you already know the company's fiscal calendar.
+Resolves one concept to one value for an exact `(cik, value_date, qtrs)` by walking `concept_tag_map` (industry-specific rules first, then priority), then `concept_formula` if no tag resolves. Returns NULL if neither does, or if a required operand is missing. Because it requires the exact period-end date, prefer `latest_annual()` unless you already know the company's fiscal calendar.
 
 ```sql
 SELECT sec_gold.get_canonical(320193, 'revenue', '2025-09-30');  -- AAPL FY2025
@@ -294,7 +333,7 @@ SELECT sec_gold.get_canonical(320193, 'revenue', '2025-09-30');  -- AAPL FY2025
 
 ### `get_canonical_by_ticker()`
 
-Same signature and behavior with a `p_ticker TEXT` first argument, resolved through `sec_silver.ticker_map`.
+Same signature and behavior with a `p_ticker TEXT` first argument, resolved through `sec_silver.ticker_map` (current-state, survivorship-biased; a delisted company's ticker does not resolve).
 
 ```sql
 SELECT sec_gold.get_canonical_by_ticker('AAPL', 'revenue', '2025-09-30');
@@ -315,7 +354,7 @@ The fiscal-year-aware lookup: returns the **most recent** observation for a conc
 - `flow` concepts → most recent `qtrs = 4` (annual total, i.e. the latest 10-K figure).
 - `balance` concepts → most recent `qtrs = 0` (point-in-time snapshot — note this is the latest **quarterly** balance sheet, which may be newer than the last 10-K).
 
-Returns the winning tag so you can audit which mapping rule fired.
+Derived concepts follow [the resolution rules above](#how-a-derived-concept-is-resolved); a derived row carries a NULL `tag`. Returns the winning tag otherwise so you can audit which mapping rule fired.
 
 ```sql
 -- JPM FY2025 net income — a 2026q1-filed 10-K figure
@@ -326,7 +365,7 @@ SELECT * FROM sec_gold.latest_annual(19617, 'net_income');
 
 ### `latest_annual_by_ticker()`
 
-Ticker wrapper for `latest_annual()`, same return shape.
+Ticker wrapper for `latest_annual()`, same return shape, resolved through `sec_silver.ticker_map`.
 
 ```sql
 SELECT * FROM sec_gold.latest_annual_by_ticker('NKE', 'revenue');  -- May FYE handled
@@ -342,18 +381,68 @@ sec_gold.company_snapshot(
                  value_date DATE, value NUMERIC, tag TEXT)
 ```
 
-One row per canonical concept (**15 rows**), each resolved via `latest_annual_by_ticker()`. Derived concepts are included and computed — `free_cash_flow` returns a value rather than being excluded. The one-call company overview. Flows land on the last fiscal-year end; balances land on the most recent quarterly balance-sheet date, so the two groups can carry different `value_date`s — that is expected.
+One row per canonical concept (**15 rows**), each resolved via `latest_annual_by_ticker()`. Derived concepts are included and computed. The one-call company overview. Flows land on the last fiscal-year end; balances land on the most recent quarterly balance-sheet date, so the two groups can carry different `value_date`s — that is expected.
 
 ```sql
 SELECT * FROM sec_gold.company_snapshot('AAPL');
 --  concept             | value_date | value    | tag
 --  revenue             | 2025-09-30 | $416.2B  | RevenueFromContractWithCustomer…
 --  net_income          | 2025-09-30 | $112.0B  | NetIncomeLoss
---  total_assets        | 2025-12-31 | $379.3B  | Assets           ← newer 10-Q date
---  eps_diluted         | 2025-09-30 | 7.46     | EarningsPerShareDiluted (per-share)
---  free_cash_flow      | 2025-09-30 | $98.77B  | (derived: operating_cash_flow − capex)
+--  total_assets        | 2026-03-31 | …        | Assets           ← newer 10-Q date
+--  total_debt          | 2026-03-31 | $82.7B   | (derived: debt_noncurrent + debt_current)
+--  free_cash_flow      | 2025-09-30 | $98.8B   | (derived: operating_cash_flow − capex)
 --  ... (15 rows)
 ```
+
+### `as_of_latest_annual()`
+
+```sql
+sec_gold.as_of_latest_annual(
+    p_cik             INTEGER,
+    p_concept         TEXT,
+    p_asof            DATE,             -- required: no default
+    p_buffer_sessions INTEGER DEFAULT 0
+) RETURNS TABLE (value_date DATE, tradable_from DATE, value NUMERIC, tag TEXT)
+```
+
+`latest_annual()` against `fact_asof` with the availability predicate: the most recent annual (or balance-sheet) observation that was actionable on `p_asof`, resolved through the same direct-then-formula rules with every operand filtered by the same knowledge date. `p_buffer_sessions` moves the knowledge date back N trading sessions.
+
+### `as_of_snapshot()`
+
+```sql
+sec_gold.as_of_snapshot(p_cik    INTEGER, p_asof DATE, p_buffer_sessions INTEGER DEFAULT 0)
+sec_gold.as_of_snapshot(p_ticker TEXT,    p_asof DATE, p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (concept TEXT, display_name TEXT, fact_type TEXT,
+                 value_date DATE, tradable_from DATE, value NUMERIC, tag TEXT)
+```
+
+Every canonical concept as it was knowable on `p_asof`. The ticker form resolves the CIK **as of the same date** through `sec_reference.cik_at_strict()` and **raises** if the crosswalk (2019 onward) cannot resolve it; the CIK form works at any date. The knowledge date has no default.
+
+```sql
+SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2022-06-30');
+SELECT * FROM sec_gold.as_of_snapshot(320193, DATE '2015-06-30');   -- before the crosswalk floor
+```
+
+### `shares_outstanding_at()`
+
+```sql
+sec_gold.shares_outstanding_at(p_cik INTEGER, p_asof DATE, p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (shares NUMERIC, value_date DATE, tradable_from DATE, source_tag TEXT, method TEXT)
+```
+
+One collapsed share count knowable on the date, by a tag ladder (`EntityCommonStockSharesOutstanding`, `CommonStockSharesOutstanding`, `CommonStockSharesIssued`, then weighted averages) with mapped share-class summation. An instant count within 400 days of the newest available period beats a period average at the newest period; when only an average is that recent, `source_tag` says so (130 of 1,573 tracked companies today). **Not sufficient for market cap on a multi-class issuer**; use `share_classes_at()`.
+
+### `share_classes_at()`
+
+```sql
+sec_gold.share_classes_at(p_cik INTEGER, p_asof DATE, p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (class_label TEXT, price_ticker TEXT, is_unlisted_class BOOLEAN,
+                 conversion_ratio NUMERIC, shares NUMERIC, value_date DATE,
+                 tradable_from DATE, source_tag TEXT, method TEXT,
+                 price_ticker_is_asof BOOLEAN)
+```
+
+One row per share class as knowable on the date: the newest period, then the better tag, then the newest vintage. Market cap is `SUM(shares * price_of(price_ticker))`; a class missing here means no mapping exists and market cap is incomplete.
 
 ### `get_pit_financials()`
 
@@ -373,106 +462,60 @@ RETURNS TABLE (value_date DATE, filed_date DATE, metric TEXT, value_billions NUM
 
 **Legacy.** Ticker wrapper for `get_pit_financials()`. Raises an exception if the ticker is not in `sec_silver.ticker_map`.
 
-```sql
-SELECT * FROM sec_gold.get_financials_by_ticker('AAPL');
-```
-
 ---
 
 ## Caveats and data quirks
 
 - **Stray `value_date`s.** The matviews span 1980-07-31 → 2032-03-31. Old dates are prior-period comparatives re-filed in modern filings; future dates are filer typos that SEC publishes as-is. Bound `value_date` in analyses that aggregate by date.
-- **Universe is current-constituents-only.** `universe_sp1500` is today's S&P 1500 membership scraped from Wikipedia — historical analyses over the matviews carry **survivorship bias** (companies delisted or dropped from the index before today are absent).
+- **Universe is current-constituents-only.** `universe_sp1500` is today's S&P 1500 membership scraped from Wikipedia — historical analyses over the two `tradable_financials` matviews and `peer_stats` carry **survivorship bias** (companies delisted or dropped from the index before today are absent). `fact_asof`, `share_class_shares` and everything in `sec_reference` cover the full spine.
 - **Per-share vs. dollar units.** `eps_diluted` is `USD/share`; don't scale it by 1e9 alongside the dollar concepts. Check `uom` when working with raw tags.
 - **`total_debt` is a roll-up.** Only two tags resolve it directly; otherwise `concept_formula` sums `debt_noncurrent + debt_current`. `LongTermDebtNoncurrent` was once priority 3 here and silently understated the figure by excluding the current portion; it now sits on `debt_noncurrent` where it belongs.
 - **Z-scores are raw-value scores.** `peer_stats` scores raw dollar values, so it mixes company size with performance; a z of +4 on revenue mostly means "much bigger than peers," not "growing faster." `peer_percentile` is robust to that skew. Both degrade in thin groups, which is why `peer_level = 'sector'` is the sounder default.
-- **Concept coverage is not complete**, though it is much better than it was: **29 of 1,508** companies resolve to no revenue for FY2024. The regulated-utility cluster that used to dominate this gap is fixed — `RegulatedAndUnregulatedOperatingRevenue` is mapped at `sic_prefix='49'` and NextEra resolves.
-- **Ticker collisions.** `ticker_map` keeps the first CIK seen per ticker; a handful of ambiguous tickers may resolve to an unexpected issuer.
+- **Multi-class issuers.** In the tracked universe, **177 of 1,569** companies hold more than one current ticker and **135** file more than one `ClassOfStock` member on share-count tags since 2024. Only 9 are mapped by hand so far; the rest have no rows in `share_class_shares`, by design (an unmapped class yields nothing rather than a wrong sum). Companies with a listed preferred line are likewise excluded from the single-class inference until mapped.
+- **Ticker collisions.** `ticker_map` keeps the first CIK seen per ticker; a handful of ambiguous tickers may resolve to an unexpected issuer. The `as_of_*` family avoids this by resolving through the dated crosswalk.
 
 ## Rebuilding and refreshing
 
 ```bash
-uv run dera build-gold                 # full DDL rebuild (drops + recreates sec_gold)
+uv run dera build-gold                 # full DDL rebuild (drops + recreates sec_gold), ~16 min
 uv run dera build-gold --refresh-only  # REFRESH all five matviews, in order
+uv run dera rebuild-reference          # after a crosswalk change: spine, security model, then gold
 ```
 
 Notes:
 
-- `build-silver` **drops gold's matviews** via `DROP SCHEMA sec_silver CASCADE`, so a full gold rebuild (not `--refresh-only`) is required after every silver rebuild.
-- `build-silver` now runs `ANALYZE` on `sec_silver.num_silver` and `sub_silver` at the end of the build. Previously this was documented as a manual step and lived in no code path; skipping it made the gold matview joins plan against a statistics-less 181M-row table (observed: 9 hours instead of ~1 minute).
-- `--refresh-only` refreshes all five matviews in dependency order, `peer_stats` last. `fact_asof` was previously missing from that list, which left the availability-correct table stale behind every `as_of_*` function.
+- `build-silver` **drops gold's matviews** via `DROP SCHEMA sec_silver CASCADE`, and so does a spine rebuild (they depend on `sec_reference.company`), so a full gold rebuild (not `--refresh-only`) is required after either.
+- `build-silver` runs `ANALYZE` on `sec_silver.num_silver` and `sub_silver` at the end of the build. Skipping it made the gold matview joins plan against a statistics-less 181M-row table (observed: 9 hours instead of ~1 minute).
+- `--refresh-only` refreshes all five matviews in dependency order, `peer_stats` last.
+- The functions can be re-applied one file at a time with `run_sql_file`; each drops its previous signature first.
 
 ## Derived concepts
 
-`canonical_concepts.fact_type` has always permitted `'derived'` and `'ratio'`.
-Until now nothing computed either: `free_cash_flow` was declared with no tags
-and then explicitly excluded from every consumer, so the enum was pure
-forward-declaration.
-
-`sec_gold.concept_formula` makes it real. A derived concept is a linear
-combination of other concepts:
+`sec_gold.concept_formula` defines a derived concept as a linear combination of other concepts:
 
 | Concept | Formula | Why |
 |---|---|---|
-| `gross_profit` | `revenue - cost_of_revenue` | Recovers 253 issuers that file cost but no gross profit line |
-| `free_cash_flow` | `operating_cash_flow - capex` | Was declared and uncomputed for months |
+| `gross_profit` | `revenue - cost_of_revenue` | Recovers issuers that file cost but no gross profit line |
+| `free_cash_flow` | `operating_cash_flow - capex` | No filer tags free cash flow |
 | `total_debt` | `debt_noncurrent + debt_current` | Fires only when no combined debt tag resolves |
 
 Two rules make this safe.
 
-**One level deep.** Operands must resolve from tags, never from another
-formula. This is enforced by construction rather than convention: the formula
-branch calls `resolve_direct()`, which knows nothing about formulas, so
-recursion is impossible. The cost is writing `revenue - cost_of_revenue`
-instead of chaining; the benefit is no cycles and no ordering questions.
+**One level deep.** Operands must resolve from tags, never from another formula. This is enforced by construction rather than convention: the formula branch calls `resolve_direct()`, which knows nothing about formulas, so recursion is impossible.
 
-**`required` says what a missing operand means.** When true, the result is
-NULL without it, because gross profit from revenue alone is not gross profit.
-When false, the operand is treated as zero, because a company reporting no
-capex still has a free cash flow. At least one operand must resolve either
-way, so a company with no debt at all yields NULL rather than a confident zero.
-
-Direct tags always win. An issuer that files `GrossProfit` outright is never
-handed a reconstruction.
-
-### The total_debt fix
-
-`LongTermDebtNoncurrent` used to sit at priority 3 on `total_debt` itself. It
-resolves for most issuers and **excludes the current portion**, so `total_debt`
-was not merely sparse at 53% coverage, it was silently understated wherever it
-did resolve. A leverage ratio built on it was wrong, which is worse than
-missing. That tag now lives on `debt_noncurrent`, and `total_debt` falls
-through to the sum of the two components.
-
-Deliberately not mapped: `RepaymentsOfLongTermDebt` and
-`ProceedsFromIssuanceOfLongTermDebt`. Both rank high in any tag-frequency scan
-and both are cash-flow movements, not balances.
+**`required` says what a missing operand means.** When true, the result is NULL without it, because gross profit from revenue alone is not gross profit. When false, the operand is treated as zero, because a company reporting no capex still has a free cash flow. At least one operand must resolve either way, so a company with no debt at all yields NULL rather than a confident zero.
 
 ### Coverage ceilings are sometimes structural
 
-`gross_profit` reaches 996 of 1,569 companies, not 90%. Banks, REITs and
-insurers do not report a gross profit line at all, so the remainder is not a
-mapping failure and no amount of tag work will close it. Any screen using gross
-margin should say so rather than quietly dropping half the book.
+Banks, REITs and insurers do not report a gross profit line at all, so `gross_profit` cannot reach the whole universe and no amount of tag work will close it. Any screen using gross margin should say so rather than quietly dropping half the book.
 
 ## Multi-class issuers and market cap
 
-Market cap for a multi-class issuer is the sum over classes of shares times
-**that class's** price. It cannot be computed from a single collapsed share
-count: GOOGL and GOOG trade a percent or two apart, but BRK.A is roughly 1,500
-times BRK.B. `shares_outstanding_at()` returns one number and is explicitly not
-sufficient here. Use `share_class_shares` / `share_classes_at()`.
-
-In the tracked universe, 177 of 1,500 companies hold more than one listed
-ticker and 131 file two or more genuine common share classes.
+Market cap for a multi-class issuer is the sum over classes of shares times **that class's** price. It cannot be computed from a single collapsed share count: GOOGL and GOOG trade a percent or two apart, but BRK.A is roughly 1,500 times BRK.B. `shares_outstanding_at()` returns one number and is explicitly not sufficient here. Use `share_class_shares` / `share_classes_at()`.
 
 ### Why the class filter is an allowlist, not a pattern match
 
-The obvious approach is to match the `ClassOfStock` axis and sum what matches.
-That was tried and it is wrong. Against issuers publishing both a consolidated
-total and clean per-class rows, summing the classes disagreed with the total in
-**312 of 1,033 cases**, because the axis is free text whose members routinely
-overlap one another:
+The obvious approach is to match the `ClassOfStock` axis and sum what matches. That was tried and it is wrong. Against issuers publishing both a consolidated total and clean per-class rows, summing the classes disagreed with the total in **312 of 1,033 cases**, because the axis is free text whose members routinely overlap one another:
 
 | Issuer | Members filed | Effect of summing |
 |---|---|---|
@@ -480,29 +523,17 @@ overlap one another:
 | Kodiak | ClassA **and** ClassANotSubjectToRedemption | subset counted twice |
 | Xanadu | ten members including a literal `TotalCommonShares` | nonsense |
 
-No regex separates those from genuine classes. So a class contributes only if
-explicitly mapped in `sec_reference.share_class`. An unmapped member yields
-nothing, which makes those failures structurally impossible rather than
-filtered against. A new multi-class issuer therefore needs a mapping row before
-it gets a market cap, and never gets a wrong one in the meantime.
+No regex separates those from genuine classes. So a class contributes only if explicitly mapped in `sec_reference.share_class`. An unmapped member yields nothing, which makes those failures structurally impossible rather than filtered against.
 
 ### Three states a class can be in
 
-- **Listed.** `ticker` set; price it directly.
-- **Unlisted but real equity.** `ticker` NULL, `prices_with_ticker` set.
-  Alphabet Class B is 849M shares with no ticker; dropping it understates
-  market cap by roughly 7%, pricing it at zero is worse. It is priced at the
-  class it converts into, with the ratio cited rather than assumed.
-- **Excluded.** Not common equity, or a duplicate expression of another row.
-  Berkshire publishes the whole company twice, in A-equivalent and B-equivalent
-  units at exactly 1,500 to 1; counting both double counts the company.
+- **Listed.** `ticker` set; price it directly. Only listed classes become `sec_reference.security` rows and universe members.
+- **Unlisted but real equity.** `ticker` NULL, `prices_with_ticker` set. Alphabet Class B is 849M shares with no ticker; dropping it understates market cap by roughly 7%, pricing it at zero is worse. It is priced at the class it converts into, with the ratio cited rather than assumed.
+- **Excluded.** Not common equity, or a duplicate expression of another row. Berkshire publishes the whole company twice, in A-equivalent and B-equivalent units at exactly 1,500 to 1; counting both double counts the company.
 
 ### Provenance
 
-Every mapping row carries `source` and `source_note`. Filing-sourced and
-vendor-sourced rows can coexist and be audited separately, and a row can be
-re-derived without touching the rest. Single-ticker issuers are inferred
-deterministically and need no mapping at all.
+Every mapping row carries `source` and `source_note`. Filing-sourced and vendor-sourced rows can coexist and be audited separately, and a row can be re-derived without touching the rest. Single-class issuers are inferred deterministically and need no mapping at all.
 
 ## Source files
 
@@ -520,7 +551,7 @@ deterministically and need no mapping at all.
 | `055_shares_outstanding.sql` | `shares_outstanding_at()` |
 | `056_share_class_shares.sql` | `share_class_shares`, `share_classes_at()` |
 | `060_canonical_function.sql` | `resolve_direct()`, `get_canonical()`, `get_canonical_by_ticker()` |
-| `065_asof_functions.sql` | the six `as_of_*` functions |
+| `065_asof_functions.sql` | the `as_of_*` functions, including both `as_of_snapshot` overloads |
 | `070_fiscal_year_views.sql` | `latest_annual()`, `latest_annual_by_ticker()`, `company_snapshot()` |
 | `080_peer_stats.sql` | `peer_stats` (resolves derived concepts too) |
 

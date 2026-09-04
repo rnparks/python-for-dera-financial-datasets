@@ -3,7 +3,7 @@
 A living document that tracks what exists, what's partial, and what's planned. The goal: any future session can pick an item and execute it without re-deriving context.
 
 **Last updated**: 2026-09-04
-**Branch**: `db_update`
+**Branch**: `main` (work lands via short-lived branches such as `review-fixes`)
 **Maintainer**: Ryan Parks
 
 ---
@@ -12,54 +12,43 @@ A living document that tracks what exists, what's partial, and what's planned. T
 
 Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 `sec_reference`) over SEC DERA Financial Statement Data Sets,
-2009q1 → 2026q2, 185M num rows, 141 GB.
+2009q1 → 2026q2, 185M num rows, 139 GB.
 
 **All figures in this file are as of 2026-09-04.**
 
 **Usable today**:
-- Bronze/silver/gold end-to-end. `run-all` no longer destroys a populated bronze; that needs `--reinit-bronze`.
+- Bronze/silver/gold end-to-end. `run-all` no longer destroys a populated bronze; that needs `--reinit-bronze`. `dera load` refuses a quarter that is already in `sec_raw.load_log`, and `--full` requires `--truncate`, because bronze has no quarter column and a second COPY simply doubled the rows.
 - **Bitemporal point-in-time correctness.** `sec_gold.fact_asof` keeps every vintage of every fact with `known_at`, `tradable_from` and `superseded_tradable`. An as-of slice is an indexed interval scan returning exactly one row per fact. Verified on GE fiscal 2022 revenue, which has **four** vintages, not two: $76.555B as first filed 2023-02-10, restated to $58.100B by an 8-K on 2023-04-25, reaffirmed 2024-02-02, then $29.139B on 2025-02-03.
-- **Availability, not filing date.** `tradable_from` is derived from the EDGAR acceptance timestamp against a real NYSE calendar. 48% of filings are accepted after the close yet stamped that same `filed_date`; all 247,216 now roll to a later session.
-- **As-of accessors** where the knowledge date has no default, so omitting it is an error rather than a silent leak: `as_of_facts`, `as_of_canonical`, `as_of_latest_annual`, `as_of_snapshot`. `p_buffer_sessions` applies a safety margin in trading sessions.
-- **Survivorship-free company spine.** `sec_reference.company` holds every CIK that ever filed; `company_ticker` gives dated ticker intervals with `is_primary`. Recovered 2013 10-K filer coverage from 36% to 80%.
-- **Derived concepts.** `concept_formula` computes `gross_profit`, `free_cash_flow` and `total_debt` from other concepts. `total_debt` no longer understates.
-- **Peer stats at two GICS levels** in one table tagged by `peer_level`; sector scores all 1,569 companies where sub-industry reaches 1,445 — 124 fewer.
-- 28-check verification suite in `tools/verify_pit.sql`, run by `dera verify`.
-- **Doc-staleness checker.** `dera verify-docs` validates every database object
-  name, file path, CLI command and cross-link mentioned in the Markdown against
-  the live repo and database.
-- **Security lifecycle model, full scale — 17,031 securities.**
-  `sec_reference.{security,listing,eligibility,delisting_event,corporate_action,company_name}`
-  separate a company from the securities it issues, built from 910,661 EDGAR
-  filing events across 17,015 CIKs. `universe_at(name, asof)` reconstructs a
-  historical universe with no default knowledge date.
-  `universe_at('filers_10k_15m','2015-06-30')` returns **7,418 members, 1,925 of
-  them (26%) since delisted** — a current-constituents universe returns none.
-  4,553 delisting events. 28/28 checks pass.
+- **Availability, not filing date.** `tradable_from` is derived from the EDGAR acceptance timestamp against a real NYSE calendar. 57% of filings (247,216 of 433,717) are accepted after the close; 48% of all filings (209,441) still carry that day's `filed_date`. 433 filings are actionable *before* their `filed_date` (accepted after 5:30 pm on the eve of a federal holiday NYSE trades through). `docs/data_sources.md` has the full breakdown.
+- **As-of accessors** where the knowledge date has no default, so omitting it is an error rather than a silent leak: `as_of_facts`, `as_of_canonical`, `as_of_latest_annual`, `as_of_snapshot` (by CIK or by ticker). `p_buffer_sessions` applies a safety margin in trading sessions. The silent-empty paths are gone: `financials('asof')` without a date, `shift_sessions` before the calendar, and a ticker the crosswalk cannot resolve on the date all **raise**.
+- **Derived concepts resolve everywhere.** `concept_formula` computes `gross_profit`, `free_cash_flow` and `total_debt`; both `latest_annual` and `as_of_latest_annual` fall back to it and the newest period wins over a stale direct tag. `total_debt` resolves for 1,092 of 1,092 tracked companies that `peer_stats` scores (was 256); Apple's snapshot reads $82.7B at 2026-03-31, not $40.1B at 2015-03-31.
+- **Revenue before ASC 606.** `SalesRevenueNet` and its siblings are mapped; FY2015 revenue covers 1,283 of 1,361 tracked issuers (was 628), FY2010 1,105 (was 552).
+- **Survivorship-free company spine.** `sec_reference.company` holds every CIK that ever filed; `company_ticker` gives dated ticker intervals with `is_primary`, built from **81 monthly archive captures** (2018-12 to 2026-09) of SEC's ticker file. 12,321 of 20,326 CIKs with an interval are absent from SEC's live file. A capture is evidence of presence, never proof of absence on its own: 18 undersized captures are flagged in `sec_reference.ticker_capture` and short silences are bridged.
+- **Security lifecycle model — 17,025 listed securities.** `sec_reference.{security,listing,eligibility,delisting_event,corporate_action,company_name}` separate a company from the securities it issues, built from 905,049 EDGAR filing events across 17,015 CIKs. Form types are matched whole (a prefix match once read Regulation A circulars as Form 25). 7,119 outcomes: 4,498 exchange notices, 2,621 deregistrations (companies that went dark without a Form 25 and had no outcome row before). `universe_at('filers_10k_15m','2015-06-30')` returns **7,293 members, 3,012 of them (41%) since delisted or deregistered** — a current-constituents universe returns none.
+- **Multi-class market cap denominator, delisted included.** `sec_gold.share_class_shares` holds per-class counts for 8,228 companies (618K rows); a single-class issuer is one that never held two tickers at once, so a company that failed keeps its history. Twitter, Bed Bath & Beyond and Adams Resources are in; SVB Financial is not, because it also listed preferred lines and needs a mapping. `share_classes_at(cik, asof)` returns one row per class with `price_ticker_is_asof`.
+- **Peer stats at two GICS levels** in one table tagged by `peer_level`; sector scores all 1,573 tracked companies where sub-industry reaches 1,449.
+- **42-check verification suite** in `tools/verify_pit.sql`, run by `dera verify` (~90 s); checks 29–42 each name the 2026-09-04 review defect they guard. Plus 82 unit tests (`uv run pytest`, no database) and GitHub Actions running `ruff` and `pytest` on every push.
+- **Doc-staleness checker.** `dera verify-docs` validates every database object name — in prose and inside SQL examples — file path, CLI command and cross-link in the Markdown against the live repo and database.
+- **`dera rebuild-reference`** runs spine → security model → gold after a crosswalk refresh, the only order that works because a spine rebuild drops every gold matview. `build-silver` without the filing index now preserves the security model instead of emptying it.
 
 **Missing for serious research**:
-- **Prices.** Still the biggest gap and nothing else is testable without it. The share-count denominator already exists (`shares_outstanding_at`, availability-correct) — prices are the only missing input.
-- **Gold is not yet wired to the new universe.** `universe_sp1500` is still
-  today's membership with no dates, and the gold matviews still join to it.
-  `sec_reference.universe_at()` exists and is correct; nothing consumes it.
-- **2,793 of 23,485 listing intervals were dropped as non-overlapping (11.9%)**
-  and the cause is not yet characterised. Only 50 have the "ticker ended before
-  first trade" shape. (An earlier note said 3,527 of 26,277 and 51; those figures
-  did not reconcile with `sec_reference.listing` at 20,711 rows, and the corrected
-  ones do: 23,485 − 2,793 = 20,692, plus 19 `share_class_map` rows.)
-  A number that size could mean `first_trade_date` is
-  systematically late rather than that the crosswalk is noisy.
+- **Prices.** Still the biggest gap and nothing else is testable without it. The share-count denominator exists (`share_class_shares`, availability-correct, delisted issuers included) — prices are the only missing input.
+- **Gold is not yet wired to the new universe.** `universe_sp1500` is still today's membership with no dates, and the two `tradable_financials` matviews and `peer_stats` still join to it. `sec_reference.universe_at()` exists and is correct; nothing consumes it.
+- **Pre-2019 ticker labels.** 2,420 of the 7,293 members of the 2015 universe have no ticker label at all: they left before the crosswalk floor and SEC's file never carried them afterwards. `cik_at('AAPL', DATE '2015-06-30')` is NULL for the same reason and the ticker-keyed `as_of_snapshot` raises; use the CIK overload. A back-extension rule (a CIK whose whole crosswalk history is one ticker gets a listing from `first_trade_date`, labelled `company_ticker_extended`) would recover most labels and is the next crosswalk step.
+- **`already_reporting` is early for some issuers.** 52.5% of securities date their first trade from the first periodic report. That is late-but-true for companies public before EDGAR and early for debt-only registrants that listed equity later; filings cannot separate the two. 1,755 of them carry a 424B pricing after `first_trade_date`, 1,100 more than three years after. `security.first_pricing_date` carries the evidence for a stricter universe.
+- **Listed preferred lines block the single-class inference.** 1,013 delisted companies with share counts have a second listed line (typically a preferred or depositary share) and so need a `share_class` mapping before they enter the denominator; 1,148 more have no ticker history at all.
 - **Historical index membership.** Not started. Free coverage is bounded by
   whether Wikipedia's page carried a CIK column: S&P 500 from 2014, S&P 600
   from 2019, S&P 400 **never**. Revision depth is not the constraint.
 - **Delisting returns.** `delisting_event.delisting_return` is declared and
-  NULL for all **4,553** delisting events. It needs prices, and it is the reason
-  this is not yet a reliable backtester.
-- **Multi-class market cap.** Denominator now built: `sec_gold.share_class_shares` gives per-class counts for mapped issuers, and `share_classes_at(cik, asof)` returns one row per class. **Unverified**: an earlier note claimed 177 of 1,500 issuers hold multiple listed tickers and 131 file multiple common classes; neither could be re-derived from the live schema and the denominator is 1,505 rows / 1,569 CIKs, not 1,500. Re-measure and record the query before relying on these. Remaining: the class-to-ticker mapping covers only 9 companies by hand so far. A cover-page scraper can derive the rest exactly — every 10-K since 2019 carries `dei:TradingSymbol` dimensioned by `StatementClassOfStockAxis`, whose member string matches `num_silver.segments` character for character.
+  NULL for all **7,119** outcomes. It needs prices, and it is the reason
+  this is not yet a reliable backtester. The business cause of an outcome
+  (acquisition, bankruptcy) is not derived either; `reason` records only the
+  evidence class.
+- **Multi-class mapping coverage.** 177 of 1,569 tracked issuers hold more than one current ticker and 135 file more than one `ClassOfStock` member on share-count tags since 2024 (both re-measured; the earlier "177 of 1,500 / 131" was close). Nine are mapped by hand. A cover-page scraper can derive the rest exactly — every 10-K since 2019 carries `dei:TradingSymbol` dimensioned by `StatementClassOfStockAxis`, whose member string matches `num_silver.segments` character for character.
 - Scale-free metrics: margins, ROIC, FCF yield, growth. `concept_formula` is the mechanism; nothing uses it for ratios yet.
 - Factor library — requires prices.
-- Incremental silver rebuild. Full rebuild is ~39 min and is a single transaction, so a late failure discards everything.
-- No CI. `dera verify` and `dera verify-docs` exist and are run by hand; nothing runs them automatically on a commit.
+- Incremental silver rebuild. Full rebuild is ~39 min and is a single transaction, so a late failure discards everything. A bronze `quarter` column is the prerequisite (and would also allow a single quarter to be replaced).
 - Form 13F / Form 4, research SDK, parquet exports.
 - Long-tail XBRL tag coverage for company-extension namespaces.
 
@@ -67,8 +56,18 @@ Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 
 ## Shipped
 
-In reverse chronological order on `db_update`:
+In reverse chronological order. The 2026-09-04 review landed as the five commits listed first.
 
+- docs: reconcile every document with the 2026-09-04 review — every number re-measured and date-stamped; the 48%-vs-57% contradiction resolved (this commit)
+- `1c4ca96` — test: 42-check verify suite, 82 unit tests, CI
+- `65a70d2` — fix(pipeline): reload guard, computed default quarter, 404 handling, doc-checker blind spots, dead indexes
+- `4a91330` — fix(gold): derived-concept fallback in both lookup families, strict tickers, delisted issuers in the share denominator, pre-2018 revenue
+- `c856c88` — fix(security): anchored form classification, Form 15 outcomes, listed classes only, no lost listings
+- `ce49406` — fix(crosswalk): monthly captures, no fabricated live snapshot, capture-quality gap bridging
+
+- `705b2c0` — chore: add the pre-commit doc-staleness hook
+- `4510fbe` — docs: make the doc-currency rule explicit and enforceable
+- `b0526d3` — docs: eliminate documentation staleness and add a checker that prevents it
 - `2e0f84d` — docs: bring README and architecture current; add schema overview
 - `7f69d99` — feat(reference): scale the security model to 17,031 securities
 - `39fe460` — feat(reference): security lifecycle model; separate company from security
@@ -94,6 +93,12 @@ In reverse chronological order on `db_update`:
 - `cd9f7d3` — chore: switch from pip/requirements.txt to uv-managed pyproject.toml
 - `fd61e71` — feat(python): add psycopg3-based bronze loader
 - `f44d4e4` — feat(python): add dera_pipeline package skeleton
+
+### Resolved by the 2026-09-04 review, for the record
+
+- **The dropped listing intervals are explained.** Of 26,277 candidate intervals on the old crosswalk, 2,988 lay outside the security's life; 2,938 were tickers first observed *after* the delisting (2,209 of those delistings predate the 2019 floor, only 4 of the companies filed anything a year later) and 50 were "ticker gone before first trade". SEC's file carries dead entries for years — the June 2020 purge removed 7,879 at once — so this was never a late `first_trade_date`.
+- **The old "current" crosswalk snapshot was the December 2025 local file stamped with the run date** (an exact set match). It resurrected 1,334 retired tickers as current, Electronic Arts among them. The fallback is gone.
+- **Partial archive captures manufactured 2,459 false ticker gaps**; the spine now flags them and bridges short silences.
 
 ---
 
@@ -134,7 +139,7 @@ In reverse chronological order on `db_update`:
 
 **Proposed schema** (superseded — see warning above):
 ```sql
-CREATE TABLE sec_gold.prices (
+CREATE TABLE sec_gold.prices (   -- check-docs:ignore proposed, does not exist yet
     ticker       TEXT NOT NULL,
     trade_date   DATE NOT NULL,
     open         NUMERIC(12,4),
@@ -145,13 +150,13 @@ CREATE TABLE sec_gold.prices (
     volume       BIGINT,
     PRIMARY KEY (ticker, trade_date)
 );
-CREATE INDEX idx_prices_date ON sec_gold.prices (trade_date);
+CREATE INDEX idx_prices_date ON sec_gold.prices (trade_date);   -- check-docs:ignore proposed, does not exist yet
 
-CREATE MATERIALIZED VIEW sec_gold.market_cap_daily AS
+CREATE MATERIALIZED VIEW sec_gold.market_cap_daily AS   -- check-docs:ignore proposed, does not exist yet
 SELECT p.ticker, p.trade_date, p.close,
        s.shares_outstanding,
        p.close * s.shares_outstanding AS market_cap
-FROM sec_gold.prices p
+FROM sec_gold.prices p   -- check-docs:ignore proposed, does not exist yet
 JOIN LATERAL (
     -- Point-in-time shares outstanding: most recent value as of trade_date
     SELECT dei_so.value AS shares_outstanding
@@ -187,7 +192,7 @@ JOIN LATERAL (
 4. Recompute `rank_pit` / `rank_latest` only for partitions where the staging table introduced rows — a small subset of the full universe.
 
 **Acceptance criteria**:
-- `dera load --quarter 2026q1 && dera build-silver --incremental` completes in under 5 minutes.
+- `dera load --quarter 2026q3 && dera build-silver --incremental` completes in under 5 minutes. <!-- check-docs:ignore proposed flag -->
 - Row counts in silver after incremental build match what a full rebuild would produce (check on a sample of 100 partitions).
 - `rank_pit` values for historical quarters are unchanged (no look-ahead contamination from the new data).
 
@@ -203,7 +208,7 @@ JOIN LATERAL (
 
 **Proposed matview**:
 ```sql
-CREATE MATERIALIZED VIEW sec_gold.fundamentals_growth AS
+CREATE MATERIALIZED VIEW sec_gold.fundamentals_growth AS   -- check-docs:ignore proposed, does not exist yet
 WITH base AS (
     SELECT ticker, cik, concept, fiscal_year, value_date, value
     FROM sec_gold.peer_stats  -- renamed; filter peer_level
@@ -234,7 +239,7 @@ WHERE concept IN ('revenue','gross_profit','operating_income','net_income','oper
 
 **Proposed table**:
 ```sql
-CREATE MATERIALIZED VIEW sec_gold.factors_monthly AS
+CREATE MATERIALIZED VIEW sec_gold.factors_monthly AS   -- check-docs:ignore proposed, does not exist yet
 SELECT
     ticker, month_end,
     -- Size
@@ -376,7 +381,7 @@ print(aapl.history('revenue', years=10))
 **Problem**: Event-driven strategies need to know when earnings were *released*, not just when the 10-Q was received by SEC. And they want the analyst consensus + reported surprise.
 
 **Source**:
-- Filing dates: already in `sub_silver.accepted_time`.
+- Filing dates: already in `sub_silver.known_at` (the acceptance instant) and `tradable_from`.
 - Press release timestamps: company IR pages or scraping 8-K filings for the `99.1` earnings exhibit.
 - Analyst estimates: IBES/Zacks (licensed) or free aggregators like Zacks public API.
 

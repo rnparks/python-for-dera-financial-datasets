@@ -19,7 +19,7 @@ data. Five acquisition paths, in rough order of how much they matter:
 |---|---|---|---|---|
 | 1 | SEC DERA Financial Statement Data Sets | `data/raw/<year>q<n>/` | **29 GB** | `dera download` |
 | 2 | EDGAR bulk submissions archive | `data/edgar/submissions.zip` | **1.5 GB** | `dera fetch-filing-index` |
-| 3 | SEC company-ticker crosswalk + Internet Archive | `data/reference/ticker_history.csv` | 11 MB | `tools/fetch_ticker_history.py` |
+| 3 | SEC company-ticker crosswalk + Internet Archive | `data/reference/ticker_history.csv.gz` | 15 MB | `tools/fetch_ticker_history.py` |
 | 4 | Wikipedia S&P index pages | `data/reference/sp1500_universe.csv` | 102 KB | `tools/fetch_sp1500.py` |
 | 5 | NYSE trading calendar | `data/reference/trading_calendar.csv` | 256 KB | `tools/build_calendar.py` |
 
@@ -32,7 +32,9 @@ Plus a small set of hand-maintained files described under [Manual inputs](#manua
 **The fundamentals.** Every number in the silver and gold layers originates here.
 
 - **URL**: `https://www.sec.gov/files/dera/data/financial-statement-data-sets/<year>q<n>.zip`
-- **Coverage**: 2009q1 → 2026q2, **70 quarters**
+- **Coverage**: 2009q1 → 2026q2, **70 quarters**. The default end quarter is the
+  last fully elapsed calendar quarter, computed from today's date; a quarter SEC
+  has not published yet answers 404 and is reported once, not retried.
 - **Shape**: four tab-separated files per quarter — `sub` (submissions), `num`
   (numeric facts), `tag` (taxonomy), `pre` (presentation)
 - **Licence**: US government work, public domain
@@ -54,12 +56,28 @@ occasionally contain embedded tabs.
 
 - **URL**: `https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip`
 - **Size**: 1.5 GB, **989,015 members**
-- **Becomes**: `sec_reference.security_event_raw` → `security`, `listing`,
-  `delisting_event`
+- **Becomes**: `sec_reference.security_event_raw` (905,049 classified events
+  across 17,015 CIKs) → `security`, `listing`, `delisting_event`
 
 We read only the ~17,000 CIKs that appear in `sec_reference.company`; the rest of
 EDGAR is noise for this purpose. The zip's central directory makes named lookups
 cheap, so members are read individually rather than by walking the archive.
+
+**Form types are matched whole, not by prefix.** The classifier in
+`dera_pipeline/filings.py` once matched `form.startswith("25")`, which swallowed
+`253G1`–`253G4` — Regulation A offering circulars, a capital raise — as delisting
+notices; 771 events were misread and 54 securities were "delisted" on the day
+they raised money. The patterns are now anchored (`^25(-NSE)?(/A)?$` and so on)
+and `dera verify` check 29 asserts that every delisting outcome traces to a Form
+25 or Form 15.
+
+**Two outcome evidence classes.** A Form 25 is an exchange removal notice; a
+Form 15 (`15-12B`, `15-12G`, `15-15D` and the `15F-` foreign variants) ends the
+reporting obligation. Either counts as the end of the security only if the
+company then actually stopped reporting — the going-concern gates in
+`sql/06_security/010_security_populate.sql`. Admitting Form 15 gave 2,621
+companies that went dark without an exchange delisting an outcome row; before,
+they had none.
 
 **Watch out for pagination.** `filings.recent` caps at 1000 entries, and the
 overflow members under `filings.files` must be read too. Apple's `recent` reaches
@@ -77,18 +95,51 @@ is built from filing events and never from any file describing the present.
 **The CIK ↔ ticker map, de-survivorshipped as far as free data allows.**
 
 - **Live**: `https://www.sec.gov/files/company_tickers.json`
-- **History**: Wayback snapshots of that same URL, first capture **2019-02**
-- **Becomes**: `sec_reference.ticker_observation` → `company_ticker`
+- **History**: Wayback captures of that same URL, probed monthly; the archive's
+  first capture is **2018-12-26**
+- **File**: `data/reference/ticker_history.csv.gz`, 861,755 observations across
+  **81 captures** (80 archived + one live fetch dated 2026-09-04), one row per
+  (cik, ticker, capture). Gzipped because the plain file passed 60 MB.
+- **Becomes**: `sec_reference.ticker_observation` → `ticker_capture` →
+  `company_ticker`
 
 SEC deletes companies from this file when they delist and publishes no history,
 so today's file is missing 58.5% of 2013 filers and 36.1% of 2019 filers. Wayback
-replay recovers some of it — the 2019-02 snapshot alone returns 2,473 CIKs absent
-from the live file.
+replay recovers a great deal of it: **12,321 of the 20,326 CIKs** with a ticker
+interval are absent from the live file.
 
-**The floor is 2019-02 and it is load-bearing.** Companies that delisted between
-2009 and 2019 remain unrecoverable from free sources. This is why tickers before
+**The floor is 2019 and it is load-bearing.** Companies that delisted between
+2009 and 2018 remain unrecoverable from free sources. This is why tickers before
 2019 are labelling fallbacks flagged with `ticker_is_asof = false` rather than
 date-correct symbols. Closing the gap needs a vendor with delisted coverage.
+
+**A capture is evidence of presence, not proof of absence.** SEC's file is not a
+stable list and the archive's captures of it are not all complete. Three shapes
+were measured on the 81 captures:
+
+| When | What the file did | Verdict |
+|---|---|---|
+| June 2020 | fell from 13,633 rows to 8,223; 7,879 pairs never seen again | a genuine purge of stale entries — their absence is real |
+| May–September 2023 | sat near 9,000 rows for five months, then 10,886 | artefact: 1,148 pairs vanished on 2023-05-02 and came back in October |
+| October–November 2021 | ~900 pairs gone for two captures, back in January 2022 | same shape, shorter |
+
+Read as complete lists, these captures manufactured 2,459 false "ticker retired"
+gaps, and inside each gap `cik_at()` returned NULL. Two rules in
+`sql/05_spine/010_company_spine.sql` handle them: a capture holding fewer than
+85% of the largest capture within six either side is **partial** (18 of 81 are;
+`sec_reference.ticker_capture` records which), and a silence between two
+sightings of the same pair is **bridged** when the pair is seen again within 200
+days or every capture in the silence is partial. When a pair never reappears,
+`valid_to` is the first capture it was absent from, whatever that capture's
+quality — the June 2020 purge is the case that proves that is right.
+
+**The live file is fetched or it is not written.** An earlier version of the tool
+fell back to the local `tickers.csv` when the live fetch failed and stamped those
+rows with the run date as `sec_current`. The database then carried a nine-month-
+old file labelled as the present, resurrecting 1,334 retired tickers (Electronic
+Arts, since taken private, among them) as "still current". The fallback is gone;
+a failed live fetch is reported and the run carries no live snapshot. Check 31
+asserts the newest capture is a recent live fetch.
 
 ## 4. Wikipedia S&P index constituent pages
 
@@ -117,19 +168,38 @@ for months inside the changes table, so any diff must run against the
 
 ## 5. NYSE trading calendar
 
-- **Becomes**: `sec_reference.trading_calendar` (4,947 sessions)
+- **Becomes**: `sec_reference.trading_calendar` (4,947 sessions, 2009-01-02 to
+  2028-09-01)
 
 Used to turn an EDGAR acceptance timestamp into the first session on which a fact
-was actually actionable. 57% of filings (247,216 of 433,717) are accepted after
-the close and stamped that same `filed_date`; 210,683 of them roll to a later
-session.
+was actually actionable. Measured on 433,717 filings:
+
+| | Filings | Share |
+|---|---:|---:|
+| Accepted at or after 16:00 ET | 247,216 | 57.0% |
+| Accepted after that session's actual close, or on a non-session day | 247,376 | 57.0% |
+| …of which stamped with that same day's `filed_date` | 209,441 | 48.3% |
+| …of which stamped with the next business day (EDGAR's 5:30 pm rule) | 37,923 | 8.7% |
+| `tradable_from` later than `filed_date` | 210,683 | 48.6% |
+| `tradable_from` earlier than `filed_date` | 433 | 0.1% |
+
+The last row is not an error: those filings were accepted after 5:30 pm on the
+eve of Columbus Day or Veterans Day, when NYSE trades but EDGAR is closed, so
+`filed_date` rolled forward while the market did not. Both directions are why
+`tradable_from`, never `filed_date`, is the availability key.
+
+The loader refuses a calendar with less than a year left (`reference.py`), and
+check 38 asserts the loaded one reaches at least 180 days past the newest
+filing, because a filing accepted after the last session would get a NULL
+`tradable_from` and vanish from every as-of query without a message.
 
 ## Manual inputs
 
 | File | Rows | What it is |
 |---|---|---|
 | `share_class_map.csv` | 27 across 9 CIKs | Hand-mapped share class → ticker, each citing its filing |
-| `tickers.csv` | — | Legacy CIK ↔ ticker crosswalk, manually replaced |
+| `tickers.csv` | 10,221 | Legacy CIK ↔ ticker crosswalk (December 2025). Loads `sec_silver.ticker_map` only; no longer a fallback for anything |
+| `wayback_stamps.json` | — | The archive captures the last crosswalk run resolved to, keyed by the probe set that produced them |
 | `GAAP Taxonomy 2024.xlsx` | — | Reference taxonomy, not loaded by the pipeline |
 | `revenue_labels*.xlsx` | — | Scratch analysis of revenue tag labels |
 
@@ -154,14 +224,19 @@ The `sec_reference` tables carry per-row provenance by design:
 | Table | Provenance columns |
 |---|---|
 | `share_class` | `source` (`mapped_filing`/`mapped_exchange`/`mapped_vendor`), `source_note` |
-| `security` | `source`, `source_detail`, plus `first_trade_basis` recording the *evidence class* |
-| `delisting_event` | `source_form`, `source_adsh` |
+| `security` | `source`, `source_detail`, `first_trade_basis` (the evidence class) and `first_pricing_date` (the earliest 424B pricing, kept as evidence) |
+| `delisting_event` | `reason` (`exchange_notice` or `deregistration`: the evidence class), `source_form`, `source_adsh` |
 | `listing` | `source` (`share_class_map` / `company_ticker`) |
+| `ticker_capture` | `n_rows`, `window_max`, `is_partial` — why a capture's silences were or were not trusted |
 
 `first_trade_basis` deserves note: it distinguishes an 8-A listing registration
-from a 424B pricing from `already_reporting` (a conservative upper bound used when
-the company was public before EDGAR existed) from a bare `first_edgar_filing`.
+from a 424B pricing from `already_reporting` from a bare `first_edgar_filing`.
 Those are not equally strong claims and the column refuses to blend them.
+`already_reporting` (52.5% of securities) is late-but-true for a company public
+before EDGAR existed and **early** for one that reported before its equity
+traded; filings alone cannot tell those apart. Measured: 1,755 of them carry a
+424B pricing after their `first_trade_date`, 1,100 more than three years after.
+`first_pricing_date` exists so a stricter universe can prefer it.
 
 ### Where provenance is currently missing
 
@@ -186,7 +261,7 @@ the specific archived captures a run resolved to, so the run is reproducible.
 
 ```bash
 uv run dera download --from 2026q2 --to 2026q2   # new DERA quarter
-uv run dera load --quarter 2026q2                # into bronze
+uv run dera load --quarter 2026q2                # into bronze (refuses a quarter already loaded)
 uv run dera build-silver                         # ~39 min, single transaction
 uv run dera build-gold                           # ~16 min
 uv run dera verify                               # correctness suite
@@ -194,6 +269,10 @@ uv run dera verify                               # correctness suite
 uv run dera fetch-filing-index                   # EDGAR archive, ~1.5 GB
 uv run dera build-security-model                 # security lifecycle
 
-uv run python tools/fetch_ticker_history.py      # resumes; run repeatedly
+uv run python tools/fetch_ticker_history.py --batch 0   # all captures + live file
+uv run dera rebuild-reference                    # spine -> security model -> gold
 uv run python tools/fetch_sp1500.py              # S&P membership
 ```
+
+A crosswalk refresh always ends with `rebuild-reference`: rebuilding the spine
+drops the gold matviews, so the three stages have to run in that order.

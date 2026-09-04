@@ -71,9 +71,12 @@ WHERE tradable_from <= T
 
 `tradable_from` is derived from the EDGAR acceptance timestamp against a real
 NYSE calendar, so it answers *when could I have acted on this*, which is not the
-same question as *when was it filed*. 57% of filings (247,216 of 433,717) are accepted
-after the close and stamped that same `filed_date`; 210,683 of them roll to a
-later session.
+same question as *when was it filed*. 57% of filings (247,216 of 433,717, as of
+2026-09-04) are accepted after the close; 209,441 of them (48% of all filings)
+still carry that day's `filed_date`, the rest the next business day under
+EDGAR's 5:30 pm rule. 210,683 filings have a `tradable_from` later than their
+`filed_date`, and 433 have one earlier (accepted after 5:30 pm before a federal
+holiday on which NYSE trades). See `data_sources.md` for the full breakdown.
 
 The older dual ranking is still carried for compatibility:
 
@@ -105,19 +108,35 @@ The consolidated-only filter (`segments IS NULL AND coreg IS NULL`) lives inside
 
 `company_ticker` maps a CIK to a ticker and has no notion of an instrument that
 begins and ends. `sec_reference.security` is the tradable thing, carrying
-`first_trade_date` (with a `first_trade_basis` recording the evidence class) and
-`delisting_date`. Both are derived from EDGAR filing events — 8-A registrations
-and Form 25 notices — because filings are immutable and dated, while any
-current-state file has already deleted the companies that failed.
+`first_trade_date` (with a `first_trade_basis` recording the evidence class),
+`first_pricing_date` (the earliest 424B pricing, kept as evidence) and
+`delisting_date`. All are derived from EDGAR filing events — 8-A registrations,
+424B pricings, Form 25 notices and Form 15 deregistrations — because filings are
+immutable and dated, while any current-state file has already deleted the
+companies that failed.
 
-Neither date comes from the presence of a form alone. JPMorgan has filed 46 Form
-25s and has never been delisted; Apple's earliest 8-A in EDGAR is from 2014 and
-it listed in 1980. Both rules are behavioural and both are documented in
-`sql/06_security/010_security_populate.sql`.
+No date comes from the presence of a form alone. JPMorgan has filed 46 Form 25s
+and has never been delisted; Apple's earliest 8-A in EDGAR is from 2014 and it
+listed in 1980. Both rules are behavioural and both are documented in
+`sql/06_security/010_security_populate.sql`. Form types are matched whole: a
+prefix match once read Regulation A offering circulars (`253G2`) as Form 25.
+
+Only *listed* share classes become securities. An unlisted class such as
+Alphabet Class B is real equity and lives in the share-count denominator, but it
+is not a tradable instrument and is not a universe member.
 
 Two invariants are enforced by CHECK constraint rather than convention: no
 eligibility interval may begin before `first_trade_date`, or outlive
 `delisting_date`.
+
+The crosswalk beneath all of this is built from monthly archive captures of
+SEC's ticker file, and a capture is treated as evidence of presence, never as
+proof of absence on its own: undersized captures are flagged in
+`sec_reference.ticker_capture`, and a silence between two sightings of a pair is
+bridged when it is short or made only of such captures. `data_sources.md`
+records the measured cases. Because the spine is what every gold matview joins
+to, a crosswalk change is applied with `dera rebuild-reference`, which runs
+spine, security model and gold in the only order that works.
 
 ## Gold: two sibling matviews
 
@@ -148,10 +167,19 @@ The legacy `get_pit_financials` baked a hardcoded `CASE` expression into the fun
 
 `sec_silver.universe_sp1500` and `sec_silver.ticker_map` are loaded by `dera_pipeline.reference` from `data/reference/sp1500_universe.csv` and `data/reference/tickers.csv`. The legacy `\copy` statements required psql, which psycopg can't run; the Python path also handles the dedup and `.`→`-` normalization that the old SQL did server-side.
 
-Regenerate the S&P universe from Wikipedia:
+The dated crosswalk, `sec_reference.ticker_observation`, is loaded from
+`data/reference/ticker_history.csv.gz` (gzipped; the loader reads either form)
+before the silver build, alongside the trading calendar and the share-class map.
+The calendar loader refuses a file with less than a year of sessions left, since
+a filing accepted after the last session would silently get a NULL
+`tradable_from`.
+
+Regenerate the S&P universe from Wikipedia, and the crosswalk from the archive:
 
 ```bash
 uv run python tools/fetch_sp1500.py
+uv run python tools/fetch_ticker_history.py --batch 0
+uv run dera rebuild-reference
 ```
 
-Replace `data/reference/tickers.csv` manually when SEC publishes a new CIK crosswalk.
+Replace `data/reference/tickers.csv` manually when SEC publishes a new CIK crosswalk; it feeds only the legacy `ticker_map`.
