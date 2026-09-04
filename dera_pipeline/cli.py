@@ -3,7 +3,7 @@
 Run via ``uv run dera ...`` once the package is installed; the
 ``dera`` script is registered in ``pyproject.toml``.
 
-Nine subcommands. The medallion pipeline, in order::
+Eleven subcommands. The medallion pipeline, in order::
 
     uv run dera download
     uv run dera init-db
@@ -18,12 +18,24 @@ The security lifecycle model, an additive second path::
     uv run dera fetch-filing-index      # EDGAR bulk archive, ~1.5 GB
     uv run dera build-security-model
 
+and the iteration loop for everything downstream of the crosswalk::
+
+    uv run dera rebuild-reference       # spine -> security model -> gold
+
+which exists because rebuilding the company spine drops every gold
+matview (they depend on ``sec_reference.company``), so a crosswalk change
+always means those three stages in that order.
+
 ``build-silver`` also builds the security model when the archive is
-present, and skips that stage with a message when it is not.
+present. When it is not, the stage is skipped with a message AND the
+existing security tables are left untouched: the DDL that would drop
+them (``sql/00_reference/040_*`` and ``041_*``) is skipped too, so a
+silver rebuild without the archive cannot empty a model it will not
+refill.
 
 Verification::
 
-    uv run dera verify        # 28 data-correctness checks
+    uv run dera verify        # 42 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 
@@ -33,7 +45,6 @@ import argparse
 import asyncio
 import subprocess
 import sys
-from pathlib import Path
 
 from . import config, db, downloader, filings, loader, reference
 
@@ -86,6 +97,15 @@ def cmd_init_db(args: argparse.Namespace) -> int:
 
 
 def cmd_load(args: argparse.Namespace) -> int:
+    # Bronze has no quarter column, so a repeated COPY of a quarter is
+    # indistinguishable from the first and doubles its rows. --full
+    # therefore requires --truncate, and --quarter refuses a quarter
+    # already in load_log unless --force says the rows are gone.
+    if args.full and not args.truncate:
+        print("error: --full re-loads every quarter and must be combined "
+              "with --truncate, otherwise every quarter already in bronze "
+              "is duplicated.", file=sys.stderr)
+        return 2
     with db.get_conn() as conn:
         if args.truncate:
             print("Truncating bronze tables...")
@@ -95,7 +115,12 @@ def cmd_load(args: argparse.Namespace) -> int:
             if not qdir.exists():
                 print(f"error: {qdir} does not exist", file=sys.stderr)
                 return 1
-            loader.load_quarter(conn, qdir)
+            try:
+                loader.load_quarter(
+                    conn, qdir, force=getattr(args, "force", False))
+            except loader.QuarterAlreadyLoaded as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
         else:
             loader.load_all(
                 conn, config.DATA_DIR, incremental=not args.full
@@ -117,9 +142,19 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
         cal_dir = config.SQL_DIR / "00_reference"
         silver_dir = config.SQL_DIR / "02_silver"
         ref_dir = config.SQL_DIR / "04_reference"
+        have_archive = filings.BULK_PATH.exists()
 
         if cal_dir.exists():
-            db.run_sql_dir(conn, cal_dir)
+            # 040_security_model.sql and 041_security_derive.sql DROP the
+            # security tables and their staging. Running them without the
+            # archive to refill from left the model empty while the log
+            # said "Skipping security model", which reads as "preserved".
+            # Without the archive they are skipped, so the model that
+            # exists survives the silver rebuild (stale, but present, and
+            # `dera build-security-model` refreshes it in minutes).
+            db.run_sql_dir(
+                conn, cal_dir,
+                skip_prefixes=() if have_archive else ("040_", "041_"))
             print("Loading trading calendar...")
             reference.load_calendar_only(conn)
 
@@ -148,7 +183,7 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
         # silver build that is otherwise complete.
         sec_dir = config.SQL_DIR / "06_security"
         if sec_dir.exists():
-            if filings.BULK_PATH.exists():
+            if have_archive:
                 print("Loading EDGAR filing index...")
                 stats = filings.load_security_events(conn)
                 print(f"  {stats['events']:,} events, {stats['names']:,} names "
@@ -156,7 +191,10 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
                 db.run_sql_dir(conn, sec_dir)
             else:
                 print(f"Skipping security model: {filings.BULK_PATH} not found "
-                      "(run `dera fetch-filing-index`)")
+                      "(run `dera fetch-filing-index`). Existing security "
+                      "tables were preserved, not rebuilt; their eligibility "
+                      "intervals may lag the new silver until "
+                      "`dera build-security-model` runs.")
 
         # Gold's matview joins plan catastrophically against a
         # statistics-less 181M-row table (observed: 9 hours instead of
@@ -233,6 +271,17 @@ def cmd_fetch_filing_index(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_security_model(conn) -> None:
+    """DDL, event ingest and derivation for the security model, in order."""
+    db.run_sql_file(conn, config.SQL_DIR / "00_reference" / "040_security_model.sql")
+    db.run_sql_file(conn, config.SQL_DIR / "00_reference" / "041_security_derive.sql")
+    print("Loading EDGAR filing index...")
+    stats = filings.load_security_events(conn)
+    print(f"  {stats['events']:,} events, {stats['names']:,} names "
+          f"across {stats['ciks_requested']:,} CIKs")
+    db.run_sql_dir(conn, config.SQL_DIR / "06_security")
+
+
 def cmd_build_security_model(args: argparse.Namespace) -> int:
     """Rebuild the security lifecycle model without a full silver rebuild.
 
@@ -240,14 +289,38 @@ def cmd_build_security_model(args: argparse.Namespace) -> int:
     more often than the 185M-row silver layer does.
     """
     with db.get_conn() as conn:
-        db.run_sql_file(conn, config.SQL_DIR / "00_reference" / "040_security_model.sql")
-        db.run_sql_file(conn, config.SQL_DIR / "00_reference" / "041_security_derive.sql")
-        print("Loading EDGAR filing index...")
-        stats = filings.load_security_events(conn)
-        print(f"  {stats['events']:,} events, {stats['names']:,} names "
-              f"across {stats['ciks_requested']:,} CIKs")
-        db.run_sql_dir(conn, config.SQL_DIR / "06_security")
+        _build_security_model(conn)
     return 0
+
+
+def cmd_rebuild_reference(args: argparse.Namespace) -> int:
+    """Rebuild everything downstream of the ticker crosswalk.
+
+    Three stages, three transactions, in the only order that works:
+
+    1. the company spine (``sql/05_spine``), which reads
+       ``ticker_observation`` and DROPs ``sec_reference.company`` with
+       CASCADE -- taking every gold matview with it;
+    2. the security model, whose listings read the spine;
+    3. gold, which reads both.
+
+    A crosswalk change used to mean remembering that sequence and
+    running the middle of it by hand with ``psql -f``. Each stage commits
+    on its own so a failure in gold does not force the spine to rebuild
+    again.
+    """
+    with db.get_conn() as conn:
+        print("Stage 1/3: company spine (drops gold matviews)...")
+        db.run_sql_dir(conn, config.SQL_DIR / "05_spine")
+    with db.get_conn() as conn:
+        print("Stage 2/3: security model...")
+        if not filings.BULK_PATH.exists():
+            print(f"error: {filings.BULK_PATH} not found; run "
+                  "`dera fetch-filing-index` first.", file=sys.stderr)
+            return 1
+        _build_security_model(conn)
+    print("Stage 3/3: gold...")
+    return cmd_build_gold(argparse.Namespace(refresh_only=False))
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -255,7 +328,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     `tools/verify_pit.sql` had 15 passing checks at the time and was
     invoked from nothing: no test runner, no CI, no CLI path. It now
-    holds 28. A correctness suite
+    holds 42. A correctness suite
     nobody runs is documentation, not a guard. This gives it a command.
 
     It shells out to psql rather than going through psycopg because the
@@ -380,7 +453,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_load.add_argument(
         "--truncate", action="store_true",
-        help="TRUNCATE bronze tables before loading",
+        help="TRUNCATE bronze tables before loading (required with --full)",
+    )
+    p_load.add_argument(
+        "--force", action="store_true",
+        help="with --quarter: load even if the quarter is already in "
+             "sec_raw.load_log (duplicates rows unless you removed them)",
     )
     p_load.set_defaults(func=cmd_load)
 
@@ -412,6 +490,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="rebuild the security lifecycle model from the filing index")
     p_secm.set_defaults(func=cmd_build_security_model)
 
+    p_rref = sub.add_parser(
+        "rebuild-reference",
+        help="rebuild spine, security model and gold after a crosswalk change")
+    p_rref.set_defaults(func=cmd_rebuild_reference)
+
     p_verify = sub.add_parser(
         "verify", help="run the point-in-time verification suite")
     p_verify.set_defaults(func=cmd_verify)
@@ -432,6 +515,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_all.add_argument("--refresh-only", action="store_true", default=False)
     p_all.add_argument("--quarter", default=None)
+    p_all.add_argument("--force", action="store_true", default=False)
     p_all.set_defaults(func=cmd_run_all)
 
     return parser

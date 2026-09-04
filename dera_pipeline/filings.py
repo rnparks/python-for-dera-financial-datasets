@@ -28,11 +28,11 @@ their listing evidence.
 
 from __future__ import annotations
 
-import io
 import json
+import re
 import zipfile
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Iterable, Iterator
 
 import psycopg
 
@@ -41,39 +41,54 @@ from . import config
 BULK_URL = "https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip"
 BULK_PATH = config.PROJECT_ROOT / "data" / "edgar" / "submissions.zip"
 
-# Form-prefix to lifecycle event. Shared definition with
-# tools/fetch_security_events.py, which walks the per-CIK API for slice
-# work; kept here because this is the path that runs in the pipeline.
+# Form type to lifecycle event. The single definition: tools/
+# fetch_security_events.py imports it rather than carrying a copy.
+#
+# ANCHORED PATTERNS, NOT PREFIXES. The first version matched on
+# `form.startswith(prefix)`, and "25" therefore swallowed 253G1-253G4 --
+# Regulation A offering circulars, which are a capital raise, the
+# opposite of a delisting. 771 of them were classified as delisting
+# notices and 54 securities were given a delisting_date on the day they
+# raised money. "S-1" likewise took S-11 (REIT registrations) and "F-1"
+# took F-10 (Canadian shelf registrations). Each pattern below names the
+# exact forms it accepts; an amendment (/A) or MEF variant is listed
+# where it evidences the same event as its base form.
 #
 # Periodic reports are not lifecycle events themselves. They are the
 # evidence that decides whether a Form 25 ended the company or merely
 # retired one class of its securities, and whether an 8-A is a first
 # listing or a later note registration. Both discriminators are
-# behavioural and both need this stream.
+# behavioural and both need this stream. The 10-K and 10-Q patterns are
+# deliberately open-ended: 10-K405, 10-KSB, 10-KT and their amendments
+# are all periodic reports.
 EVENT_RULES: tuple[tuple[str, str], ...] = (
-    ("8-A",   "LISTING_REGISTRATION"),
-    ("25",    "DELISTING_NOTICE"),
-    ("15-",   "DEREGISTRATION"),
-    ("S-1",   "IPO_REGISTRATION"),
-    ("F-1",   "IPO_REGISTRATION"),
-    ("424B4", "IPO_PRICING"),
-    ("424B1", "IPO_PRICING"),
-    ("10-K",  "PERIODIC_REPORT"),
-    ("10-Q",  "PERIODIC_REPORT"),
-    ("20-F",  "PERIODIC_REPORT"),
-    ("40-F",  "PERIODIC_REPORT"),
+    (r"8-A12[BG](/A)?",          "LISTING_REGISTRATION"),
+    (r"25(-NSE)?(/A)?",          "DELISTING_NOTICE"),
+    (r"15F?-(12B|12G|15D)(/A)?", "DEREGISTRATION"),
+    (r"S-1(/A|MEF)?",            "IPO_REGISTRATION"),
+    (r"F-1(/A|MEF)?",            "IPO_REGISTRATION"),
+    (r"424B[14]",                "IPO_PRICING"),
+    (r"10-K.*",                  "PERIODIC_REPORT"),
+    (r"10-Q.*",                  "PERIODIC_REPORT"),
+    (r"20-F(/A)?",               "PERIODIC_REPORT"),
+    (r"40-F(/A)?",               "PERIODIC_REPORT"),
+)
+
+_COMPILED_RULES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(rf"^(?:{pattern})$"), event) for pattern, event in EVENT_RULES
 )
 
 
 def classify(form: str) -> str | None:
     """Map a form type to a lifecycle event, or None if it is not one.
 
-    Amendments are treated as their base form: an amended delisting
-    notice still evidences a delisting.
+    Whole-string match against EVENT_RULES, case-insensitive on the
+    form. Amendments are treated as their base form where listed: an
+    amended delisting notice still evidences a delisting.
     """
-    f = form.upper()
-    for prefix, event in EVENT_RULES:
-        if f.startswith(prefix):
+    f = form.strip().upper()
+    for pattern, event in _COMPILED_RULES:
+        if pattern.match(f):
             return event
     return None
 
@@ -153,11 +168,10 @@ def _copy_rows(conn: psycopg.Connection, table: str, columns: tuple[str, ...],
     """Stream tuples into *table* via COPY FROM STDIN. Returns row count."""
     col_list = ", ".join(columns)
     n = 0
-    with conn.cursor() as cur:
-        with cur.copy(f"COPY {table} ({col_list}) FROM STDIN") as cp:
-            for row in rows:
-                cp.write_row(row)
-                n += 1
+    with conn.cursor() as cur, cur.copy(f"COPY {table} ({col_list}) FROM STDIN") as cp:
+        for row in rows:
+            cp.write_row(row)
+            n += 1
     return n
 
 

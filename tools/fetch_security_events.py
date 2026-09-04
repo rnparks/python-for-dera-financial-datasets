@@ -64,6 +64,7 @@ import urllib.error
 import urllib.request
 
 from dera_pipeline import config
+from dera_pipeline.filings import EVENT_RULES, classify  # noqa: F401 - single definition
 
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
 OVERFLOW_URL = "https://data.sec.gov/submissions/{name}"
@@ -94,49 +95,20 @@ SLICE: dict[int, str] = {
     19617:   "survivor control, bank (JPMorgan)",
 }
 
-# Form-prefix to event mapping.
+# The form-to-event mapping lives in dera_pipeline.filings and is imported
+# above. This tool once carried its own copy, which is how the two would
+# have drifted apart when the prefix bug (253G* read as Form 25) was fixed
+# in one place and not the other.
 #
-# 8-A registers a class of securities on an exchange and is the closest
-# thing EDGAR has to a listing notification. Form 25 is the removal
-# notification -- 25-NSE is the exchange-filed variant, which is what
-# appears when an exchange delists an issuer rather than the issuer
-# withdrawing voluntarily. Form 15 is deregistration and comes LATER than
-# delisting; it means the reporting obligation ended, not that trading
-# stopped, so the two must not be conflated.
-EVENT_RULES: tuple[tuple[str, str], ...] = (
-    ("8-A",   "LISTING_REGISTRATION"),
-    ("25",    "DELISTING_NOTICE"),
-    ("15-",   "DEREGISTRATION"),
-    ("S-1",   "IPO_REGISTRATION"),
-    ("F-1",   "IPO_REGISTRATION"),
-    ("424B4", "IPO_PRICING"),
-    ("424B1", "IPO_PRICING"),
-    # Periodic reports are not lifecycle events themselves, but they are
-    # the evidence that decides whether a Form 25 ended the company or
-    # merely retired one class of its securities. JPMorgan has filed 46
-    # Form 25s and has never been delisted; Palantir filed one the same
-    # day it filed a new 8-A12B, moving NYSE -> Nasdaq. Without the
-    # continued-reporting signal, either would read as a delisting.
-    ("10-K",  "PERIODIC_REPORT"),
-    ("10-Q",  "PERIODIC_REPORT"),
-    ("20-F",  "PERIODIC_REPORT"),
-    ("40-F",  "PERIODIC_REPORT"),
-)
-
-
-def classify(form: str) -> str | None:
-    """Map a form type to a lifecycle event, or None if it isn't one.
-
-    Amendments (`25-NSE/A`, `8-A12B/A`) are treated as their base form:
-    an amended delisting notice still evidences a delisting. Order
-    matters -- '25' must not swallow '25-NSE' differently, and both are
-    DELISTING_NOTICE anyway.
-    """
-    f = form.upper()
-    for prefix, event in EVENT_RULES:
-        if f.startswith(prefix):
-            return event
-    return None
+# For orientation: 8-A registers a class of securities on an exchange and
+# is the closest thing EDGAR has to a listing notification. Form 25 is the
+# removal notification -- 25-NSE is the exchange-filed variant. Form 15 is
+# deregistration and comes LATER than delisting; it means the reporting
+# obligation ended, not that trading stopped, so the two must not be
+# conflated. Periodic reports are the evidence that decides whether a
+# Form 25 ended the company or merely retired one class: JPMorgan has
+# filed 46 Form 25s and has never been delisted; Palantir filed one the
+# same day it filed a new 8-A12B, moving NYSE -> Nasdaq.
 
 
 def _get_json(url: str):

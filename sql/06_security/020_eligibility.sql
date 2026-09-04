@@ -55,6 +55,12 @@ SELECT m.security_id, 'filers_10k_15m',
        GREATEST(m.lo, s.first_trade_date),
        LEAST(m.hi, COALESCE(s.delisting_date, m.hi)),
        'annual_report_actionable_within_15m',
+       -- reason_out is the reason the interval ENDS, and every interval
+       -- has an end: valid_to is always set because eligibility runs out
+       -- 15 months after the last annual report unless another one lands
+       -- first. For an interval whose valid_to is still in the future
+       -- this is therefore the reason it WILL end if nothing changes,
+       -- not a statement that it has ended.
        CASE WHEN s.delisting_date IS NOT NULL AND s.delisting_date < m.hi
             THEN 'delisted'
             ELSE 'no_annual_report_within_15m' END,
@@ -99,16 +105,19 @@ LANGUAGE sql STABLE AS $$
            (SELECT cn.name FROM sec_reference.company_name cn
              WHERE cn.cik = s.cik
                AND cn.valid_from <= p_asof
-               AND (cn.valid_to IS NULL OR cn.valid_to >= p_asof)
+               AND (cn.valid_to IS NULL OR cn.valid_to > p_asof)
              ORDER BY cn.valid_from DESC LIMIT 1),
            e.reason_in
     FROM sec_reference.eligibility e
     JOIN sec_reference.security s USING (security_id)
+    -- Half-open on both sides, matching eligibility: a listing's
+    -- valid_to is the first date the ticker was observed gone (or the
+    -- delisting date), so it must not resolve ON that date.
     LEFT JOIN LATERAL (
         SELECT l.ticker FROM sec_reference.listing l
         WHERE l.security_id = s.security_id
           AND l.valid_from <= p_asof
-          AND (l.valid_to IS NULL OR l.valid_to >= p_asof)
+          AND (l.valid_to IS NULL OR l.valid_to > p_asof)
         ORDER BY l.valid_from DESC LIMIT 1
     ) asof ON TRUE
     LEFT JOIN LATERAL (

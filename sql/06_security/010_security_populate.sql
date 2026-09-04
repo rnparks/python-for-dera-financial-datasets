@@ -17,10 +17,14 @@ WITH first_trade AS (
     -- already reporting, so the listing evidence describes a later
     -- class -- notes, preferred, a spinoff -- and not the common stock.
     --
-    -- In that case the honest answer is a conservative upper bound: the
-    -- company was tradable no later than its first EDGAR filing. Apple
-    -- resolves to 1994 rather than 2014, which is late but true, instead
-    -- of 2014, which is simply false.
+    -- In that case the answer is the first periodic report or first
+    -- filing, labelled 'already_reporting'. That is late-but-true for a
+    -- company public before EDGAR existed (Apple resolves to 1994 rather
+    -- than 2014, instead of 2014, which is simply false) and EARLY for a
+    -- company that reported before its equity traded. Filings cannot
+    -- separate the two; first_pricing_date carries the evidence that a
+    -- stricter reading would use. See the column comments in
+    -- 00_reference/040_security_model.sql.
     SELECT cik,
         CASE
             WHEN listing_evidence IS NOT NULL
@@ -35,7 +39,8 @@ WITH first_trade AS (
             THEN CASE WHEN listing_evidence = first_ipo THEN '424B' ELSE '8-A' END
             WHEN first_periodic IS NOT NULL THEN 'already_reporting'
             ELSE 'first_edgar_filing'
-        END AS basis
+        END AS basis,
+        first_ipo AS first_pricing_date
     FROM (
         SELECT b.*,
             -- Anchor the 8-A to the offering. A company can file an 8-A
@@ -66,11 +71,25 @@ WITH first_trade AS (
     ) b
 ),
 delist AS (
+    -- Two evidence classes, one rule. A Form 25 is an exchange removal
+    -- notice; a Form 15 ends the reporting obligation. Either is the end
+    -- of the security only if the company then actually stopped
+    -- reporting, which the three gates below test. Where both qualify
+    -- the Form 25 wins regardless of date, because it names the trading
+    -- end and the Form 15 only the reporting end.
+    --
+    -- Before Form 15 was admitted, 2,207 CIKs that went dark without an
+    -- exchange delisting had no outcome row at all: the universe dropped
+    -- them by the 15-month rule and nothing said why.
     SELECT DISTINCT ON (n.cik)
-        n.cik, n.event_date AS delisting_date, n.form, n.adsh
+        n.cik, n.event_date AS delisting_date, n.form, n.adsh,
+        CASE n.event_type
+            WHEN 'DELISTING_NOTICE' THEN 'exchange_notice'
+            ELSE 'deregistration'
+        END AS reason
     FROM sec_reference.security_event_raw n
-    WHERE n.event_type = 'DELISTING_NOTICE'
-      -- GATE: a company that is STILL FILING cannot have been delisted.
+    WHERE n.event_type IN ('DELISTING_NOTICE', 'DEREGISTRATION')
+      -- GATE 1: a company that is STILL FILING cannot have been delisted.
       --
       -- This is the fix for a failure the slice could not produce.
       -- Colgate-Palmolive files a Form 25 whenever it retires a note
@@ -91,32 +110,44 @@ delist AS (
           WHERE live.cik = n.cik
             AND live.event_type = 'PERIODIC_REPORT'
             AND live.event_date > CURRENT_DATE - INTERVAL '15 months')
+      -- GATE 2: no later listing registration (a move between exchanges
+      -- files a 25 and an 8-A on the same day).
       AND NOT EXISTS (
           SELECT 1 FROM sec_reference.security_event_raw l WHERE l.cik = n.cik
             AND l.event_type = 'LISTING_REGISTRATION'
             AND l.event_date >= n.event_date)
+      -- GATE 3: no periodic report more than 180 days after the notice.
       AND NOT EXISTS (
           SELECT 1 FROM sec_reference.security_event_raw p WHERE p.cik = n.cik
             AND p.event_type = 'PERIODIC_REPORT'
             AND p.event_date > n.event_date + 180)
-    ORDER BY n.cik, n.event_date
+    ORDER BY n.cik,
+             (n.event_type = 'DELISTING_NOTICE') DESC,
+             n.event_date
 ),
 classes AS (
-    -- One security per genuine share class where the issuer is mapped in
+    -- One security per LISTED share class where the issuer is mapped in
     -- the share_class allowlist, else a single '(common)' security. Same
     -- allowlist discipline as sec_gold.share_class_shares: an unmapped
     -- class yields nothing rather than a guess.
+    --
+    -- Listed only. An unlisted class (prices_with_ticker set: Alphabet
+    -- Class B, Under Armour's convertible) is real equity and belongs in
+    -- the share-count denominator, but it is not a tradable instrument
+    -- and must not be a universe member. Six of them were, each with no
+    -- ticker at all.
     SELECT ft.cik, COALESCE(sc.class_label, '(common)') AS class_label
     FROM first_trade ft
     LEFT JOIN (
         SELECT DISTINCT cik, class_label
-        FROM sec_reference.share_class WHERE NOT is_excluded
+        FROM sec_reference.share_class
+        WHERE NOT is_excluded AND ticker IS NOT NULL
     ) sc ON sc.cik = ft.cik
 )
 INSERT INTO sec_reference.security
-    (cik, class_label, first_trade_date, first_trade_basis,
+    (cik, class_label, first_trade_date, first_trade_basis, first_pricing_date,
      delisting_date, is_provisional, source, source_detail)
-SELECT c.cik, c.class_label, ft.first_trade_date, ft.basis,
+SELECT c.cik, c.class_label, ft.first_trade_date, ft.basis, ft.first_pricing_date,
        d.delisting_date,
        d.delisting_date IS NOT NULL
            AND d.delisting_date > CURRENT_DATE - 180,
@@ -130,8 +161,11 @@ ON CONFLICT (cik, class_label) DO NOTHING;
 
 INSERT INTO sec_reference.delisting_event
     (security_id, delisting_date, reason, is_provisional, source_form, source_adsh)
-SELECT s.security_id, s.delisting_date, 'exchange_notice', s.is_provisional,
-       split_part(replace(s.source_detail, 'delisting ', ''), ' ', 1),
+SELECT s.security_id, s.delisting_date,
+       CASE WHEN split_part(s.source_detail, ' ', 2) LIKE '25%'
+            THEN 'exchange_notice' ELSE 'deregistration' END,
+       s.is_provisional,
+       split_part(s.source_detail, ' ', 2),
        split_part(s.source_detail, ' ', 3)
 FROM sec_reference.security s
 WHERE s.delisting_date IS NOT NULL
@@ -149,12 +183,23 @@ ON CONFLICT DO NOTHING;
 -- would make a ticker resolvable at no date at all, or at every date,
 -- depending on how the range was read.
 --
--- A ticker interval lying entirely outside the security's life is a
--- genuine contradiction between two sources -- the crosswalk says the
--- symbol traded then, the filing evidence says the security did not
--- exist yet. Dropping it is right; the count is reported after the
--- build, because a large number would mean first_trade_date is
--- systematically too late rather than that the crosswalk is noisy.
+-- WHAT THE DROPPED INTERVALS ARE. Measured 2026-09-04 on the semi-annual
+-- crosswalk: 2,988 of 26,277 candidate intervals lay entirely outside
+-- the security's life. 2,938 of them were tickers first observed AFTER
+-- the security's delisting_date -- 2,209 of those delistings predate the
+-- crosswalk's 2019 floor, only 110 of the tickers remain in SEC's live
+-- file, and only 4 of the companies filed anything with DERA a year
+-- after delisting. That is SEC's ticker file carrying dead entries for
+-- years (the June 2020 purge removed 7,879 of them at once), not a late
+-- first_trade_date; only 50 had the "ticker ended before first trade"
+-- shape. Dropping them is right.
+--
+-- ONE INTERVAL PER (security, ticker, valid_from), NOT PER (security,
+-- ticker). An earlier version used DISTINCT ON (security_id, ticker) and
+-- so kept only the FIRST interval of a ticker the company held, lapsed
+-- and held again: 2,792 later intervals were silently lost, and the
+-- ticker resolved in one era only. The primary key already prevents a
+-- duplicate; nothing else needs de-duplicating.
 INSERT INTO sec_reference.listing (security_id, exchange, ticker, valid_from, valid_to, source)
 SELECT * FROM (
     SELECT s.security_id, NULL::text AS exchange, sc.ticker,
@@ -171,8 +216,7 @@ ON CONFLICT DO NOTHING;
 
 INSERT INTO sec_reference.listing (security_id, exchange, ticker, valid_from, valid_to, source)
 SELECT * FROM (
-    SELECT DISTINCT ON (s.security_id, ct.ticker)
-           s.security_id, NULL::text AS exchange, ct.ticker,
+    SELECT s.security_id, NULL::text AS exchange, ct.ticker,
            GREATEST(ct.valid_from, COALESCE(s.first_trade_date, ct.valid_from)) AS valid_from,
            LEAST(COALESCE(ct.valid_to, DATE '9999-12-31'),
                  COALESCE(s.delisting_date, DATE '9999-12-31'))                 AS valid_to,
@@ -180,7 +224,6 @@ SELECT * FROM (
     FROM sec_reference.security s
     JOIN sec_reference.company_ticker ct ON ct.cik = s.cik
     WHERE s.class_label = '(common)'
-    ORDER BY s.security_id, ct.ticker, ct.valid_from
 ) c
 WHERE c.valid_from <= c.valid_to
 ON CONFLICT DO NOTHING;
