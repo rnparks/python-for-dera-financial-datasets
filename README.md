@@ -126,6 +126,31 @@ uv run python tools/fetch_ticker_history.py   # CIK↔ticker via Wayback; resume
 uv run python tools/build_calendar.py         # NYSE trading calendar
 ```
 
+## Keeping the documentation current
+
+The docs in this repository are treated as part of the code, because they have
+gone badly stale before — far enough that `README.md` once described a pipeline
+that stopped three layers short of what existed.
+
+Two habits keep that from recurring:
+
+1. **Update docs in the same commit as the change.** `CLAUDE.md` carries a table
+   mapping what you changed to what needs updating.
+2. **Run the checker.** `uv run dera verify-docs` validates every database object
+   name, file path, CLI command and cross-document link in the Markdown against
+   the live repository and database. It exits non-zero on failure.
+
+The checker deliberately does not validate prose or figures — a check that is
+wrong often enough to ignore is worse than none. Figures are date-stamped
+instead, so you can see their vintage.
+
+Optionally enforce it locally:
+
+```bash
+printf '#!/bin/sh\nuv run dera verify-docs\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
 ## Repository layout
 
 ```

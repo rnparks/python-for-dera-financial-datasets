@@ -459,7 +459,12 @@ Uses the factor library for signals, the price layer for returns. Not a replacem
 **When shipping a new feature**:
 1. Move the item from "Tier 2/3" to "Shipped" with the commit hash.
 2. Update "Status snapshot" if the feature unlocks new capabilities.
-3. Commit `features.md` alongside the feature commit.
+3. Update every other doc the change touches — see the table in `CLAUDE.md`.
+   `README.md`, `docs/architecture.md`, `docs/schema_overview.md`,
+   `docs/gold_tables.md` and `docs/data_sources.md` are all expected to be
+   current at every commit, not periodically caught up.
+4. Run `uv run dera verify-docs` and `uv run dera verify`.
+5. Commit the docs alongside the feature, never afterwards.
 
 **When blocked**:
 1. Add a note under the blocked item explaining the blocker.
