@@ -80,7 +80,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 51 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 52 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 

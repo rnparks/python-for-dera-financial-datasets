@@ -17,6 +17,11 @@
 --   - sign_multiplier is usually +1 but set to -1 for tags that are
 --     reported as negative numbers (e.g., some CostOfRevenue variants).
 
+-- All three tables, so this file can be re-run on its own after a
+-- mapping change (peer_stats goes with them and 080 recreates it). It
+-- once dropped only the first two, and a standalone re-run failed on
+-- concept_formula already existing.
+DROP TABLE IF EXISTS sec_gold.concept_formula     CASCADE;
 DROP TABLE IF EXISTS sec_gold.concept_tag_map     CASCADE;
 DROP TABLE IF EXISTS sec_gold.canonical_concepts  CASCADE;
 
@@ -91,7 +96,25 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes) VALUES
     ('revenue', 'Revenues',                            1, '60', 'Some banks file plain Revenues'),
     ('revenue', 'RevenuesNetOfInterestExpense',        2, '60', 'Large-bank headline revenue (JPM, WFC)'),
-    ('revenue', 'InterestAndDividendIncomeOperating',  3, '60', 'Fallback: gross interest income');
+    ('revenue', 'InterestAndDividendIncomeOperating',  3, '60', 'Fallback: gross interest income'),
+    ('revenue', 'InterestIncomeOperating',             4, '60', 'Fallback: gross interest income, the variant without dividends');
+-- Non-bank lenders (SIC 61: card issuers, consumer finance). Discover
+-- (6141) and Synchrony (6199) file the bank tags and nothing the
+-- non-financial default lists, so they resolved to no revenue at all.
+INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes) VALUES
+    ('revenue', 'Revenues',                            1, '61', 'Same treatment as banks'),
+    ('revenue', 'RevenuesNetOfInterestExpense',        2, '61', 'Same treatment as banks'),
+    ('revenue', 'InterestAndDividendIncomeOperating',  3, '61', 'Fallback: gross interest income (Discover)'),
+    ('revenue', 'InterestIncomeOperating',             4, '61', 'Fallback: gross interest income (Synchrony)');
+-- REITs (SIC 6798). Rental income under ASC 842 is OperatingLeaseLeaseIncome
+-- and 5 tracked REITs file only that. An industry row outranks every
+-- generic row, so the totals a REIT may file are restated here above it:
+-- 40 tracked REITs file both, and the total must keep winning.
+INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes) VALUES
+    ('revenue', 'Revenues',                                            1, '6798', 'Total, when filed'),
+    ('revenue', 'RevenueFromContractWithCustomerExcludingAssessedTax', 2, '6798', 'Total, when filed'),
+    ('revenue', 'RealEstateRevenueNet',                                3, '6798', 'Rental revenue total'),
+    ('revenue', 'OperatingLeaseLeaseIncome',                           4, '6798', 'ASC 842 rental income; the only revenue line 5 tracked REITs file');
 -- Regulated utilities (SIC 49) — 11 S&P 1500 issuers including NextEra
 -- report only this tag, so they resolved to no revenue at all before.
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes) VALUES
@@ -158,17 +181,45 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
 -- Deliberately NOT mapped here: RepaymentsOfLongTermDebt (579 issuers)
 -- and ProceedsFromIssuanceOfLongTermDebt (516). Both rank high in any
 -- tag-frequency scan and both are cash-flow movements, not balances.
+--
+-- Every tag below is a us-gaap element (checked against num.version on
+-- 2026-09-04: zero custom uses), filed undimensioned on the face. The
+-- totals are totals by taxonomy definition. The components were added
+-- from the FY2024 S&P 500 gap: 88 members had no total_debt, and the
+-- ones that file debt at all use convertible, senior, unsecured or
+-- notes-payable lines that no row here named. What is still NOT mapped,
+-- on purpose: REIT secured/unsecured pairs and bank borrowings/deposits
+-- (sibling components with no total; summing them needs double-count
+-- guards this table cannot express), and anything dimensioned (GM,
+-- PACCAR, Textron, Deere tag their debt by segment).
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
-    ('total_debt', 'DebtLongtermAndShorttermCombinedAmount', 1, 'Cleanest roll-up but only filed by ~17 companies'),
-    ('total_debt', 'LongTermDebt',                           2, 'Older single-tag usage; already a total');
+    ('total_debt', 'DebtLongtermAndShorttermCombinedAmount',                           1, 'Cleanest roll-up but only filed by ~17 companies'),
+    ('total_debt', 'LongTermDebt',                                                     2, 'Older single-tag usage; already a total'),
+    ('total_debt', 'LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities', 3, 'Total including current maturities; JPMorgan (401B) and US Bancorp file only this'),
+    ('total_debt', 'DebtAndCapitalLeaseObligations',                                   4, 'Total debt plus capital leases; Berkshire, Aflac, Host Hotels');
 
 -- Debt components --------------------------------------------------
+-- Ordered broad to narrow, so an issuer filing a notes-payable line and
+-- a convertible sub-line resolves to the broader one.
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
     ('debt_noncurrent', 'LongTermDebtNoncurrent',                        1, 'Most commonly filed long-term debt line'),
     ('debt_noncurrent', 'LongTermDebtAndCapitalLeaseObligations',        2, 'Issuers that fold finance leases into debt'),
+    ('debt_noncurrent', 'LongTermNotesPayable',                          3, 'Notes payable, noncurrent (Autodesk, Omnicom, Axon)'),
+    ('debt_noncurrent', 'LongTermNotesAndLoans',                         4, 'Notes and loans, noncurrent (Oracle, Corpay)'),
+    ('debt_noncurrent', 'UnsecuredLongTermDebt',                         5, 'Unsecured long-term debt (Goldman Sachs 243B, CME, Cadence)'),
+    ('debt_noncurrent', 'SeniorLongTermNotes',                           6, 'Senior notes, noncurrent (VeriSign, Electronic Arts, Arch Capital)'),
+    ('debt_noncurrent', 'ConvertibleLongTermNotesPayable',               7, 'Convertible notes, noncurrent (ServiceNow, Akamai, Super Micro)'),
+    ('debt_noncurrent', 'ConvertibleDebtNoncurrent',                     8, 'Convertible debt, noncurrent'),
     ('debt_current',    'LongTermDebtCurrent',                           1, 'Current portion of long-term debt'),
     ('debt_current',    'LongTermDebtAndCapitalLeaseObligationsCurrent', 2, 'Current portion including finance leases'),
-    ('debt_current',    'DebtCurrent',                                   3, 'Short-term borrowings');
+    ('debt_current',    'DebtCurrent',                                   3, 'Current debt in total: current maturities plus short-term borrowings'),
+    ('debt_current',    'NotesPayableCurrent',                           4, 'Notes payable, current'),
+    ('debt_current',    'NotesAndLoansPayableCurrent',                   5, 'Notes and loans, current'),
+    ('debt_current',    'UnsecuredDebtCurrent',                          6, 'Unsecured debt, current'),
+    ('debt_current',    'SeniorNotesCurrent',                            7, 'Senior notes, current'),
+    ('debt_current',    'ConvertibleNotesPayableCurrent',                8, 'Convertible notes, current'),
+    ('debt_current',    'ConvertibleDebtCurrent',                        9, 'Convertible debt, current'),
+    ('debt_current',    'ShortTermBorrowings',                          10, 'Short-term borrowings alone; last because DebtCurrent already includes them when both are filed');
 
 -- Operating cash flow ---------------------------------------------
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
@@ -207,6 +258,14 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
 --           a total debt.
 -- At least one operand must resolve either way, so a company with no
 -- debt at all yields NULL rather than a misleading zero.
+--
+-- total_debt requires the NONCURRENT component. With both optional, an
+-- issuer whose long-term debt is tagged by segment (Deere) or under a
+-- line this table does not name resolved to its current portion alone:
+-- Deere 15.9B against roughly 65B, Kenvue 2.4B, Conagra 1.0B, Air
+-- Products 0.8B, EQT 0.3B, CarMax 0.2B -- 26 of 1,063 FY2024 totals,
+-- every one silently understated. NULL is the honest answer there. The
+-- current portion stays optional: no current maturities is common.
 
 CREATE TABLE sec_gold.concept_formula (
     concept      TEXT     NOT NULL REFERENCES sec_gold.canonical_concepts (concept) ON DELETE CASCADE,
@@ -231,7 +290,7 @@ INSERT INTO sec_gold.concept_formula (concept, operand, coefficient, required, n
     ('free_cash_flow', 'capex',              -1, FALSE, 'A company with no capex still has FCF'),
     -- Fires only when no combined debt tag resolves. Fixes the
     -- understatement described above, and recovers 266 issuers.
-    ('total_debt',     'debt_noncurrent',     1, FALSE, 'Sum of the two components when no combined tag exists'),
+    ('total_debt',     'debt_noncurrent',     1, TRUE,  'Sum of the two components when no combined tag exists; the noncurrent part is required, see above'),
     ('total_debt',     'debt_current',        1, FALSE, NULL);
 
 COMMENT ON TABLE sec_gold.concept_formula IS

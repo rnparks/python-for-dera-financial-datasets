@@ -194,9 +194,11 @@ WITH cov AS (
 -- time: a company promoted into the S&P 500 during 2025 was an S&P 400
 -- member at its FY2024 period end, and the 400 has no replayed history,
 -- so it is in no FY2024 panel. Revenue 1,428 (was 1,479 on today's
--- survivors), total_debt 1,063, gross_profit 844.
+-- survivors), total_debt 1,063, gross_profit 844. total_debt re-based to
+-- 1,100 after the 2026-09-04 tag additions took it to 1,127 with the
+-- noncurrent component required.
 SELECT CASE WHEN
-            COALESCE((SELECT n FROM cov WHERE concept='total_debt'),0)   >= 1040
+            COALESCE((SELECT n FROM cov WHERE concept='total_debt'),0)   >= 1100
         AND COALESCE((SELECT n FROM cov WHERE concept='gross_profit'),0) >=  820
         AND COALESCE((SELECT n FROM cov WHERE concept='revenue'),0)      >= 1400
        THEN 'PASS' ELSE 'FAIL' END AS status,
@@ -873,4 +875,34 @@ FROM (
     ) lat ON TRUE
     LEFT JOIN sec_reference.index_membership_timeline tl
            ON tl.cik = p.cik AND tl.valid_from <= p.d AND (tl.valid_to IS NULL OR tl.valid_to > p.d)
+) t;
+
+\echo '=== 52. total_debt is never the current portion alone, and the S&P 500 gap is closed where the filings allow ==='
+-- With both formula operands optional, 26 FY2024 totals were the current
+-- portion by itself: Deere 15.9B against roughly 65B. The noncurrent
+-- operand is now required, so Deere resolves to nothing rather than to
+-- a wrong number, while the totals JPMorgan, Goldman and Oracle file
+-- under lines the map never named resolve; Discover, Synchrony and
+-- Equity Residential gain a revenue; a REIT filing both a total and
+-- lease income keeps the total.
+SELECT CASE WHEN jpm BETWEEN 350 AND 500 AND gs > 200 AND orcl BETWEEN 80 AND 120
+             AND (deere IS NULL OR deere > 40) AND dfs > 15 AND eqr > 2
+             AND realty_tag <> 'OperatingLeaseLeaseIncome'
+             AND sp500_debt >= 430 AND sp500_rev >= 498
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       jpm AS jpm_total_debt_bn, gs AS goldman_bn, orcl AS oracle_bn, deere AS deere_bn_or_null,
+       dfs AS discover_revenue_bn, eqr AS equity_residential_revenue_bn, realty_tag AS realty_income_revenue_tag,
+       sp500_debt AS sp500_members_with_fy2024_total_debt, sp500_rev AS with_fy2024_revenue
+FROM (
+    SELECT (SELECT ROUND(value/1e9) FROM sec_gold.peer_stats WHERE cik = 19617   AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS jpm,
+           (SELECT ROUND(value/1e9) FROM sec_gold.peer_stats WHERE cik = 886982  AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS gs,
+           (SELECT ROUND(value/1e9) FROM sec_gold.peer_stats WHERE cik = 1341439 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS orcl,
+           (SELECT ROUND(value/1e9) FROM sec_gold.peer_stats WHERE cik = 315189  AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS deere,
+           (SELECT ROUND(value/1e9) FROM sec_gold.peer_stats WHERE cik = 1393612 AND fiscal_year = 2024 AND concept = 'revenue'    AND peer_level = 'sector') AS dfs,
+           (SELECT ROUND(value/1e9) FROM sec_gold.peer_stats WHERE cik = 906107  AND fiscal_year = 2024 AND concept = 'revenue'    AND peer_level = 'sector') AS eqr,
+           (SELECT tag FROM sec_gold.latest_annual(726728, 'revenue') LIMIT 1) AS realty_tag,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2024-12-31') m
+             WHERE EXISTS (SELECT 1 FROM sec_gold.peer_stats p WHERE p.cik = m.cik AND p.fiscal_year = 2024 AND p.concept = 'total_debt')) AS sp500_debt,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2024-12-31') m
+             WHERE EXISTS (SELECT 1 FROM sec_gold.peer_stats p WHERE p.cik = m.cik AND p.fiscal_year = 2024 AND p.concept = 'revenue')) AS sp500_rev
 ) t;

@@ -272,7 +272,9 @@ The resolution rules that turn a concept into an actual XBRL tag, walked in orde
 | `revenue` | 7–8 | any | `SalesRevenueGoodsNet`, `SalesRevenueServicesNet` | Pre-2018 components; safe only while no issuer files both without a total (check 37 asserts it) |
 | `revenue` | 1 | 60 | `Revenues` | Some banks file plain Revenues |
 | `revenue` | 2 | 60 | `RevenuesNetOfInterestExpense` | Large-bank headline revenue |
-| `revenue` | 3 | 60 | `InterestAndDividendIncomeOperating` | Fallback: gross interest income |
+| `revenue` | 3–4 | 60 | `InterestAndDividendIncomeOperating`, `InterestIncomeOperating` | Fallback: gross interest income |
+| `revenue` | 1–4 | 61 | `Revenues`, `RevenuesNetOfInterestExpense`, `InterestAndDividendIncomeOperating`, `InterestIncomeOperating` | Non-bank lenders (Discover, Synchrony), treated as banks |
+| `revenue` | 1–4 | 6798 | `Revenues`, `RevenueFromContractWithCustomerExcludingAssessedTax`, `RealEstateRevenueNet`, `OperatingLeaseLeaseIncome` | REITs: the totals restated above ASC 842 lease income, which 5 tracked REITs file alone |
 | `revenue` | 1–2 | 49 | `RegulatedAndUnregulatedOperatingRevenue`, `Revenues` | Regulated utilities (NextEra and 10 others) |
 | `gross_profit` | 1 | any | `GrossProfit` | Companies that file a gross-profit line |
 | `operating_income` | 1 | any | `OperatingIncomeLoss` | Near-universal for non-financials |
@@ -289,14 +291,16 @@ The resolution rules that turn a concept into an actual XBRL tag, walked in orde
 | `total_equity` | 2 | any | `StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest` | Consolidated groups w/ minority interest |
 | `total_debt` | 1 | any | `DebtLongtermAndShorttermCombinedAmount` | Cleanest roll-up, few filers |
 | `total_debt` | 2 | any | `LongTermDebt` | Older single-tag usage |
+| `total_debt` | 3 | any | `LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities` | Total incl. current maturities; JPMorgan (401B), US Bancorp |
+| `total_debt` | 4 | any | `DebtAndCapitalLeaseObligations` | Total debt plus capital leases; Berkshire, Aflac, Host Hotels |
 | `capex` | 1 | any | `PaymentsToAcquirePropertyPlantAndEquipment` | Most common capex tag |
 | `capex` | 2 | any | `PaymentsToAcquireProductiveAssets` | Industrials/utilities fallback |
 | `cost_of_revenue` | 1–2 | any | `CostOfGoodsAndServicesSold`, `CostOfRevenue` | Operands for the `gross_profit` formula |
-| `debt_noncurrent` | 1–2 | any | `LongTermDebtNoncurrent`, `LongTermDebtAndCapitalLeaseObligations` | Operand for `total_debt` |
-| `debt_current` | 1–3 | any | `LongTermDebtCurrent`, `…Current`, `DebtCurrent` | Operand for `total_debt` |
+| `debt_noncurrent` | 1–8 | any | `LongTermDebtNoncurrent`, `LongTermDebtAndCapitalLeaseObligations`, `LongTermNotesPayable`, `LongTermNotesAndLoans`, `UnsecuredLongTermDebt`, `SeniorLongTermNotes`, `ConvertibleLongTermNotesPayable`, `ConvertibleDebtNoncurrent` | Operand for `total_debt`, **required**; broad to narrow |
+| `debt_current` | 1–10 | any | `LongTermDebtCurrent`, `LongTermDebtAndCapitalLeaseObligationsCurrent`, `DebtCurrent`, `NotesPayableCurrent`, `NotesAndLoansPayableCurrent`, `UnsecuredDebtCurrent`, `SeniorNotesCurrent`, `ConvertibleNotesPayableCurrent`, `ConvertibleDebtCurrent`, `ShortTermBorrowings` | Operand for `total_debt`, optional |
 | `operating_cash_flow` | 1 | any | `NetCashProvidedByUsedInOperatingActivities` | Near-universal |
 
-Add coverage for a new tag with a plain `INSERT` — no function changes needed. `concept_tag_map` holds 38 rows.
+Add coverage for a new tag with a plain `INSERT` — no function changes needed. `concept_tag_map` holds 62 rows (2026-09-04). Every tag is a us-gaap element; custom extensions are never mapped, which is why APA (revenue under `apa:RevenuesAndOther`) and issuers tagging debt by segment (GM, PACCAR, Textron, Deere) stay unresolved rather than wrong.
 
 **Known gaps** (tracked in `features.md`): a few hundred issuers (notably NVDA capex) use custom extension tags not mapped here.
 
@@ -472,7 +476,7 @@ RETURNS TABLE (value_date DATE, filed_date DATE, metric TEXT, value_billions NUM
 - **Stray `value_date`s.** The matviews span 1980-07-31 → 2032-03-31. Old dates are prior-period comparatives re-filed in modern filings; future dates are filer typos that SEC publishes as-is. Bound `value_date` in analyses that aggregate by date.
 - **Index membership is dated for the S&P 500 only.** The two `tradable_financials` matviews and `peer_stats` draw their population from `sec_reference.index_membership`: replayed monthly Wikipedia history for the S&P 500 (840 companies since 2008, 40 early tickers unresolved and listed), but today's list at every date for the S&P 400 and 600 until their histories are replayed. Historical analyses restricted to those two indexes still carry survivorship bias, and `index_membership.source` says which rows do. `fact_asof`, `share_class_shares` and everything in `sec_reference` cover the full spine.
 - **Per-share vs. dollar units.** `eps_diluted` is `USD/share`; don't scale it by 1e9 alongside the dollar concepts. Check `uom` when working with raw tags.
-- **`total_debt` is a roll-up.** Only two tags resolve it directly; otherwise `concept_formula` sums `debt_noncurrent + debt_current`. `LongTermDebtNoncurrent` was once priority 3 here and silently understated the figure by excluding the current portion; it now sits on `debt_noncurrent` where it belongs.
+- **`total_debt` is a roll-up.** Four total tags resolve it directly; otherwise `concept_formula` sums `debt_noncurrent + debt_current`, and the noncurrent operand is **required**: with both optional, 26 FY2024 totals were the current portion alone (Deere 15.9B against roughly 65B), so those now resolve to nothing rather than to a wrong number. `LongTermDebtNoncurrent` was once priority 3 on `total_debt` itself and understated it the same way. Not mapped on purpose: REIT secured/unsecured pairs and bank borrowings (sibling components with no total), and anything dimensioned.
 - **Z-scores are raw-value scores.** `peer_stats` scores raw dollar values, so it mixes company size with performance; a z of +4 on revenue mostly means "much bigger than peers," not "growing faster." `peer_percentile` is robust to that skew. Both degrade in thin groups, which is why `peer_level = 'sector'` is the sounder default.
 - **Dual-class issuers need a mapping.** Across the spine roughly 2,100 companies have reported share counts for two or more `ClassOfStock` members; 66 are mapped, 57 of them S&P 500 issuers derived from their cover pages. The rest have no rows in `share_class_shares`, by design (an unmapped class yields nothing rather than a wrong sum). Six S&P 500 covers say only "Common Stock" against A/B members and are reported by the tool for a hand decision; unlisted classes (Meta's B, Nike's A, Visa's B and C) are never mapped automatically because the conversion ratio must be cited, so those issuers' market caps are partial and flagged by `share_classes_at`.
 - **Ticker collisions.** `ticker_map` keeps the first CIK seen per ticker; a handful of ambiguous tickers may resolve to an unexpected issuer. The `as_of_*` family avoids this by resolving through the dated crosswalk.
