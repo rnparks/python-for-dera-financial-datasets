@@ -1,117 +1,165 @@
 # DERA Pipeline
 
-A Postgres medallion pipeline for SEC's [DERA Financial Statement Data Sets](https://www.sec.gov/dera/data/financial-statement-data-sets).
+A Postgres research platform for SEC's [DERA Financial Statement Data Sets](https://www.sec.gov/dera/data/financial-statement-data-sets),
+built for **point-in-time correct** equity research.
 
-Downloads SEC's quarterly XBRL dumps, lands them into a `sec_raw` bronze layer, cleans and types them into `sec_silver`, and joins them against the S&P 1500 universe for a `sec_gold.tradable_financials` materialized view that powers ticker-keyed lookups.
+Downloads SEC's quarterly XBRL dumps into a `sec_raw` bronze layer, types and
+deduplicates them into a bitemporal `sec_silver`, and exposes a `sec_gold` query
+layer with a canonical concept taxonomy and peer statistics. A separate
+`sec_reference` spine tracks companies, securities and historical universes
+without survivorship bias.
+
+**Two things make this different from a plain XBRL loader:**
+
+1. **Availability, not filing date.** Every fact records when it became
+   *actionable* — the EDGAR acceptance timestamp resolved against a real NYSE
+   calendar. 48% of filings are accepted after the close and stamped that same
+   `filed_date`; all 247,216 of those roll to a later session.
+2. **Every vintage is kept.** A restatement does not overwrite history. GE's
+   fiscal 2022 revenue exists as four vintages across three values — $76.555B as
+   first filed, $58.100B after an 8-K, $29.139B after a 2025 restatement — and
+   you can ask what any of them looked like on any date.
+
+## Documentation
+
+| Read this | For |
+|---|---|
+| [`docs/data_sources.md`](docs/data_sources.md) | What is downloaded, from where, and how far it can be traced |
+| [`docs/schema_overview.md`](docs/schema_overview.md) | Every table and view, and which one to use |
+| [`docs/gold_tables.md`](docs/gold_tables.md) | Deep reference for `sec_gold`, all function signatures |
+| [`docs/architecture.md`](docs/architecture.md) | Layer-by-layer design and the reasoning behind it |
+| [`features.md`](features.md) | Current status and roadmap |
 
 ## Pipeline stages
 
 ```
-SEC DERA zip URLs
-  └─[dera download]─→ data/raw/<year>q<n>/{sub,tag,num,pre}.txt
-  └─[dera init-db]──→ sec_raw schema + 4 empty bronze tables
-  └─[dera load]─────→ sec_raw.{sub,tag,num,pre}_raw                (BRONZE)
-  └─[dera build-silver]─→ sec_silver.{sub,tag,num}_silver
-                         + sec_silver.financials(mode) function
-                         + sec_silver.universe_sp1500, ticker_map  (SILVER)
-  └─[dera build-gold]───→ sec_gold.tradable_financials (latest)
-                         + sec_gold.tradable_financials_pit
-                         + sec_gold.get_pit_financials(cik)
-                         + sec_gold.get_financials_by_ticker(tkr)  (GOLD)
-```
+SEC DERA quarterly zips
+  └─[dera download]──────────→ data/raw/<year>q<n>/{sub,tag,num,pre}.txt
+  └─[dera init-db]───────────→ sec_raw schema + bronze tables
+  └─[dera load]──────────────→ sec_raw.{sub,tag,num,pre}_raw          BRONZE
+  └─[dera build-silver]──────→ sec_silver.{sub,tag,num}_silver        SILVER
+                               + bitemporal availability columns
+                               + sec_reference spine and calendar
+  └─[dera build-gold]────────→ sec_gold.fact_asof                     GOLD
+                               + tradable_financials(_pit)
+                               + canonical concepts, peer_stats
 
-See [`docs/architecture.md`](docs/architecture.md) for the layer-by-layer breakdown.
+EDGAR bulk submissions archive
+  └─[dera fetch-filing-index]──→ data/edgar/submissions.zip
+  └─[dera build-security-model]→ sec_reference.{security,listing,      SPINE
+                                 eligibility,delisting_event}
+```
 
 ## Setup
 
 Requires Python ≥ 3.11 and Postgres ≥ 14. Install [uv](https://docs.astral.sh/uv/) if you don't have it.
 
 ```bash
-# Install deps into a managed venv
 uv sync
-
-# Copy the env template and fill in your credentials
-cp .env.example .env
-# Edit .env to set SEC_USER_AGENT and PG_DSN
+cp .env.example .env      # then set SEC_USER_AGENT and PG_DSN
 ```
-
-The pipeline requires two environment variables:
 
 | Variable | Purpose |
 |---|---|
-| `SEC_USER_AGENT` | SEC rate-limits generic user agents — provide a descriptive string with a contact email, e.g. `"Jane Doe <jane@example.com>"`. |
+| `SEC_USER_AGENT` | SEC rate-limits generic agents — use a descriptive string with a contact email, e.g. `"Jane Doe <jane@example.com>"`. |
 | `PG_DSN` | Postgres connection string, e.g. `postgresql://user:pass@localhost:5432/dera`. |
+
+Expect roughly **141 GB** of Postgres and **31 GB** on disk for a full build.
 
 ## Quickstart
 
-Full rebuild against a fresh database:
-
 ```bash
-uv run dera run-all
+uv run dera run-all        # download + load + silver + gold
+uv run dera verify         # 28 correctness checks; non-zero exit on failure
 ```
 
-Or run one stage at a time:
+Or one stage at a time:
 
 ```bash
-uv run dera download --from 2009q1 --to 2026q2    # ~13 GB on disk
-uv run dera init-db                                # bronze DDL
-uv run dera load                                   # COPY .txt → bronze (incremental by default)
-uv run dera build-silver                           # silver tables + reference data
-uv run dera build-gold                             # gold matviews + helper functions
+uv run dera download --from 2009q1 --to 2026q2   # ~29 GB on disk
+uv run dera init-db                               # bronze DDL
+uv run dera load                                  # COPY → bronze (incremental)
+uv run dera build-silver                          # ~39 min
+uv run dera build-gold                            # ~16 min
 ```
 
-Common variations:
+The security lifecycle model is a separate, additive path:
 
 ```bash
-uv run dera download --from 2026q2 --to 2026q2     # just the latest quarter
-uv run dera load --quarter 2026q2                  # load a specific quarter
-uv run dera load --full                            # re-load everything (ignore load_log)
-uv run dera load --truncate                        # wipe bronze first
-uv run dera build-gold --no-refresh                # rebuild DDL but skip REFRESH
+uv run dera fetch-filing-index      # EDGAR bulk archive, ~1.5 GB
+uv run dera build-security-model    # securities, listings, delistings, universes
 ```
 
-Once gold is built, query by ticker:
+`run-all` will **not** destroy a populated bronze — that needs an explicit
+`--reinit-bronze`.
+
+## Querying
 
 ```sql
-SELECT * FROM sec_gold.get_financials_by_ticker('AAPL');
-SELECT * FROM sec_gold.tradable_financials WHERE ticker = 'MSFT' ORDER BY value_date DESC LIMIT 20;
+-- What a company reported, as now understood
+SELECT * FROM sec_gold.company_snapshot('AAPL');
+
+-- One concept, fiscal-year aware
+SELECT * FROM sec_gold.latest_annual_by_ticker('NKE', 'revenue');
+
+-- BACKTESTING: what was knowable on a date. No default knowledge date,
+-- deliberately — omitting it is an error rather than a silent look-ahead.
+SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2015-06-30');
+
+-- Who was actually investable then, delisted companies included
+SELECT * FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30');
 ```
+
+That last query returns 7,418 members, of which **1,925 (26%) have since
+delisted**. A universe built from today's index membership returns none of them.
 
 ## Reference data
 
-Two CSVs live under `data/reference/` and are loaded into `sec_silver` during `build-silver`:
+Tracked CSVs under `data/reference/`, all regenerable — see
+[`docs/data_sources.md`](docs/data_sources.md) for provenance and known gaps.
 
-- **`sp1500_universe.csv`** — S&P 500 + 400 + 600 constituent list. Regenerate from Wikipedia via `uv run python tools/fetch_sp1500.py`.
-- **`tickers.csv`** — CIK ↔ ticker crosswalk (CIK, ticker, name, exchange). Replace manually when the SEC crosswalk updates.
+```bash
+uv run python tools/fetch_sp1500.py           # S&P 1500 membership (Wikipedia)
+uv run python tools/fetch_ticker_history.py   # CIK↔ticker via Wayback; resumes
+uv run python tools/build_calendar.py         # NYSE trading calendar
+```
 
 ## Repository layout
 
 ```
-dera_pipeline/        # the Python package — download, load, DB wiring, CLI
-├── cli.py           # argparse entry point (`uv run dera ...`)
-├── config.py        # env-driven constants and validated accessors
-├── db.py            # thin psycopg3 wrapper
-├── downloader.py    # async retry+semaphore fetcher
-├── loader.py        # bronze COPY-from-STDIN loader
-└── reference.py     # CSV → sec_silver reference loader
+dera_pipeline/       # the Python package
+├── cli.py          # argparse entry point (`uv run dera ...`)
+├── config.py       # env-driven constants
+├── db.py           # thin psycopg3 wrapper
+├── downloader.py   # async retry+semaphore fetcher
+├── filings.py      # EDGAR bulk submissions → security lifecycle events
+├── loader.py       # bronze COPY-from-STDIN loader
+└── reference.py    # CSV → reference table loader
 
-sql/
-├── 01_bronze/       # sec_raw schema + 4 raw tables
-├── 02_silver/       # sec_silver schema, typed tables, financials() function
-├── 03_gold/         # sec_gold schema, tradable_financials matviews, helpers
-└── 04_reference/    # universe_sp1500, ticker_map table DDL
+sql/                 # executed in lexical order by directory
+├── 00_reference/   # trading calendar, ticker history, share class, security DDL
+├── 01_bronze/      # sec_raw schema + raw tables
+├── 02_silver/      # typed bitemporal tables + financials() function
+├── 03_gold/        # matviews, canonical concepts, as-of accessors
+├── 04_reference/   # universe_sp1500, ticker_map
+├── 05_spine/       # company spine (needs 04 to be loaded first)
+└── 06_security/    # security model (needs the filing index loaded first)
 
 data/
-├── raw/             # DERA quarterly dumps (gitignored — fetch with `dera download`)
-└── reference/       # tracked reference CSVs and xlsx
+├── raw/            # DERA quarterly dumps      (gitignored, 29 GB)
+├── edgar/          # EDGAR submissions archive (gitignored, 1.5 GB)
+└── reference/      # tracked reference CSVs
 
-docs/                # SEC schema references, architecture notes
+docs/                # architecture, schema, data sources, SEC references
+tools/               # standalone utilities and verify_pit.sql
 notebooks/
-├── sec_examples/    # original SEC DERA Jupyter tutorials (upstream)
-└── scratch/         # one-off analysis scripts
-
-tools/               # standalone utilities (e.g. fetch_sp1500.py)
+├── sec_examples/   # original SEC DERA tutorials (upstream)
+└── scratch/        # one-off analysis
 ```
+
+The numeric prefixes on `sql/` directories are load-bearing: `05_spine` and
+`06_security` exist because both read data that a Python loader populates
+mid-build, and `run_sql_dir` executes an entire directory before any Python runs.
 
 ## License
 

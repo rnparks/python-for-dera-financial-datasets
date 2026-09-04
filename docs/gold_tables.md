@@ -2,7 +2,9 @@
 
 The gold layer is the query-facing top of the medallion pipeline: SEC DERA fundamentals filtered to the S&P 1500 tradable universe, keyed by ticker, with a canonical-concept taxonomy and pre-computed peer statistics on top. Everything here is derived from `sec_silver` — rebuild it any time with `uv run dera build-gold`.
 
-**Data coverage** (as of the 2026q1 load): filings from 2009-04-15 through 2026-03-31, 1,496 tickers, ~11.3M rows per matview.
+**Data coverage** (as of the 2026q2 load): filings from 2009-04-15 through 2026-06-30, ~11.8M rows per display matview and 97.9M in `fact_asof`.
+
+For the whole database — including `sec_reference`, which holds the survivorship-free company and security spine — see [`schema_overview.md`](schema_overview.md).
 
 ---
 
@@ -117,18 +119,28 @@ WHERE ticker = 'NVDA' AND value_date = '2023-01-29' AND qtrs = 4;
 
 ### `peer_stats`
 
-Pre-computed cross-sectional z-scores: one row per **(ticker, canonical concept, fiscal year)**, scored against all S&P 1500 peers in the same **GICS sub-industry** and fiscal year. Covers fiscal years 2006–2026, 1,355 tickers, 101 sub-industries. Sourced from `tradable_financials` (latest-restated values, generic tag rules only).
+Pre-computed cross-sectional scores: one row per **(ticker, canonical concept, fiscal year, peer level)**. 530,324 rows. Sourced from `tradable_financials` (latest-restated values).
 
-Fiscal year is bucketed by `EXTRACT(YEAR FROM value_date)`, so NVDA's Jan-2025 FYE lands in `fiscal_year = 2025` alongside Apple's Sep-2025. Peer groups with fewer than 5 reporting companies are dropped (their z-scores would be noise).
+**Two peer levels, tagged by `peer_level`.** Sub-industry alone was too granular — only 106 of 155 groups clear the five-member threshold, and the threshold *deletes* a thin group rather than degrading it, so companies vanished with nothing in the output saying so. Both levels are computed:
+
+| `peer_level` | Groups | Companies scored |
+|---|---:|---:|
+| `sector` | 11 | 1,638 |
+| `sub_industry` | 106 | 1,509 |
+
+Sector is the sounder default. The standard error of an estimated standard deviation is about σ/√(2(n−1)), so at the sub-industry median of seven companies the z-score denominator is itself uncertain by nearly 30%, against roughly 10% at sector's thinnest group.
+
+Fiscal year is bucketed by `sec_gold.fiscal_year_of(value_date)`, **not** `EXTRACT(YEAR FROM value_date)` — see [Fiscal years ≠ calendar years](#fiscal-years--calendar-years). Extracting the calendar year pushes January year-ends such as NVIDIA and Walmart into the following year, comparing eleven months against a peer's full year.
 
 | Column | Type | Description |
 |---|---|---|
 | `ticker` | text | Exchange ticker |
 | `gics_sector` | text | GICS sector (11 values) |
-| `gics_sub_industry` | text | GICS sub-industry — the peer-group key |
+| `gics_sub_industry` | text | GICS sub-industry |
+| `peer_level` | text | `sector` or `sub_industry` — **which grouping this row scores against** |
 | `concept` | text | Canonical concept (FK to `canonical_concepts`) |
-| `fact_type` | text | `flow` or `balance` (derived concepts excluded) |
-| `fiscal_year` | integer | Calendar year of `value_date` |
+| `fact_type` | text | `flow` or `balance` (derived concepts are resolved and included) |
+| `fiscal_year` | integer | Peer-comparison year from `fiscal_year_of(value_date)` |
 | `value_date` | date | Actual period end date behind the bucketed year |
 | `value` | numeric | Resolved value (sign-adjusted, best-priority tag) |
 | `peer_count` | bigint | Companies in the (concept, year, sub-industry) group |
@@ -136,8 +148,11 @@ Fiscal year is bucketed by `EXTRACT(YEAR FROM value_date)`, so NVDA's Jan-2025 F
 | `peer_stddev` | numeric | Group sample standard deviation |
 | `peer_min` / `peer_max` | numeric | Group extremes |
 | `zscore` | numeric(12,4) | `(value − peer_mean) / peer_stddev`; NULL if stddev is 0 |
+| `peer_percentile` | numeric | Rank within the group; robust to the size skew that makes a raw-dollar z of +4 mean "much bigger than peers" |
 
 **Indexes**: `ticker`; `(concept, fiscal_year)`; `(gics_sub_industry, fiscal_year, concept)`.
+
+> **Not availability-correct.** Built from restated values, with peer moments computed over the finished panel, so both the inputs and the statistics know the future. This is a dashboard and screening artifact. Anything backtested should read `fact_asof` and build its own cross-section.
 
 ```sql
 -- NVDA revenue vs. semiconductor peers (z=4.2 in FY2025, 31 peers)

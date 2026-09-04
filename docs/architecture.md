@@ -7,8 +7,17 @@ A bronze/silver/gold medallion pipeline in Postgres. Python is responsible for d
 | Layer | Schema | Contents | Populated by |
 |---|---|---|---|
 | Bronze | `sec_raw` | `sub_raw`, `tag_raw`, `num_raw`, `pre_raw` — all `TEXT`, no constraints | `dera_pipeline.loader` via `COPY FROM STDIN` |
-| Silver | `sec_silver` | `sub_silver`, `tag_silver`, `num_silver` (typed, deduplicated, dual-ranked); `financials(mode)` function; `universe_sp1500`, `ticker_map` reference tables | `sql/02_silver/*.sql` + `sql/04_reference/*.sql` + `dera_pipeline.reference` |
-| Gold | `sec_gold` | `tradable_financials` (latest restatement matview), `tradable_financials_pit` (point-in-time matview), `metric_aliases`, `get_pit_financials()`, `get_financials_by_ticker()` | `sql/03_gold/*.sql` |
+| Silver | `sec_silver` | `sub_silver`, `tag_silver`, `num_silver` — typed, deduplicated and **bitemporal**; `financials(mode)` function | `sql/02_silver/*.sql` |
+| Gold | `sec_gold` | `fact_asof` (every vintage), `tradable_financials(_pit)`, `canonical_concepts` + `concept_tag_map` + `concept_formula`, `peer_stats`, `share_class_shares`, and the `as_of_*` accessor family | `sql/03_gold/*.sql` |
+| Spine | `sec_reference` | `company`, `company_ticker`, `security`, `listing`, `eligibility`, `delisting_event`, `trading_calendar`, `share_class` | `sql/00_reference`, `05_spine`, `06_security` + `dera_pipeline.{reference,filings}` |
+
+`sec_reference` sits deliberately **outside** the bronze→silver→gold chain.
+`build-silver` opens with `DROP SCHEMA sec_silver CASCADE`, and the calendar,
+company spine and security model must survive that — `sub_silver` resolves
+`tradable_from` against the calendar during its own build.
+
+See [`schema_overview.md`](schema_overview.md) for every table with row counts,
+and [`data_sources.md`](data_sources.md) for what flows in.
 
 ## End-to-end flow
 
@@ -47,9 +56,25 @@ The Python loader side-steps all of this:
 3. On first load of each quarter it asserts the file header against `loader.EXPECTED_COLUMNS`, so any future SEC schema drift fails loud instead of corrupting silver.
 4. A `sec_raw.load_log` table tracks loaded quarters so `load_all(incremental=True)` skips work already done.
 
-## Silver dual-ranking
+## Silver: bitemporal, not merely dual-ranked
 
-`sec_silver.num_silver` carries two row numbers per partition:
+`num_silver` retains **every vintage of every fact**, with `known_at`,
+`tradable_from`, `vintage_seq`, `superseded_known_at`, `superseded_tradable` and
+`is_original_disclosure`. "What did we believe on date T" is a half-open interval
+scan returning exactly one row per fact key, with no window function at query
+time:
+
+```sql
+WHERE tradable_from <= T
+  AND (superseded_tradable > T OR superseded_tradable IS NULL)
+```
+
+`tradable_from` is derived from the EDGAR acceptance timestamp against a real
+NYSE calendar, so it answers *when could I have acted on this*, which is not the
+same question as *when was it filed*. 48% of filings are accepted after the close
+and stamped that same `filed_date`.
+
+The older dual ranking is still carried for compatibility:
 
 ```sql
 ROW_NUMBER() OVER (
@@ -74,6 +99,24 @@ SELECT * FROM sec_silver.financials('latest') WHERE cik = 320193;
 ```
 
 The consolidated-only filter (`segments IS NULL AND coreg IS NULL`) lives inside this function and nowhere else, so adding a new gold consumer doesn't risk double-filtering or forgetting the filter.
+
+## The security spine
+
+`company_ticker` maps a CIK to a ticker and has no notion of an instrument that
+begins and ends. `sec_reference.security` is the tradable thing, carrying
+`first_trade_date` (with a `first_trade_basis` recording the evidence class) and
+`delisting_date`. Both are derived from EDGAR filing events — 8-A registrations
+and Form 25 notices — because filings are immutable and dated, while any
+current-state file has already deleted the companies that failed.
+
+Neither date comes from the presence of a form alone. JPMorgan has filed 46 Form
+25s and has never been delisted; Apple's earliest 8-A in EDGAR is from 2014 and
+it listed in 1980. Both rules are behavioural and both are documented in
+`sql/06_security/010_security_populate.sql`.
+
+Two invariants are enforced by CHECK constraint rather than convention: no
+eligibility interval may begin before `first_trade_date`, or outlive
+`delisting_date`.
 
 ## Gold: two sibling matviews
 

@@ -23,19 +23,24 @@ Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 - **Derived concepts.** `concept_formula` computes `gross_profit`, `free_cash_flow` and `total_debt` from other concepts. `total_debt` no longer understates.
 - **Peer stats at two GICS levels** in one table tagged by `peer_level`; sector scores all 1,569 companies where sub-industry dropped 147.
 - 15-check verification suite in `tools/verify_pit.sql`.
-- **Security lifecycle model (Phase 0 slice, 18 CIKs).**
+- **Security lifecycle model, full scale — 17,031 securities.**
   `sec_reference.{security,listing,eligibility,delisting_event,corporate_action,company_name}`
-  separate a company from the securities it issues. `universe_at(name, asof)`
-  reconstructs a historical universe with no default knowledge date. The 2015
-  universe contains SIVB, SHLD, TWTR and BBBY under their era tickers and
-  excludes Palantir, Coinbase and Rivian. 27/27 checks pass.
+  separate a company from the securities it issues, built from 910,661 EDGAR
+  filing events across 17,015 CIKs. `universe_at(name, asof)` reconstructs a
+  historical universe with no default knowledge date.
+  `universe_at('filers_10k_15m','2015-06-30')` returns **7,418 members, 1,925 of
+  them (26%) since delisted** — a current-constituents universe returns none.
+  4,553 delisting events. 28/28 checks pass.
 
 **Missing for serious research**:
 - **Prices.** Still the biggest gap and nothing else is testable without it. The share-count denominator already exists (`shares_outstanding_at`, availability-correct) — prices are the only missing input.
-- **Point-in-time universe.** Solved in principle and proven on an 18-CIK
-  slice (see above); needs the bulk EDGAR filing index to scale to all 17,015
-  CIKs. `universe_sp1500` is still today's membership with no dates, and gold
-  still joins to it.
+- **Gold is not yet wired to the new universe.** `universe_sp1500` is still
+  today's membership with no dates, and the gold matviews still join to it.
+  `sec_reference.universe_at()` exists and is correct; nothing consumes it.
+- **3,527 of 26,277 listing intervals were dropped as non-overlapping (13.4%)**
+  and the cause is not yet characterised. Only 51 have the "ticker ended before
+  first trade" shape. A number that size could mean `first_trade_date` is
+  systematically late rather than that the crosswalk is noisy.
 - **Historical index membership.** Not started. Free coverage is bounded by
   whether Wikipedia's page carried a CIK column: S&P 500 from 2014, S&P 600
   from 2019, S&P 400 **never**. Revision depth is not the constraint.
