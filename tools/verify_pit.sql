@@ -41,39 +41,52 @@ FROM (
 
 \echo ''
 \echo '=== 2. No look-ahead: nothing in an as-of slice was filed after it ==='
--- The core rule, expressed as an assertion.
-SELECT CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS status,
-       COUNT(*) AS rows_knowable_before_they_existed
-FROM sec_gold.fact_asof
-WHERE tradable_from <= DATE '2020-06-30'
-  AND (superseded_tradable > DATE '2020-06-30' OR superseded_tradable IS NULL)
-  AND known_at > (DATE '2020-06-30' + INTERVAL '1 day');
+-- The core rule, expressed as an assertion. The slice must be non-empty:
+-- a COUNT of zero over an empty table would pass vacuously, and this
+-- suite has to fail loudly if fact_asof is missing after a build error.
+SELECT CASE WHEN bad = 0 AND in_slice > 0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       in_slice AS rows_in_slice, bad AS rows_knowable_before_they_existed
+FROM (
+    SELECT COUNT(*) AS in_slice,
+           COUNT(*) FILTER (WHERE known_at > (DATE '2020-06-30' + INTERVAL '1 day')) AS bad
+    FROM sec_gold.fact_asof
+    WHERE tradable_from <= DATE '2020-06-30'
+      AND (superseded_tradable > DATE '2020-06-30' OR superseded_tradable IS NULL)
+) t;
 
 \echo ''
 \echo '=== 3. Exactly one vintage per fact key in an as-of slice ==='
--- Proves the validity intervals do not overlap.
-SELECT CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS status,
-       COUNT(*) AS fact_keys_with_multiple_vintages
+-- Proves the validity intervals do not overlap. Non-empty for the same
+-- reason as check 2.
+SELECT CASE WHEN dup = 0 AND keys > 0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       keys AS fact_keys_in_slice, dup AS fact_keys_with_multiple_vintages
 FROM (
-    SELECT cik, tag, value_date, qtrs, uom
-    FROM sec_gold.fact_asof
-    WHERE tradable_from <= DATE '2023-06-30'
-      AND (superseded_tradable > DATE '2023-06-30' OR superseded_tradable IS NULL)
-    GROUP BY 1,2,3,4,5
-    HAVING COUNT(*) > 1
-) d;
+    SELECT COUNT(*) AS keys, COUNT(*) FILTER (WHERE n > 1) AS dup
+    FROM (
+        SELECT cik, tag, value_date, qtrs, uom, COUNT(*) AS n
+        FROM sec_gold.fact_asof
+        WHERE tradable_from <= DATE '2023-06-30'
+          AND (superseded_tradable > DATE '2023-06-30' OR superseded_tradable IS NULL)
+        GROUP BY 1,2,3,4,5
+    ) d
+) t;
 
 \echo ''
 \echo '=== 4. After-close filings are not same-session actionable ==='
--- ~48% of filings are accepted after the bell yet stamped that same
--- filed_date. Every one must roll to a later session.
-SELECT CASE WHEN bad = 0 THEN 'PASS' ELSE 'FAIL' END AS status,
+-- 57% of filings (247,216 of 433,717 on 2026-09-04) are accepted after
+-- the bell. Every one must roll to a later session. Measured against
+-- the session's actual close_at, so the ~130 filings accepted between a
+-- 13:00 half-day bell and 16:00 are covered too; a fixed 16:00 test
+-- could not see them.
+SELECT CASE WHEN bad = 0 AND total_after_close > 200000 THEN 'PASS' ELSE 'FAIL' END AS status,
        total_after_close, bad AS still_same_day
 FROM (
     SELECT COUNT(*) AS total_after_close,
-           COUNT(*) FILTER (WHERE tradable_from <= (known_at AT TIME ZONE 'America/New_York')::date) AS bad
-    FROM sec_silver.sub_silver
-    WHERE (known_at AT TIME ZONE 'America/New_York')::time >= TIME '16:00'
+           COUNT(*) FILTER (WHERE s.tradable_from <= c.session_date) AS bad
+    FROM sec_silver.sub_silver s
+    JOIN sec_reference.trading_calendar c
+      ON c.session_date = (s.known_at AT TIME ZONE 'America/New_York')::date
+    WHERE s.known_at > c.close_at
 ) t;
 
 \echo ''
@@ -363,12 +376,17 @@ FROM (
 \echo '=== 24. Test B: no security is in a universe before it could trade ==='
 -- Future-existence bias, asserted globally rather than per name. The
 -- eligibility CHECK constraints make this structurally impossible, so a
--- failure here means a constraint was dropped.
-SELECT CASE WHEN COUNT(*)=0 THEN 'PASS' ELSE 'FAIL' END AS status,
-       COUNT(*) AS intervals_starting_before_first_trade
-FROM sec_reference.eligibility e
-JOIN sec_reference.security s USING (security_id)
-WHERE e.valid_from < s.first_trade_date;
+-- failure here means a constraint was dropped -- or, with the row-count
+-- guard, that the table is empty (a silver rebuild without the filing
+-- index used to leave it that way).
+SELECT CASE WHEN bad = 0 AND total > 10000 THEN 'PASS' ELSE 'FAIL' END AS status,
+       total AS eligibility_rows, bad AS intervals_starting_before_first_trade
+FROM (
+    SELECT COUNT(*) AS total,
+           COUNT(*) FILTER (WHERE e.valid_from < s.first_trade_date) AS bad
+    FROM sec_reference.eligibility e
+    JOIN sec_reference.security s USING (security_id)
+) t;
 
 \echo '=== 25. Test B (cont.): recent IPOs absent from pre-IPO universes ==='
 -- Palantir (2020), Coinbase (2021) and Rivian (2021) must not appear in
@@ -441,4 +459,227 @@ FROM (
                     AND e.event_type = 'PERIODIC_REPORT'
                     AND e.event_date > s.delisting_date + INTERVAL '15 months')
     LIMIT 20
+) t;
+
+-- ============================================================
+-- Checks 29-42 guard the defects found in the 2026-09-04 review. Each
+-- names the failure it was written against, with the measured number,
+-- so a future FAIL reads as "this came back" rather than "a threshold".
+-- ============================================================
+
+\echo ''
+\echo '=== 29. Delisting evidence is only ever a Form 25 or a Form 15 ==='
+-- classify() once prefix-matched "25", so Regulation A offering
+-- circulars (253G1-253G4) were read as delisting notices and 54
+-- securities were delisted on the day they raised money.
+SELECT CASE WHEN bad = 0 AND total > 4000 THEN 'PASS' ELSE 'FAIL' END AS status,
+       total AS delisting_events, bad AS from_other_forms
+FROM (
+    SELECT COUNT(*) AS total,
+           COUNT(*) FILTER (WHERE source_form !~ '^(25(-NSE)?(/A)?|15F?-(12B|12G|15D)(/A)?)$') AS bad
+    FROM sec_reference.delisting_event
+) t;
+
+\echo '=== 30. Crosswalk: no single-capture gap survives ==='
+-- A pair absent from exactly one capture and back in the next is a
+-- file artefact, never a retirement -- 2,459 such gaps existed before
+-- the spine learned to bridge them. Reports the captures judged partial
+-- alongside, so a new bad capture is visible here.
+SELECT CASE WHEN single_gaps = 0 AND captures >= 60 THEN 'PASS' ELSE 'FAIL' END AS status,
+       single_gaps AS pairs_closed_then_reopened_next_capture,
+       (SELECT COUNT(*) FROM sec_reference.ticker_capture WHERE is_partial) AS partial_captures,
+       captures
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_reference.ticker_capture) AS captures,
+           (SELECT COUNT(*)
+              FROM sec_reference.company_ticker a
+              JOIN sec_reference.company_ticker b
+                ON a.cik = b.cik AND a.ticker = b.ticker AND a.valid_to IS NOT NULL
+              JOIN sec_reference.ticker_capture s1 ON s1.observed_on = a.valid_to
+              JOIN sec_reference.ticker_capture s2 ON s2.sn = s1.sn + 1
+                                                   AND s2.observed_on = b.valid_from) AS single_gaps
+) t;
+
+\echo '=== 31. Crosswalk: the newest capture is a recent live fetch ==='
+-- The "current" snapshot was once a nine-month-old local CSV stamped
+-- with the run date (an exact set match with tickers.csv). That fallback
+-- no longer exists; what remains to check is that the live capture is
+-- there and recent.
+SELECT CASE WHEN source = 'sec_current' AND observed_on >= CURRENT_DATE - 90
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       observed_on AS newest_capture, source, n_rows
+FROM (
+    SELECT observed_on, source, COUNT(*) AS n_rows
+    FROM sec_reference.ticker_observation
+    GROUP BY 1, 2 ORDER BY observed_on DESC LIMIT 1
+) t;
+
+\echo '=== 32. Every in-lifetime crosswalk interval reaches listing ==='
+-- DISTINCT ON (security_id, ticker) once kept only the first interval
+-- of a ticker a company held, lapsed and held again; 2,792 later
+-- intervals were silently lost.
+SELECT CASE WHEN listed >= candidates AND candidates > 15000 THEN 'PASS' ELSE 'FAIL' END AS status,
+       candidates AS in_lifetime_intervals, listed AS listing_rows_from_crosswalk
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_reference.listing WHERE source = 'company_ticker') AS listed,
+           (SELECT COUNT(*)
+              FROM sec_reference.security s
+              JOIN sec_reference.company_ticker ct ON ct.cik = s.cik
+             WHERE s.class_label = '(common)'
+               AND GREATEST(ct.valid_from, COALESCE(s.first_trade_date, ct.valid_from))
+                <= LEAST(COALESCE(ct.valid_to, DATE '9999-12-31'),
+                         COALESCE(s.delisting_date, DATE '9999-12-31'))) AS candidates
+) t;
+
+\echo '=== 33. No unlisted share class is a universe member ==='
+-- Alphabet Class B, Under Armour''s convertible and four Liberty B
+-- classes were members with no ticker at all.
+SELECT CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       COUNT(*) AS members_with_no_ticker_among_mapped_ciks
+FROM sec_reference.universe_at('filers_10k_15m', DATE '2024-06-30') u
+WHERE u.ticker IS NULL
+  AND EXISTS (SELECT 1 FROM sec_reference.share_class sc WHERE sc.cik = u.cik);
+
+\echo '=== 34. Derived concepts resolve wherever their operands exist ==='
+-- total_debt has two OPTIONAL operands. latest_annual took its
+-- candidate periods from required operands only and never derived it:
+-- 836 of 1,092 tracked companies that peer_stats resolves got NULL.
+SELECT CASE WHEN pct_resolved >= 95 THEN 'PASS' ELSE 'FAIL' END AS status,
+       holders AS peer_stats_total_debt_fy2024, resolved AS latest_annual_resolves, pct_resolved
+FROM (
+    SELECT COUNT(*) AS holders,
+           COUNT(v) AS resolved,
+           ROUND(100.0 * COUNT(v) / NULLIF(COUNT(*), 0), 1) AS pct_resolved
+    FROM (
+        SELECT p.cik, (SELECT value FROM sec_gold.latest_annual(p.cik, 'total_debt')) AS v
+        FROM (SELECT DISTINCT cik FROM sec_gold.peer_stats
+               WHERE peer_level = 'sector' AND fiscal_year = 2024 AND concept = 'total_debt') p
+    ) x
+) t;
+
+\echo '=== 35. The newest period wins over a stale direct tag (Apple) ==='
+-- company_snapshot reported Apple total_debt as $40.1B from a 2015
+-- LongTermDebt row while the 2026 components summed to $82.7B, and
+-- as_of_snapshot had no formula fallback at all (free_cash_flow NULL).
+SELECT CASE WHEN cs.value_date >= DATE '2025-01-01'
+             AND asf.value_date >= DATE '2025-01-01'
+             AND fcf.value IS NOT NULL
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       cs.value_date AS snapshot_total_debt_date,
+       ROUND(cs.value / 1e9, 1) AS snapshot_total_debt_bn,
+       asf.value_date AS asof_total_debt_date,
+       ROUND(fcf.value / 1e9, 1) AS asof_free_cash_flow_bn
+FROM (SELECT value_date, value FROM sec_gold.company_snapshot('AAPL') WHERE concept = 'total_debt') cs,
+     (SELECT value_date, value FROM sec_gold.as_of_snapshot(320193, CURRENT_DATE) WHERE concept = 'total_debt') asf,
+     (SELECT value FROM sec_gold.as_of_snapshot(320193, CURRENT_DATE) WHERE concept = 'free_cash_flow') fcf;
+
+\echo '=== 36. The share-count denominator keeps delisted companies ==='
+-- Twitter (1418091) delisted in 2022 and only ever held TWTR. The old
+-- single-ticker inference required a ticker current TODAY and excluded
+-- 4,998 delisted companies: 4,346 CIKs had rows, out of 12,835 with
+-- consolidated share counts; 8,228 after the fix. (SVB Financial is NOT
+-- a valid example: it also listed SIVBO/SIVBP preferred lines, so it has
+-- overlapping tickers and correctly needs a mapping.)
+SELECT CASE WHEN twtr_rows > 0 AND ciks >= 7000 THEN 'PASS' ELSE 'FAIL' END AS status,
+       twtr_rows, ciks AS ciks_with_share_rows
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_gold.share_class_shares WHERE cik = 1418091) AS twtr_rows,
+           (SELECT COUNT(DISTINCT cik) FROM sec_gold.share_class_shares) AS ciks
+) t;
+
+\echo '=== 37. Revenue resolves before ASC 606 too, and never from half a company ==='
+-- SalesRevenueNet and the goods/services components were unmapped:
+-- FY2015 revenue covered 628 of 1,361 tracked issuers against 1,479 in
+-- FY2024. Check 13 guards FY2024 only. The components are safe only
+-- while no issuer files BOTH of them with no total in the same year --
+-- that shape would resolve to the goods line alone -- so it is asserted
+-- absent here rather than assumed.
+SELECT CASE WHEN fy2015 >= 1200 AND fy2024 >= 1470 AND half_company = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       fy2015 AS ciks_with_revenue_fy2015, fy2024 AS ciks_with_revenue_fy2024,
+       half_company AS cik_years_with_both_components_and_no_total
+FROM (
+    SELECT COUNT(DISTINCT cik) FILTER (WHERE fiscal_year = 2015) AS fy2015,
+           COUNT(DISTINCT cik) FILTER (WHERE fiscal_year = 2024) AS fy2024
+    FROM sec_gold.peer_stats WHERE peer_level = 'sector' AND concept = 'revenue'
+) c,
+(
+    WITH both_components AS (
+        SELECT cik, sec_gold.fiscal_year_of(value_date) AS fy
+        FROM sec_gold.tradable_financials
+        WHERE qtrs = 4 AND tag IN ('SalesRevenueGoodsNet', 'SalesRevenueServicesNet')
+        GROUP BY 1, 2
+        HAVING COUNT(DISTINCT tag) = 2
+    ),
+    any_total AS (
+        SELECT DISTINCT t2.cik, sec_gold.fiscal_year_of(t2.value_date) AS fy
+        FROM sec_gold.tradable_financials t2
+        JOIN sec_gold.concept_tag_map m ON m.tag = t2.tag AND m.concept = 'revenue'
+        WHERE m.priority <= 6 AND t2.qtrs = 4
+    )
+    SELECT COUNT(*) AS half_company
+    FROM both_components b
+    WHERE NOT EXISTS (SELECT 1 FROM any_total a WHERE a.cik = b.cik AND a.fy = b.fy)
+) g;
+
+\echo '=== 38. The trading calendar reaches well past the newest filing ==='
+-- A filing accepted after the last session gets NULL tradable_from and
+-- vanishes from every as-of slice, silently. The loader refuses a
+-- calendar with under a year left; this checks the loaded one.
+SELECT CASE WHEN cal_max > CURRENT_DATE + 180 AND cal_max > newest_filing + 180
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       cal_max AS calendar_ends, newest_filing
+FROM (
+    SELECT (SELECT MAX(session_date) FROM sec_reference.trading_calendar) AS cal_max,
+           (SELECT MAX(known_at)::date FROM sec_silver.sub_silver) AS newest_filing
+) t;
+
+\echo '=== 39. The as-of discipline raises instead of returning nothing ==='
+-- financials(''asof'') with no date returned 0 rows; shift_sessions before
+-- the calendar returned NULL; a ticker before the crosswalk floor gave
+-- as_of_snapshot fifteen empty rows. All three must raise now.
+CREATE OR REPLACE FUNCTION pg_temp.raises(p_sql TEXT) RETURNS BOOLEAN
+LANGUAGE plpgsql AS $fn$
+BEGIN
+    EXECUTE p_sql;
+    RETURN FALSE;
+EXCEPTION WHEN OTHERS THEN
+    RETURN TRUE;
+END
+$fn$;
+SELECT CASE WHEN a AND b AND c THEN 'PASS' ELSE 'FAIL' END AS status,
+       a AS financials_asof_without_date, b AS shift_before_calendar, c AS ticker_before_crosswalk_floor
+FROM (
+    SELECT pg_temp.raises($q$SELECT * FROM sec_silver.financials('asof') LIMIT 1$q$)            AS a,
+           pg_temp.raises($q$SELECT sec_gold.shift_sessions(DATE '2008-06-30', 1)$q$)            AS b,
+           pg_temp.raises($q$SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2015-06-30')$q$) AS c
+) t;
+
+\echo '=== 40. The CIK-keyed snapshot works before the crosswalk floor ==='
+SELECT CASE WHEN COUNT(value) >= 8 THEN 'PASS' ELSE 'FAIL' END AS status,
+       COUNT(*) AS concepts, COUNT(value) AS resolved_for_apple_2015
+FROM sec_gold.as_of_snapshot(320193, DATE '2015-06-30');
+
+\echo '=== 41. The share ladder prefers a point-in-time count to a period average ==='
+-- 216 of 1,569 tracked companies resolved to a weighted average as of
+-- today; for 87 of them an instant count within 400 days existed.
+SELECT CASE WHEN weighted <= 150 AND companies > 1500 THEN 'PASS' ELSE 'FAIL' END AS status,
+       companies, weighted AS resolved_to_weighted_average
+FROM (
+    SELECT COUNT(*) AS companies,
+           COUNT(*) FILTER (WHERE s.source_tag LIKE 'WeightedAverage%') AS weighted
+    FROM (SELECT DISTINCT cik FROM sec_gold.tradable_financials) u
+    LEFT JOIN LATERAL sec_gold.shares_outstanding_at(u.cik, CURRENT_DATE) s ON TRUE
+) t;
+
+\echo '=== 42. Going dark is an outcome, not silence ==='
+-- 2,207 CIKs filed a Form 15, never a Form 25, and stopped filing; they
+-- had no delisting_event at all and every existing event was an
+-- exchange notice.
+SELECT CASE WHEN deregistrations > 2000 AND exchange_notices > 4000 THEN 'PASS' ELSE 'FAIL' END AS status,
+       exchange_notices, deregistrations
+FROM (
+    SELECT COUNT(*) FILTER (WHERE reason = 'exchange_notice') AS exchange_notices,
+           COUNT(*) FILTER (WHERE reason = 'deregistration')  AS deregistrations
+    FROM sec_reference.delisting_event
 ) t;
