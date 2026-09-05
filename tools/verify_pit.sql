@@ -985,3 +985,22 @@ FROM (
            (SELECT ROUND(value, 4) FROM sec_gold.latest_annual(320193, 'net_margin') LIMIT 1) AS fn_nm,
            (SELECT ROUND(value, 4) FROM sec_gold.as_of_latest_annual(320193, 'net_margin', DATE '2015-06-30') LIMIT 1) AS asof_nm
 ) t;
+
+\echo '=== 56. The knowledge-date cross-section never sees the future and moves when the filing lands ==='
+-- peer_stats_asof(index, T) must contain no fact actionable after T,
+-- cover the constituents of the day, and show Apple's FY2024 revenue on
+-- 2024-11-15 (first disclosed 2024-11-01) but still FY2023 on 2024-10-15.
+SELECT CASE WHEN future_rows = 0 AND companies >= members - 5 AND concepts = 26 AND max_stale <= 550
+             AND aapl_oct = DATE '2023-09-30' AND aapl_nov = DATE '2024-09-30'
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       rows AS rows_2020_06_30, companies, members AS constituents_that_day, future_rows, concepts, max_stale,
+       aapl_oct AS apple_revenue_period_on_2024_10_15, aapl_nov AS on_2024_11_15
+FROM (
+    SELECT COUNT(*) AS rows, COUNT(DISTINCT cik) AS companies,
+           COUNT(*) FILTER (WHERE tradable_from > DATE '2020-06-30') AS future_rows,
+           COUNT(DISTINCT concept) AS concepts, MAX(days_stale) AS max_stale,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2020-06-30')) AS members,
+           (SELECT value_date FROM sec_gold.peer_stats_asof('SP500', DATE '2024-10-15') WHERE cik = 320193 AND concept = 'revenue' AND peer_level = 'sector') AS aapl_oct,
+           (SELECT value_date FROM sec_gold.peer_stats_asof('SP500', DATE '2024-11-15') WHERE cik = 320193 AND concept = 'revenue' AND peer_level = 'sector') AS aapl_nov
+    FROM sec_gold.peer_stats_asof('SP500', DATE '2020-06-30')
+) t;

@@ -80,7 +80,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 55 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 56 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -156,6 +156,14 @@ SELECT fiscal_year, value AS net_margin, peer_percentile, zscore, peer_count
 FROM sec_gold.peer_stats
 WHERE ticker = 'NVDA' AND concept = 'net_margin' AND peer_level = 'sector'
 ORDER BY fiscal_year;
+
+-- The same cross-section as it was KNOWABLE on a date: constituents of
+-- the day, each company's latest annual figures actionable by then,
+-- peer moments over only those. A function, computed on demand.
+SELECT ticker, value_date, days_stale, value AS net_margin, peer_percentile
+FROM sec_gold.peer_stats_asof('SP500', DATE '2020-06-30')
+WHERE concept = 'net_margin' AND peer_level = 'sector'
+ORDER BY peer_percentile DESC LIMIT 10;
 
 -- Who was in the S&P 500 then, with the GICS classification of the time
 SELECT * FROM sec_reference.index_members('SP500', DATE '2015-06-30');

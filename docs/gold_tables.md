@@ -35,6 +35,7 @@ For the whole database — including `sec_reference`, which holds the survivorsh
 | [`as_of_latest_annual()`](#as_of_latest_annual) | function | — | Most recent annual value knowable on a date, formula fallback |
 | `as_of_latest_annual_by_ticker()` | function | — | Ticker wrapper; resolves the ticker as of the same date, raises if it cannot |
 | [`as_of_snapshot()`](#as_of_snapshot) | function | — | Every concept as of a date, keyed by CIK or by ticker |
+| [`peer_stats_asof()`](#peer_stats_asof) | function | — | Peer cross-section of an index as it was knowable on a date; computed on demand |
 | [`shares_outstanding_at()`](#shares_outstanding_at) | function | — | Single collapsed share count. NOT sufficient for multi-class market cap |
 | [`share_classes_at()`](#share_classes_at) | function | — | Every share class for a company as of a date, one row per class |
 | `norm_ticker()` | function | — | Ticker to stored form (`BRK.B` → `BRK-B`) |
@@ -438,6 +439,37 @@ SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2015-06-30');   -- resolves:
 SELECT * FROM sec_gold.as_of_snapshot(1326801, DATE '2015-06-30'); -- Meta was FB then; the ticker form raises, the CIK form works
 ```
 
+### `peer_stats_asof()`
+
+```sql
+sec_gold.peer_stats_asof(p_index TEXT, p_asof DATE,
+                         p_max_age_days INTEGER DEFAULT 550, p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (cik INTEGER, ticker TEXT, index_name TEXT, gics_sector TEXT, gics_sub_industry TEXT,
+                 peer_level TEXT, peer_group TEXT, concept TEXT, fact_type TEXT,
+                 value_date DATE, tradable_from DATE, days_stale INTEGER, value NUMERIC,
+                 peer_count BIGINT, peer_mean NUMERIC, peer_stddev NUMERIC, peer_min NUMERIC, peer_max NUMERIC,
+                 zscore NUMERIC, peer_percentile NUMERIC)
+```
+
+The backtest object that [`peer_stats`](#peer_stats) is not. For a knowledge date `p_asof` it returns every constituent of `p_index` **on that date**, each with the latest annual flows and the latest balance sheet that were **actionable by that date** — first-disclosure availability from `fact_asof`, never a restated vintage — the ratio and growth concepts computed on the same basis, GICS and ticker as of the date, and peer moments and percentiles computed **only over what was knowable then**. Resolution mirrors `as_of_latest_annual()` but set-based: every annual period knowable per (company, concept), best tag per period, formulas per period from operands that share it, filed beating reconstruction, newest period winning; ratios at the numerator's period, growth against the period one year back, both from positive bases only.
+
+Staleness is a column, not a surprise: on 15 February a December filer carries FY2023 figures while a September filer carries FY2024, and `days_stale` says so per row. A figure older than `p_max_age_days` (default 550, a fiscal year plus the 10-K deadline with room) is left out rather than scored against fresher peers. `p_buffer_sessions` moves the knowledge date back N trading sessions, as in the other `as_of_*` functions.
+
+It is a **function, not a table**, by design: the S&P 500 takes about 13 seconds a call (2026-09-04), nothing is stored, and a past date's knowable set never changes once its quarters are loaded, so a cache keyed by date would be safe if one were ever needed.
+
+```sql
+-- Net-margin leaders among the constituents of 2020-06-30, on what was knowable then
+SELECT ticker, value_date, days_stale, value, peer_percentile
+FROM sec_gold.peer_stats_asof('SP500', DATE '2020-06-30')
+WHERE concept = 'net_margin' AND peer_level = 'sector'
+ORDER BY peer_percentile DESC;
+
+-- Apple's revenue row moves from FY2023 to FY2024 between these two dates
+-- (the FY2024 10-K became actionable 2024-11-01)
+SELECT value_date FROM sec_gold.peer_stats_asof('SP500', DATE '2024-10-15') WHERE cik = 320193 AND concept = 'revenue' AND peer_level = 'sector';
+SELECT value_date FROM sec_gold.peer_stats_asof('SP500', DATE '2024-11-15') WHERE cik = 320193 AND concept = 'revenue' AND peer_level = 'sector';
+```
+
 ### `shares_outstanding_at()`
 
 ```sql
@@ -575,13 +607,14 @@ Every mapping row carries `source` and `source_note`. Filing-sourced and vendor-
 | `030_tradable_financials.sql` | `tradable_financials`, `tradable_financials_pit` |
 | `035_fact_asof.sql` | `fact_asof` |
 | `040_helper_functions.sql` | `get_pit_financials()`, `get_financials_by_ticker()` |
-| `050_canonical_concepts.sql` | `canonical_concepts`, `concept_tag_map`, `concept_formula` |
+| `050_canonical_concepts.sql` | `canonical_concepts`, `concept_tag_map`, `concept_formula`, `concept_ratio` |
 | `055_shares_outstanding.sql` | `shares_outstanding_at()` |
 | `056_share_class_shares.sql` | `share_class_shares`, `share_classes_at()` |
 | `060_canonical_function.sql` | `resolve_direct()`, `get_canonical()`, `get_canonical_by_ticker()` |
-| `065_asof_functions.sql` | the `as_of_*` functions, including both `as_of_snapshot` overloads |
+| `065_asof_functions.sql` | the `as_of_*` functions, including both `as_of_snapshot` overloads and `as_of_canonical_at()` |
 | `070_fiscal_year_views.sql` | `latest_annual()`, `latest_annual_by_ticker()`, `company_snapshot()` |
-| `080_peer_stats.sql` | `peer_stats` (resolves derived concepts too) |
+| `080_peer_stats.sql` | `peer_stats` (resolves derived, ratio and growth concepts too) |
+| `085_peer_stats_asof.sql` | `peer_stats_asof()` |
 
 Files run in lexical order within the directory, so the numeric prefix is
 load-bearing. `065_asof_functions.sql` sits after `050` because it resolves

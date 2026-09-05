@@ -193,8 +193,9 @@ full reference including every function signature.
 
 Plus roughly twenty functions — `get_canonical()`, `latest_annual()`,
 `company_snapshot()`, the `as_of_*` accessors (with `as_of_snapshot` keyed by
-CIK or by ticker), `shares_outstanding_at()`, `share_classes_at()`. All
-documented in `docs/gold_tables.md`.
+CIK or by ticker), `peer_stats_asof()` (the peer cross-section as it was
+knowable on a date, computed on demand), `shares_outstanding_at()`,
+`share_classes_at()`. All documented in `docs/gold_tables.md`.
 
 ---
 
@@ -221,11 +222,11 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 55 checks; exits non-zero on any FAIL
+uv run dera verify     # 56 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 
 Covers restatement preservation, availability correctness, crosswalk capture
 quality, share-class summing, derived-concept resolution, and the survivorship /
-future-existence tests on the universe. Checks 29–55 each name the defect found
+future-existence tests on the universe. Checks 29–56 each name the defect found
 in the 2026-09-04 review, or the gap closed since, that they guard against.
