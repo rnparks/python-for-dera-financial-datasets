@@ -167,6 +167,8 @@ Fiscal year is bucketed by `sec_gold.fiscal_year_of(value_date)`, **not** `EXTRA
 
 A **balance** concept is taken at the company's fiscal year-end only: a balance is admitted when the company reports an annual (`qtrs = 4`) period ending on the same date. Without that rule the latest instant inside the fiscal-year window won, and because `fiscal_year_of` puts a March period end in the prior year, 91% of FY2024 balance rows were Q1 10-Q balances (measured 2026-09-04: 6,739 of 7,378) — a FY2024 leverage ratio divided December flows by March debt. Flow concepts were never affected (`qtrs = 4` is the annual period by definition). `latest_annual()` deliberately keeps the latest instant for balances: a snapshot wants the newest balance sheet, a cross-section wants the year-end one.
 
+Ratio and growth concepts (`fact_type` `ratio` / `growth`, see [Ratios and growth](#ratios-and-growth)) are computed from the resolved dollar concepts of the same company-year and scored with the same peer moments and percentiles, which is where a z-score becomes meaningful: a z of +2 on `net_margin` says something a z of +2 on `revenue` does not. Growth rows exist only where the prior fiscal year is exactly one year back and its base is positive.
+
 S&P 500 revenue coverage by fiscal year, members of the time: 457 companies in FY2009, 476 in FY2012, 473 in FY2015, 499 in FY2024 (of roughly 500 resolved members each year). Before dated membership the FY2012 panel was today's surviving constituents only; before the pre-2018 revenue tags were mapped, FY2015 covered 628 of the whole tracked population.
 
 | Column | Type | Description |
@@ -235,7 +237,7 @@ Two earlier rules were wrong in opposite directions: "exactly one ticker current
 
 ### `canonical_concepts`
 
-The research taxonomy: **15 concepts** that mean the same thing across companies regardless of which XBRL tag each company files. Three of them (`cost_of_revenue`, `debt_current`, `debt_noncurrent`) exist mainly as operands for `concept_formula`. `fact_type` drives the `qtrs` branching in `latest_annual()` (`flow` → `qtrs = 4`, `balance` → `qtrs = 0`). Derived concepts are computed in the database through `concept_formula`; see [How a derived concept is resolved](#how-a-derived-concept-is-resolved).
+The research taxonomy: **26 concepts** that mean the same thing across companies regardless of which XBRL tag each company files. Three of them (`cost_of_revenue`, `debt_current`, `debt_noncurrent`) exist mainly as operands for `concept_formula`. `fact_type` drives the `qtrs` branching in `latest_annual()` (`flow` → `qtrs = 4`, `balance` → `qtrs = 0`). Derived concepts are computed in the database through `concept_formula`; see [How a derived concept is resolved](#how-a-derived-concept-is-resolved).
 
 | Concept | Display name | Fact type | UoM | Description |
 |---|---|---|---|---|
@@ -254,6 +256,10 @@ The research taxonomy: **15 concepts** that mean the same thing across companies
 | `cost_of_revenue` | Cost of Revenue | flow | USD | Operand for `gross_profit` |
 | `debt_noncurrent` | Long-Term Debt | balance | USD | Operand for `total_debt` |
 | `debt_current` | Current Debt | balance | USD | Operand for `total_debt` |
+| `gross_margin`, `operating_margin`, `net_margin`, `fcf_margin` | … | ratio | ratio | Gross profit, operating income, net income, free cash flow over revenue, same period |
+| `roe`, `roa` | Return on Equity / Assets | ratio | ratio | Net income over fiscal year-end equity / assets; NULL when equity is not positive |
+| `debt_to_equity` | Debt to Equity | ratio | ratio | `total_debt` over `total_equity`; NULL when equity is not positive |
+| `revenue_growth`, `net_income_growth`, `eps_growth`, `operating_cash_flow_growth` | … | growth | ratio | Change over the company's own prior fiscal year; NULL from a non-positive base |
 
 ### `concept_tag_map`
 
@@ -389,7 +395,7 @@ sec_gold.company_snapshot(
                  value_date DATE, value NUMERIC, tag TEXT)
 ```
 
-One row per canonical concept (**15 rows**), each resolved via `latest_annual_by_ticker()`. Derived concepts are included and computed. The one-call company overview. Flows land on the last fiscal-year end; balances land on the most recent quarterly balance-sheet date, so the two groups can carry different `value_date`s — that is expected.
+One row per canonical concept (**26 rows**), each resolved via `latest_annual_by_ticker()`. Derived concepts are included and computed. The one-call company overview. Flows land on the last fiscal-year end; balances land on the most recent quarterly balance-sheet date, so the two groups can carry different `value_date`s — that is expected.
 
 ```sql
 SELECT * FROM sec_gold.company_snapshot('AAPL');
@@ -399,7 +405,7 @@ SELECT * FROM sec_gold.company_snapshot('AAPL');
 --  total_assets        | 2026-03-31 | …        | Assets           ← newer 10-Q date
 --  total_debt          | 2026-03-31 | $82.7B   | (derived: debt_noncurrent + debt_current)
 --  free_cash_flow      | 2025-09-30 | $98.8B   | (derived: operating_cash_flow − capex)
---  ... (15 rows)
+--  ... (26 rows)
 ```
 
 ### `as_of_latest_annual()`
@@ -513,6 +519,19 @@ Two rules make this safe.
 **One level deep.** Operands must resolve from tags, never from another formula. This is enforced by construction rather than convention: the formula branch calls `resolve_direct()`, which knows nothing about formulas, so recursion is impossible.
 
 **`required` says what a missing operand means.** When true, the result is NULL without it, because gross profit from revenue alone is not gross profit. When false, the operand is treated as zero, because a company reporting no capex still has a free cash flow. At least one operand must resolve either way, so a company with no debt at all yields NULL rather than a confident zero.
+
+### Ratios and growth
+
+`sec_gold.concept_ratio` defines the scale-free concepts (fact types `ratio` and `growth`). A ratio divides two concepts resolved at the **same period**; growth compares a concept with the company's own value **one fiscal year earlier**. Operands may be filed or formula-derived concepts (`fcf_margin` is over `free_cash_flow`, itself a formula) but never another ratio, so the graph is at most two levels deep and nothing recurses.
+
+| Concept | Definition |
+|---|---|
+| `gross_margin`, `operating_margin`, `net_margin`, `fcf_margin` | numerator / `revenue` |
+| `roe`, `roa` | `net_income` / fiscal year-end `total_equity`, `total_assets` (year-end, not an average) |
+| `debt_to_equity` | `total_debt` / `total_equity` (`total_debt` requires its noncurrent component, so this is never current debt alone) |
+| `*_growth` | (this year − prior year) / prior year |
+
+**A non-positive denominator or base is NULL, not a number.** A return on negative equity or growth from a loss is not something to rank on, so Boeing's FY2024 `roe` and `net_income_growth` are absent (check 55). In `peer_stats` growth also requires the prior fiscal year to be exactly one year back (300–430 days between period ends), so a fiscal-year change or a gap in filings does not read as growth. In `latest_annual()` and `as_of_latest_annual()` the ratio is taken at the numerator's newest period and the denominator resolved at that same period; growth looks one year back from it (DERA rounds period ends to month end, so this lands on the prior fiscal year-end). The as-of form bounds every operand by the one knowledge date and reports `tradable_from` as the later of the two. `company_snapshot()` and `as_of_snapshot()` therefore carry all 26 concepts. Coverage, FY2024 (2026-09-04): `net_margin` 1,401 companies, `roe` 1,357, `revenue_growth` 1,420, `gross_margin` 844 (the gross-profit ceiling below), `debt_to_equity` 1,057.
 
 ### Coverage ceilings are sometimes structural
 

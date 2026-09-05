@@ -80,7 +80,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 54 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 55 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -149,6 +149,13 @@ SELECT * FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30');
 -- strict reading of "first trade" for issuers that reported before they
 -- listed (216 fewer members in 2015, 31 fewer in 2024)
 SELECT * FROM sec_reference.universe_at('filers_10k_15m_strict', DATE '2015-06-30');
+
+-- Scale-free peer scores without a price in sight: net margin against
+-- sector peers by fiscal year, with percentile and z-score
+SELECT fiscal_year, value AS net_margin, peer_percentile, zscore, peer_count
+FROM sec_gold.peer_stats
+WHERE ticker = 'NVDA' AND concept = 'net_margin' AND peer_level = 'sector'
+ORDER BY fiscal_year;
 
 -- Who was in the S&P 500 then, with the GICS classification of the time
 SELECT * FROM sec_reference.index_members('SP500', DATE '2015-06-30');

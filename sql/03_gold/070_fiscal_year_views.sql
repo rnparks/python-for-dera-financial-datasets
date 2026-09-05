@@ -75,9 +75,18 @@ CREATE OR REPLACE FUNCTION sec_gold.latest_annual(
     tag         TEXT
 )
 LANGUAGE sql STABLE AS $$
-    WITH concept_type AS (
-        SELECT CASE WHEN fact_type = 'balance' THEN 0 ELSE 4 END AS qtrs
-        FROM sec_gold.canonical_concepts WHERE concept = p_concept
+    -- A ratio or growth concept resolves through its base: the newest
+    -- period at which the numerator (or the grown concept) resolves,
+    -- direct or formula, then the denominator (or the prior year) at
+    -- that same period. concept_ratio in 050 defines them.
+    WITH target AS (
+        SELECT COALESCE(r.numerator, x.c) AS concept, r.kind, r.denominator
+        FROM (SELECT p_concept AS c) x
+        LEFT JOIN sec_gold.concept_ratio r ON r.concept = x.c
+    ),
+    concept_type AS (
+        SELECT CASE WHEN c.fact_type = 'balance' THEN 0 ELSE 4 END AS qtrs
+        FROM target t JOIN sec_gold.canonical_concepts c ON c.concept = t.concept
     ),
     -- Direct tags: the newest period at which any mapped tag resolves,
     -- industry-specific rows first, then priority.
@@ -91,7 +100,7 @@ LANGUAGE sql STABLE AS $$
         JOIN sec_silver.num_silver    n ON n.tag = m.tag
         LEFT JOIN sec_silver.sub_silver s ON s.adsh = n.adsh
         CROSS JOIN concept_type ct
-        WHERE m.concept = p_concept
+        WHERE m.concept = (SELECT concept FROM target)
           AND n.cik = p_cik
           AND n.qtrs = ct.qtrs
           AND n.segments IS NULL AND n.coreg IS NULL
@@ -130,7 +139,7 @@ LANGUAGE sql STABLE AS $$
         SELECT x.value_date, x.filed_date, x.value, NULL::TEXT AS tag
         FROM (
             SELECT d.value_date, d.filed_date,
-                   sec_gold.get_canonical(p_cik, p_concept, d.value_date,
+                   sec_gold.get_canonical(p_cik, (SELECT concept FROM target), d.value_date,
                                           ct.qtrs, p_mode) AS value
             FROM (
                 SELECT n.value_date, MAX(n.filed_date) AS filed_date
@@ -139,7 +148,7 @@ LANGUAGE sql STABLE AS $$
                 JOIN sec_silver.num_silver    n ON n.tag = m.tag
                 LEFT JOIN sec_silver.sub_silver s ON s.adsh = n.adsh
                 CROSS JOIN concept_type ct
-                WHERE f.concept = p_concept
+                WHERE f.concept = (SELECT concept FROM target)
                   AND n.cik = p_cik
                   AND n.qtrs = ct.qtrs
                   AND n.segments IS NULL AND n.coreg IS NULL
@@ -161,14 +170,45 @@ LANGUAGE sql STABLE AS $$
     )
     -- Newest period wins; at the same period a filed figure beats a
     -- reconstruction.
-    SELECT u.value_date, u.filed_date, u.value, u.tag
-    FROM (
-        SELECT dh.value_date, dh.filed_date, dh.value, dh.tag, 0 AS pref FROM direct_hit  dh
-        UNION ALL
-        SELECT xh.value_date, xh.filed_date, xh.value, xh.tag, 1 AS pref FROM derived_hit xh
-    ) u
-    ORDER BY u.value_date DESC, u.pref ASC
-    LIMIT 1;
+    , hit AS (
+        SELECT u.value_date, u.filed_date, u.value, u.tag
+        FROM (
+            SELECT dh.value_date, dh.filed_date, dh.value, dh.tag, 0 AS pref FROM direct_hit  dh
+            UNION ALL
+            SELECT xh.value_date, xh.filed_date, xh.value, xh.tag, 1 AS pref FROM derived_hit xh
+        ) u
+        ORDER BY u.value_date DESC, u.pref ASC
+        LIMIT 1
+    )
+    -- For a plain concept this is the hit itself. For a ratio the
+    -- denominator is resolved at the hit's own period; for growth the
+    -- base concept one year earlier (DERA rounds period ends to month
+    -- end, so a year back lands on the prior fiscal year-end). A
+    -- non-positive denominator or base gives NULL, not a number.
+    SELECT h.value_date, h.filed_date,
+           CASE t.kind
+               WHEN 'ratio'  THEN CASE WHEN den.v   > 0 THEN h.value / den.v END
+               WHEN 'growth' THEN CASE WHEN prior.v > 0 THEN (h.value - prior.v) / prior.v END
+               ELSE h.value
+           END AS value,
+           CASE WHEN t.kind IS NULL THEN h.tag END AS tag
+    FROM hit h
+    CROSS JOIN target t
+    CROSS JOIN concept_type ct
+    LEFT JOIN LATERAL (
+        SELECT sec_gold.get_canonical(
+                   p_cik, t.denominator, h.value_date,
+                   (SELECT CASE WHEN c.fact_type = 'balance' THEN 0 ELSE 4 END
+                      FROM sec_gold.canonical_concepts c WHERE c.concept = t.denominator),
+                   p_mode) AS v
+        WHERE t.kind = 'ratio'
+    ) den ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT sec_gold.get_canonical(
+                   p_cik, t.concept, (h.value_date - INTERVAL '1 year')::date,
+                   ct.qtrs, p_mode) AS v
+        WHERE t.kind = 'growth'
+    ) prior ON TRUE;
 $$;
 
 

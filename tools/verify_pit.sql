@@ -961,3 +961,27 @@ FROM (
            EXISTS (SELECT 1 FROM sec_reference.universe_at('filers_10k_15m_strict', DATE '2015-06-30') WHERE cik = 1515816) AS plym_strict_2015,
            EXISTS (SELECT 1 FROM sec_reference.universe_at('filers_10k_15m_strict', DATE '2018-06-30') WHERE cik = 1515816) AS plym_strict_2018
 ) t;
+
+\echo '=== 55. Ratios and growth: scale-free, same period, never from a non-positive base ==='
+-- Apple FY2024: net income 93.74B over revenue 391.04B; ROE over
+-- September-end equity 56.95B. NVIDIA's FY2024 (year to January 2025)
+-- revenue 130.50B over 60.92B. Boeing FY2024: negative equity and a loss,
+-- so ROE and net income growth must be absent, not negative numbers. The
+-- per-company functions must agree with the panel, as of a date too.
+SELECT CASE WHEN aapl_nm BETWEEN 0.23 AND 0.25 AND aapl_roe BETWEEN 1.6 AND 1.7
+             AND nvda_g BETWEEN 1.13 AND 1.15 AND ba_roe IS NULL AND ba_g IS NULL
+             AND nm_scored >= 1300 AND fn_nm BETWEEN 0.20 AND 0.30 AND asof_nm BETWEEN 0.20 AND 0.25
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       aapl_nm AS apple_net_margin_fy2024, aapl_roe AS apple_roe_fy2024, nvda_g AS nvidia_revenue_growth_fy2024,
+       ba_roe AS boeing_roe_fy2024, ba_g AS boeing_net_income_growth_fy2024,
+       nm_scored AS companies_scored_on_net_margin_fy2024, fn_nm AS apple_latest_annual_net_margin, asof_nm AS apple_net_margin_asof_2015
+FROM (
+    SELECT (SELECT ROUND(value, 4) FROM sec_gold.peer_stats WHERE cik = 320193  AND fiscal_year = 2024 AND concept = 'net_margin'        AND peer_level = 'sector') AS aapl_nm,
+           (SELECT ROUND(value, 4) FROM sec_gold.peer_stats WHERE cik = 320193  AND fiscal_year = 2024 AND concept = 'roe'               AND peer_level = 'sector') AS aapl_roe,
+           (SELECT ROUND(value, 4) FROM sec_gold.peer_stats WHERE cik = 1045810 AND fiscal_year = 2024 AND concept = 'revenue_growth'    AND peer_level = 'sector') AS nvda_g,
+           (SELECT ROUND(value, 4) FROM sec_gold.peer_stats WHERE cik = 12927   AND fiscal_year = 2024 AND concept = 'roe'               AND peer_level = 'sector') AS ba_roe,
+           (SELECT ROUND(value, 4) FROM sec_gold.peer_stats WHERE cik = 12927   AND fiscal_year = 2024 AND concept = 'net_income_growth' AND peer_level = 'sector') AS ba_g,
+           (SELECT COUNT(DISTINCT cik) FROM sec_gold.peer_stats WHERE fiscal_year = 2024 AND concept = 'net_margin' AND peer_level = 'sector') AS nm_scored,
+           (SELECT ROUND(value, 4) FROM sec_gold.latest_annual(320193, 'net_margin') LIMIT 1) AS fn_nm,
+           (SELECT ROUND(value, 4) FROM sec_gold.as_of_latest_annual(320193, 'net_margin', DATE '2015-06-30') LIMIT 1) AS asof_nm
+) t;

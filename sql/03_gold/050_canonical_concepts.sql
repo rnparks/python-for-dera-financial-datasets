@@ -21,6 +21,7 @@
 -- mapping change (peer_stats goes with them and 080 recreates it). It
 -- once dropped only the first two, and a standalone re-run failed on
 -- concept_formula already existing.
+DROP TABLE IF EXISTS sec_gold.concept_ratio       CASCADE;
 DROP TABLE IF EXISTS sec_gold.concept_formula     CASCADE;
 DROP TABLE IF EXISTS sec_gold.concept_tag_map     CASCADE;
 DROP TABLE IF EXISTS sec_gold.canonical_concepts  CASCADE;
@@ -28,7 +29,7 @@ DROP TABLE IF EXISTS sec_gold.canonical_concepts  CASCADE;
 CREATE TABLE sec_gold.canonical_concepts (
     concept       TEXT PRIMARY KEY,
     display_name  TEXT NOT NULL,
-    fact_type     TEXT NOT NULL CHECK (fact_type IN ('flow','balance','ratio','derived')),
+    fact_type     TEXT NOT NULL CHECK (fact_type IN ('flow','balance','ratio','growth','derived')),
     expected_uom  TEXT NOT NULL,
     description   TEXT
 );
@@ -50,7 +51,21 @@ INSERT INTO sec_gold.canonical_concepts VALUES
     -- in concept_formula are assembled from.
     ('cost_of_revenue',      'Cost of Revenue',         'flow',    'USD',       'Cost of goods and services sold'),
     ('debt_noncurrent',      'Long-Term Debt',          'balance', 'USD',       'Debt due beyond one year, excluding the current portion'),
-    ('debt_current',         'Current Debt',            'balance', 'USD',       'Current portion of long-term debt plus short-term borrowings');
+    ('debt_current',         'Current Debt',            'balance', 'USD',       'Current portion of long-term debt plus short-term borrowings'),
+    -- Scale-free concepts, defined in concept_ratio below: a ratio of two
+    -- concepts at one period, or one concept's change over its own prior
+    -- fiscal year. Never priced: nothing here needs a market value.
+    ('gross_margin',         'Gross Margin',            'ratio',   'ratio',     'Gross profit over revenue'),
+    ('operating_margin',     'Operating Margin',        'ratio',   'ratio',     'Operating income over revenue'),
+    ('net_margin',           'Net Margin',              'ratio',   'ratio',     'Net income over revenue'),
+    ('fcf_margin',           'Free Cash Flow Margin',   'ratio',   'ratio',     'Free cash flow over revenue'),
+    ('roe',                  'Return on Equity',        'ratio',   'ratio',     'Net income over fiscal year-end total equity; undefined when equity is not positive'),
+    ('roa',                  'Return on Assets',        'ratio',   'ratio',     'Net income over fiscal year-end total assets'),
+    ('debt_to_equity',       'Debt to Equity',          'ratio',   'ratio',     'Total debt over total equity; undefined when equity is not positive'),
+    ('revenue_growth',       'Revenue Growth',          'growth',  'ratio',     'Revenue change over the prior fiscal year; undefined from a non-positive base'),
+    ('net_income_growth',    'Net Income Growth',       'growth',  'ratio',     'Net income change over the prior fiscal year; undefined from a loss'),
+    ('eps_growth',           'Diluted EPS Growth',      'growth',  'ratio',     'Diluted EPS change over the prior fiscal year; undefined from a loss'),
+    ('operating_cash_flow_growth', 'Operating Cash Flow Growth', 'growth', 'ratio', 'Operating cash flow change over the prior fiscal year; undefined from a non-positive base');
 
 CREATE TABLE sec_gold.concept_tag_map (
     concept          TEXT NOT NULL REFERENCES sec_gold.canonical_concepts (concept) ON DELETE CASCADE,
@@ -297,3 +312,45 @@ COMMENT ON TABLE sec_gold.concept_formula IS
     'Derived concepts as linear combinations of other concepts. One '
     'level deep by design: operands must resolve from tags, never from '
     'another formula. Consulted only when direct tags fail.';
+
+-- ---------------------------------------------------------------
+-- Ratios and growth: scale-free concepts over the ones above.
+-- ---------------------------------------------------------------
+-- A ratio divides two concepts resolved at the SAME period; growth
+-- compares one concept with its own value one fiscal year earlier.
+-- Operands may be filed or formula-derived concepts (free_cash_flow,
+-- total_debt) but never another ratio, so the graph stays two levels
+-- deep at most and nothing can recurse. Where the denominator or the
+-- base is not positive the answer is NULL, deliberately: a return on
+-- negative equity, or growth from a loss, is not a number anyone should
+-- rank on. Consumers: peer_stats (cross-sections, with the same peer
+-- moments and percentiles as dollar concepts), latest_annual and
+-- as_of_latest_annual (per company, so the snapshots carry them).
+CREATE TABLE sec_gold.concept_ratio (
+    concept      TEXT PRIMARY KEY REFERENCES sec_gold.canonical_concepts (concept) ON DELETE CASCADE,
+    kind         TEXT NOT NULL CHECK (kind IN ('ratio', 'growth')),
+    numerator    TEXT NOT NULL REFERENCES sec_gold.canonical_concepts (concept),
+    denominator  TEXT REFERENCES sec_gold.canonical_concepts (concept),
+    notes        TEXT,
+    CHECK ((kind = 'ratio' AND denominator IS NOT NULL) OR (kind = 'growth' AND denominator IS NULL)),
+    CHECK (concept <> numerator AND (denominator IS NULL OR concept <> denominator))
+);
+
+INSERT INTO sec_gold.concept_ratio (concept, kind, numerator, denominator, notes) VALUES
+    ('gross_margin',               'ratio',  'gross_profit',        'revenue',      'gross_profit may itself be revenue - cost_of_revenue'),
+    ('operating_margin',           'ratio',  'operating_income',    'revenue',      NULL),
+    ('net_margin',                 'ratio',  'net_income',          'revenue',      NULL),
+    ('fcf_margin',                 'ratio',  'free_cash_flow',      'revenue',      'free_cash_flow is always a formula'),
+    ('roe',                        'ratio',  'net_income',          'total_equity', 'Fiscal year-end equity, not an average'),
+    ('roa',                        'ratio',  'net_income',          'total_assets', 'Fiscal year-end assets, not an average'),
+    ('debt_to_equity',             'ratio',  'total_debt',          'total_equity', 'total_debt requires the noncurrent component, so this is never current debt alone'),
+    ('revenue_growth',             'growth', 'revenue',             NULL,           NULL),
+    ('net_income_growth',          'growth', 'net_income',          NULL,           NULL),
+    ('eps_growth',                 'growth', 'eps_diluted',         NULL,           NULL),
+    ('operating_cash_flow_growth', 'growth', 'operating_cash_flow', NULL,           NULL);
+
+COMMENT ON TABLE sec_gold.concept_ratio IS
+    'Scale-free concepts: kind = ratio divides numerator by denominator '
+    'at one period; kind = growth compares numerator with its own value '
+    'one fiscal year earlier. NULL where the denominator or base is not '
+    'positive. Operands are never ratios themselves.';

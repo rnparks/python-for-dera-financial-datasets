@@ -183,11 +183,12 @@ full reference including every function signature.
 | `fact_asof` | matview | 97.9M | 33 GB | **Bitemporal facts, every vintage. The backtest source** |
 | `tradable_financials` | matview | 12.4M | 3.5 GB | Latest-restated facts, one row per fact; index membership and GICS dated |
 | `tradable_financials_pit` | matview | 12.4M | 3.6 GB | Earliest-sighting twin |
-| `peer_stats` | matview | 479.6K | 118 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the time |
+| `peer_stats` | matview | 827.9K | 214 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the time |
 | `share_class_shares` | matview | 777.5K | 218 MB | Per-class share counts for 9,654 companies, delisted included — the market-cap denominator |
-| `canonical_concepts` | table | 15 | — | Research taxonomy (revenue, total_debt, …) |
-| `concept_tag_map` | table | 38 | — | Priority-ordered XBRL tag resolution |
+| `canonical_concepts` | table | 26 | — | Research taxonomy (revenue, total_debt, net_margin, revenue_growth, …) |
+| `concept_tag_map` | table | 62 | — | Priority-ordered XBRL tag resolution |
 | `concept_formula` | table | 6 | — | Derived concepts as linear combinations |
+| `concept_ratio` | table | 11 | — | Margins, returns, leverage and year-over-year growth as ratios of concepts |
 | `metric_aliases` | table | 4 | — | Legacy display-name remap |
 
 Plus roughly twenty functions — `get_canonical()`, `latest_annual()`,
@@ -220,11 +221,11 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 54 checks; exits non-zero on any FAIL
+uv run dera verify     # 55 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 
 Covers restatement preservation, availability correctness, crosswalk capture
 quality, share-class summing, derived-concept resolution, and the survivorship /
-future-existence tests on the universe. Checks 29–54 each name the defect found
+future-existence tests on the universe. Checks 29–55 each name the defect found
 in the 2026-09-04 review, or the gap closed since, that they guard against.

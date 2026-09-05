@@ -152,6 +152,39 @@ COMMENT ON FUNCTION sec_gold.as_of_canonical(INTEGER, TEXT, DATE, INTEGER, DATE,
 -- and as_of_canonical evaluates each so every operand shares one
 -- knowledge date. The newest period wins; a filed figure beats a
 -- reconstruction of the same period.
+-- A concept at a given period, as of a date, WITH the moment it became
+-- knowable: the later of its operands' availability when it is a
+-- formula. The ratio and growth branches of as_of_latest_annual need
+-- the availability as well as the value, so the row they return can
+-- say when the ratio itself was knowable.
+DROP FUNCTION IF EXISTS sec_gold.as_of_canonical_at(INTEGER, TEXT, DATE, DATE, INTEGER);
+CREATE FUNCTION sec_gold.as_of_canonical_at(
+    p_cik              INTEGER,
+    p_concept          TEXT,
+    p_value_date       DATE,
+    p_asof             DATE,
+    p_buffer_sessions  INTEGER DEFAULT 0
+)
+RETURNS TABLE (value NUMERIC, tradable_from DATE)
+LANGUAGE sql STABLE AS $$
+    WITH ct AS (
+        SELECT CASE WHEN fact_type = 'balance' THEN 0 ELSE 4 END AS qtrs
+        FROM sec_gold.canonical_concepts WHERE concept = p_concept
+    ),
+    k AS (SELECT sec_gold.shift_sessions(p_asof, p_buffer_sessions) AS d)
+    SELECT sec_gold.as_of_canonical(p_cik, p_concept, p_value_date, ct.qtrs, p_asof, p_buffer_sessions),
+           (SELECT MAX(f.tradable_from)
+              FROM sec_gold.fact_asof f
+              JOIN sec_gold.concept_tag_map m ON m.tag = f.tag
+              CROSS JOIN k
+             WHERE f.cik = p_cik AND f.value_date = p_value_date AND f.qtrs = ct.qtrs
+               AND f.tradable_from <= k.d
+               AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
+               AND (m.concept = p_concept
+                    OR m.concept IN (SELECT operand FROM sec_gold.concept_formula WHERE concept = p_concept)))
+    FROM ct;
+$$;
+
 DROP FUNCTION IF EXISTS sec_gold.as_of_latest_annual(INTEGER, TEXT, DATE, INTEGER);
 
 CREATE FUNCTION sec_gold.as_of_latest_annual(
@@ -167,9 +200,17 @@ RETURNS TABLE (
     tag            TEXT
 )
 LANGUAGE sql STABLE AS $$
-    WITH concept_type AS (
-        SELECT CASE WHEN fact_type = 'balance' THEN 0 ELSE 4 END AS qtrs
-        FROM sec_gold.canonical_concepts WHERE concept = p_concept
+    -- Ratio and growth concepts resolve through their base concept,
+    -- exactly as in latest_annual (070); every operand shares the one
+    -- knowledge date.
+    WITH target AS (
+        SELECT COALESCE(r.numerator, x.c) AS concept, r.kind, r.denominator
+        FROM (SELECT p_concept AS c) x
+        LEFT JOIN sec_gold.concept_ratio r ON r.concept = x.c
+    ),
+    concept_type AS (
+        SELECT CASE WHEN c.fact_type = 'balance' THEN 0 ELSE 4 END AS qtrs
+        FROM target t JOIN sec_gold.canonical_concepts c ON c.concept = t.concept
     ),
     k AS (SELECT sec_gold.shift_sessions(p_asof, p_buffer_sessions) AS d),
     direct_hit AS (
@@ -179,7 +220,7 @@ LANGUAGE sql STABLE AS $$
         LEFT JOIN sec_reference.company c ON c.cik = f.cik
         CROSS JOIN concept_type ct
         CROSS JOIN k
-        WHERE m.concept = p_concept
+        WHERE m.concept = (SELECT concept FROM target)
           AND f.cik = p_cik
           AND f.qtrs = ct.qtrs
           AND f.value IS NOT NULL
@@ -195,7 +236,7 @@ LANGUAGE sql STABLE AS $$
         SELECT x.value_date, x.tradable_from, x.value, NULL::TEXT AS tag
         FROM (
             SELECT d.value_date, d.tradable_from,
-                   sec_gold.as_of_canonical(p_cik, p_concept, d.value_date,
+                   sec_gold.as_of_canonical(p_cik, (SELECT concept FROM target), d.value_date,
                                             ct.qtrs, p_asof, p_buffer_sessions) AS value
             FROM (
                 -- tradable_from of the derived figure is the moment its
@@ -207,7 +248,7 @@ LANGUAGE sql STABLE AS $$
                 LEFT JOIN sec_reference.company c ON c.cik = f.cik
                 CROSS JOIN concept_type ct
                 CROSS JOIN k
-                WHERE fm.concept = p_concept
+                WHERE fm.concept = (SELECT concept FROM target)
                   AND f.cik = p_cik
                   AND f.qtrs = ct.qtrs
                   AND f.value IS NOT NULL
@@ -224,14 +265,40 @@ LANGUAGE sql STABLE AS $$
         ORDER BY x.value_date DESC
         LIMIT 1
     )
-    SELECT u.value_date, u.tradable_from, u.value, u.tag
-    FROM (
-        SELECT dh.value_date, dh.tradable_from, dh.value, dh.tag, 0 AS pref FROM direct_hit  dh
-        UNION ALL
-        SELECT xh.value_date, xh.tradable_from, xh.value, xh.tag, 1 AS pref FROM derived_hit xh
-    ) u
-    ORDER BY u.value_date DESC, u.pref ASC
-    LIMIT 1;
+    , hit AS (
+        SELECT u.value_date, u.tradable_from, u.value, u.tag
+        FROM (
+            SELECT dh.value_date, dh.tradable_from, dh.value, dh.tag, 0 AS pref FROM direct_hit  dh
+            UNION ALL
+            SELECT xh.value_date, xh.tradable_from, xh.value, xh.tag, 1 AS pref FROM derived_hit xh
+        ) u
+        ORDER BY u.value_date DESC, u.pref ASC
+        LIMIT 1
+    )
+    -- Ratio: denominator at the hit's period; growth: the base one year
+    -- earlier. Both through as_of_canonical, so the same knowledge date
+    -- bounds every operand. tradable_from is the later of the two.
+    SELECT h.value_date,
+           GREATEST(h.tradable_from, den.t, prior.t) AS tradable_from,
+           CASE t.kind
+               WHEN 'ratio'  THEN CASE WHEN den.v   > 0 THEN h.value / den.v END
+               WHEN 'growth' THEN CASE WHEN prior.v > 0 THEN (h.value - prior.v) / prior.v END
+               ELSE h.value
+           END AS value,
+           CASE WHEN t.kind IS NULL THEN h.tag END AS tag
+    FROM hit h
+    CROSS JOIN target t
+    CROSS JOIN concept_type ct
+    LEFT JOIN LATERAL (
+        SELECT la.value AS v, la.tradable_from AS t
+        FROM sec_gold.as_of_canonical_at(p_cik, t.denominator, h.value_date, p_asof, p_buffer_sessions) la
+        WHERE t.kind = 'ratio'
+    ) den ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT la.value AS v, la.tradable_from AS t
+        FROM sec_gold.as_of_canonical_at(p_cik, t.concept, (h.value_date - INTERVAL '1 year')::date, p_asof, p_buffer_sessions) la
+        WHERE t.kind = 'growth'
+    ) prior ON TRUE;
 $$;
 
 -- ---------------------------------------------------------------

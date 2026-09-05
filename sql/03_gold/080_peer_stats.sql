@@ -62,17 +62,23 @@ DROP MATERIALIZED VIEW IF EXISTS sec_gold.peer_stats                  CASCADE;
 -- every fiscal year, survivorship bias by construction.
 
 CREATE MATERIALIZED VIEW sec_gold.peer_stats AS
-WITH direct AS (
+WITH picked AS (
     -- One value per (company, concept, fiscal year), picking the
     -- best-priority tag. Industry-specific tag rows are eligible and
     -- preferred where the company's SIC matches; excluding them used to
     -- leave banks resolving to generic tags or to nothing at all.
+    --
+    -- Membership is joined AFTER this pick, on ~110K rows, not before it
+    -- on ~15M. Joined before, the planner estimated the fact side at 77
+    -- rows, materialised it and nested-looped the 2,931-row timeline
+    -- over it -- a build that took 16 seconds ran past ten minutes,
+    -- twice. Picking first makes the join's cost independent of that
+    -- estimate. Since 6b put every balance on the fiscal year-end, the
+    -- rows a company-year can pick from share one date, so filtering on
+    -- membership after the pick decides the same population.
     SELECT DISTINCT ON (tf.cik, m.concept, sec_gold.fiscal_year_of(tf.value_date))
         tf.cik,
         tf.ticker,
-        mem.index_name,
-        mem.gics_sector,
-        mem.gics_sub_industry,
         m.concept,
         c.fact_type,
         sec_gold.fiscal_year_of(tf.value_date) AS fiscal_year,
@@ -83,12 +89,6 @@ WITH direct AS (
     JOIN sec_gold.concept_tag_map      m ON m.tag = tf.tag
     JOIN sec_gold.canonical_concepts   c ON c.concept = m.concept
     LEFT JOIN sec_reference.company    co ON co.cik = tf.cik
-    -- Membership and classification on the period end date, from the
-    -- non-overlapping timeline (05_spine/020, section 3c).
-    JOIN sec_reference.index_membership_timeline mem
-      ON mem.cik = tf.cik
-     AND mem.valid_from <= tf.value_date
-     AND (mem.valid_to IS NULL OR mem.valid_to > tf.value_date)
     WHERE tf.qtrs = CASE WHEN c.fact_type = 'balance' THEN 0 ELSE 4 END
       AND tf.value IS NOT NULL
       -- A BALANCE BELONGS TO ITS FISCAL YEAR-END. fiscal_year_of() maps a
@@ -115,6 +115,20 @@ WITH direct AS (
         m.sic_prefix <> '' DESC,
         m.priority ASC,
         tf.value_date DESC
+),
+-- Membership and classification on the period end date, from the
+-- non-overlapping timeline (05_spine/020, section 3c). A company-year
+-- whose period end falls outside every membership interval is not in
+-- the panel: the cross-section is the index of the time.
+direct AS (
+    SELECT p.cik, p.ticker,
+           mem.index_name, mem.gics_sector, mem.gics_sub_industry,
+           p.concept, p.fact_type, p.fiscal_year, p.value_date, p.tradable_from, p.value
+    FROM picked p
+    JOIN sec_reference.index_membership_timeline mem
+      ON mem.cik = p.cik
+     AND mem.valid_from <= p.value_date
+     AND (mem.valid_to IS NULL OR mem.valid_to > p.value_date)
 ),
 -- Derived concepts, assembled from what the tag walk just resolved.
 --
@@ -158,15 +172,81 @@ resolved AS (
     UNION ALL
     SELECT * FROM derived
 ),
+-- Scale-free concepts (concept_ratio). A ratio divides two resolved
+-- concepts of the same company and fiscal year -- and since a balance
+-- row is the fiscal year-end balance, ROE is FY net income over FY-end
+-- equity. Growth compares a concept with the company's own prior fiscal
+-- year, and only when that prior period really is one year back: a
+-- fiscal-year change or a gap in filings must not read as growth. A
+-- denominator or base that is not positive gives no row at all rather
+-- than a number nobody should rank on. These then get the same peer
+-- moments and percentiles as the dollar concepts, which is the point:
+-- a z-score on net margin means something a z-score on revenue does not.
+--
+-- Shape matters here: `resolved` is a CTE, and a self-join on a CTE
+-- gets no index and a row estimate the planner cannot trust -- the first
+-- version was a nested loop over 110K rows a side and ran past ten
+-- minutes. Ratios therefore come from one GROUP BY per company-year
+-- (the concepts folded into a jsonb map, which keeps numeric exact) and
+-- growth from a window function; neither joins `resolved` to itself.
+by_key AS (
+    SELECT cik, fiscal_year,
+           MAX(ticker) AS ticker, MAX(index_name) AS index_name,
+           MAX(gics_sector) AS gics_sector, MAX(gics_sub_industry) AS gics_sub_industry,
+           jsonb_object_agg(concept, value)         AS vals,
+           jsonb_object_agg(concept, value_date)    AS dates,
+           jsonb_object_agg(concept, tradable_from) AS avail
+    FROM resolved
+    GROUP BY cik, fiscal_year
+),
+ratios AS (
+    SELECT k.cik, k.ticker, k.index_name, k.gics_sector, k.gics_sub_industry,
+           r.concept, c.fact_type, k.fiscal_year,
+           (k.dates ->> r.numerator)::date AS value_date,
+           GREATEST((k.avail ->> r.numerator)::date, (k.avail ->> r.denominator)::date) AS tradable_from,
+           (k.vals ->> r.numerator)::numeric / (k.vals ->> r.denominator)::numeric AS value
+    FROM by_key k
+    CROSS JOIN sec_gold.concept_ratio r
+    JOIN sec_gold.canonical_concepts c ON c.concept = r.concept
+    WHERE r.kind = 'ratio'
+      AND (k.vals ->> r.numerator)   IS NOT NULL
+      AND (k.vals ->> r.denominator) IS NOT NULL
+      AND (k.vals ->> r.denominator)::numeric > 0
+),
+growth AS (
+    SELECT g.cik, g.ticker, g.index_name, g.gics_sector, g.gics_sub_industry,
+           g.concept, g.fact_type, g.fiscal_year, g.value_date, g.tradable_from,
+           (g.value - g.prior_value) / g.prior_value AS value
+    FROM (
+        SELECT x.cik, x.ticker, x.index_name, x.gics_sector, x.gics_sub_industry,
+               r.concept, c.fact_type, x.fiscal_year, x.value_date, x.tradable_from, x.value,
+               LAG(x.value)       OVER w AS prior_value,
+               LAG(x.fiscal_year) OVER w AS prior_fiscal_year,
+               LAG(x.value_date)  OVER w AS prior_value_date
+        FROM sec_gold.concept_ratio r
+        JOIN sec_gold.canonical_concepts c ON c.concept = r.concept
+        JOIN resolved x ON x.concept = r.numerator
+        WHERE r.kind = 'growth'
+        WINDOW w AS (PARTITION BY r.concept, x.cik ORDER BY x.fiscal_year)
+    ) g
+    WHERE g.prior_fiscal_year = g.fiscal_year - 1
+      AND g.prior_value > 0
+      AND g.value_date - g.prior_value_date BETWEEN 300 AND 430
+),
+resolved_all AS (
+    SELECT * FROM resolved
+    UNION ALL SELECT * FROM ratios
+    UNION ALL SELECT * FROM growth
+),
 -- Fan the same resolved population out across both grouping levels.
 -- `peer_group` carries whichever label applies, so every downstream
 -- calculation is written once rather than duplicated per level.
 levelled AS (
     SELECT r.*, 'sector'::TEXT AS peer_level, r.gics_sector AS peer_group
-    FROM resolved r WHERE r.gics_sector IS NOT NULL
+    FROM resolved_all r WHERE r.gics_sector IS NOT NULL
     UNION ALL
     SELECT r.*, 'sub_industry'::TEXT, r.gics_sub_industry
-    FROM resolved r WHERE r.gics_sub_industry IS NOT NULL
+    FROM resolved_all r WHERE r.gics_sub_industry IS NOT NULL
 ),
 moments AS (
     SELECT
