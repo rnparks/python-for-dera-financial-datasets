@@ -188,7 +188,7 @@ full reference including every function signature.
 | `peer_stats` | matview | 636.2K | 163 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the day for all three indexes |
 | `share_class_shares` | matview | 777.5K | 218 MB | Per-class share counts for 9,654 companies, delisted included — the market-cap denominator |
 | `canonical_concepts` | table | 26 | — | Research taxonomy (revenue, total_debt, net_margin, revenue_growth, …) |
-| `concept_tag_map` | table | 62 | — | Priority-ordered XBRL tag resolution |
+| `concept_tag_map` | table | 63 | — | Priority-ordered XBRL tag resolution |
 | `concept_formula` | table | 6 | — | Derived concepts as linear combinations |
 | `concept_ratio` | table | 11 | — | Margins, returns, leverage and year-over-year growth as ratios of concepts |
 | `metric_aliases` | table | 4 | — | Legacy display-name remap |
@@ -224,11 +224,11 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 59 checks; exits non-zero on any FAIL
+uv run dera verify     # 60 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 
 Covers restatement preservation, availability correctness, crosswalk capture
 quality, share-class summing, derived-concept resolution, and the survivorship /
-future-existence tests on the universe. Checks 29–59 each name the defect found
+future-existence tests on the universe. Checks 29–60 each name the defect found
 in the 2026-09-04 review, or the gap closed since, that they guard against.

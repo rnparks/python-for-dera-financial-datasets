@@ -237,8 +237,28 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
     ('debt_current',    'ShortTermBorrowings',                          10, 'Short-term borrowings alone; last because DebtCurrent already includes them when both are filed');
 
 -- Operating cash flow ---------------------------------------------
+-- TAG-NAME FAMILIES, and how this table treats each. The taxonomy
+-- spells one idea several ways, and the rule differs by family:
+--   * Current / Noncurrent / IncludingCurrentMaturities: components and
+--     totals of a balance -- mapped to the component concepts or the
+--     total, never both (see total_debt).
+--   * IncludingAssessedTax / ExcludingAssessedTax: the same revenue with
+--     or without pass-through taxes -- both mapped, excluding first.
+--   * ContinuingOperations: a subtotal that excludes discontinued
+--     operations. For a cash-flow subtotal it is what a filer reports
+--     INSTEAD of the plain tag when its statement has that line, and
+--     for a filer with no discontinued operations it is the same
+--     number: 5,331 companies use it for operating cash flow, 3,944 of
+--     them with no plain tag at the same period (27,213 filings, Apple's
+--     FY2014 and FY2015 10-Ks among them; measured 2026-09-05), which
+--     left free_cash_flow, fcf_margin and OCF growth missing or stale
+--     for all of them. Mapped at priority 2, so the plain tag wins
+--     where both exist. Income-statement ContinuingOperations tags
+--     (IncomeLossFromContinuingOperations) are a DIFFERENT concept from
+--     net income and are not mapped to it.
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
-    ('operating_cash_flow', 'NetCashProvidedByUsedInOperatingActivities', 1, 'Near-universal');
+    ('operating_cash_flow', 'NetCashProvidedByUsedInOperatingActivities',                     1, 'Near-universal'),
+    ('operating_cash_flow', 'NetCashProvidedByUsedInOperatingActivitiesContinuingOperations', 2, 'The continuing-operations subtotal, filed instead of the plain tag by 3,944 companies (Apple FY2014-15)');
 
 -- Capex ------------------------------------------------------------
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES

@@ -1131,3 +1131,23 @@ FROM (
            (SELECT COUNT(*) FROM sec_reference.index_membership m JOIN sec_reference.cik_succession c
               ON c.old_cik = m.cik AND m.valid_to = c.handoff_date) AS rekeyed
 ) t;
+
+\echo '=== 60. Operating cash flow resolves where only the continuing-operations tag is filed ==='
+-- Apple's FY2014 10-K tags operating cash flow only as
+-- NetCashProvidedByUsedInOperatingActivitiesContinuingOperations (59.7B).
+-- As of 2015-06-30 the concept must resolve to FY2014, not FY2013, and
+-- so must the free-cash-flow margin built on it; the FY2024 panel must
+-- cover the S&P 500 members that file only the variant (10 of them).
+SELECT CASE WHEN aapl_date = DATE '2014-09-30' AND aapl_bn BETWEEN 59 AND 60 AND fcfm_date = DATE '2014-09-30'
+             AND ocf_fy2024 >= 1400 AND sp500_ocf >= 495
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       aapl_date AS apple_ocf_period_asof_2015, aapl_bn, fcfm_date AS apple_fcf_margin_period_asof_2015,
+       ocf_fy2024 AS companies_with_fy2024_ocf, sp500_ocf AS sp500_members_with_fy2024_ocf
+FROM (
+    SELECT (SELECT value_date FROM sec_gold.as_of_latest_annual(320193, 'operating_cash_flow', DATE '2015-06-30') LIMIT 1) AS aapl_date,
+           (SELECT ROUND(value/1e9, 1) FROM sec_gold.as_of_latest_annual(320193, 'operating_cash_flow', DATE '2015-06-30') LIMIT 1) AS aapl_bn,
+           (SELECT value_date FROM sec_gold.as_of_latest_annual(320193, 'fcf_margin', DATE '2015-06-30') LIMIT 1) AS fcfm_date,
+           (SELECT COUNT(DISTINCT cik) FROM sec_gold.peer_stats WHERE fiscal_year = 2024 AND concept = 'operating_cash_flow' AND peer_level = 'sector') AS ocf_fy2024,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2024-12-31') m
+             WHERE EXISTS (SELECT 1 FROM sec_gold.peer_stats p WHERE p.cik = m.cik AND p.fiscal_year = 2024 AND p.concept = 'operating_cash_flow')) AS sp500_ocf
+) t;

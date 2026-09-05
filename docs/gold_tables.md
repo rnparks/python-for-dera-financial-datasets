@@ -307,9 +307,22 @@ The resolution rules that turn a concept into an actual XBRL tag, walked in orde
 | `cost_of_revenue` | 1–2 | any | `CostOfGoodsAndServicesSold`, `CostOfRevenue` | Operands for the `gross_profit` formula |
 | `debt_noncurrent` | 1–8 | any | `LongTermDebtNoncurrent`, `LongTermDebtAndCapitalLeaseObligations`, `LongTermNotesPayable`, `LongTermNotesAndLoans`, `UnsecuredLongTermDebt`, `SeniorLongTermNotes`, `ConvertibleLongTermNotesPayable`, `ConvertibleDebtNoncurrent` | Operand for `total_debt`, **required**; broad to narrow |
 | `debt_current` | 1–10 | any | `LongTermDebtCurrent`, `LongTermDebtAndCapitalLeaseObligationsCurrent`, `DebtCurrent`, `NotesPayableCurrent`, `NotesAndLoansPayableCurrent`, `UnsecuredDebtCurrent`, `SeniorNotesCurrent`, `ConvertibleNotesPayableCurrent`, `ConvertibleDebtCurrent`, `ShortTermBorrowings` | Operand for `total_debt`, optional |
-| `operating_cash_flow` | 1 | any | `NetCashProvidedByUsedInOperatingActivities` | Near-universal |
+| `operating_cash_flow` | 1–2 | any | `NetCashProvidedByUsedInOperatingActivities`, `NetCashProvidedByUsedInOperatingActivitiesContinuingOperations` | Near-universal; the continuing-operations subtotal is what 3,944 companies file instead of it (Apple FY2014–15) |
 
-Add coverage for a new tag with a plain `INSERT` — no function changes needed. `concept_tag_map` holds 62 rows (2026-09-04). Every tag is a us-gaap element; custom extensions are never mapped, which is why APA (revenue under `apa:RevenuesAndOther`) and issuers tagging debt by segment (GM, PACCAR, Textron, Deere) stay unresolved rather than wrong.
+Add coverage for a new tag with a plain `INSERT` — no function changes needed. `concept_tag_map` holds 63 rows (2026-09-05).
+
+#### Tag-name families
+
+The taxonomy spells one idea several ways, and the map treats each family by a stated rule rather than by resemblance:
+
+| Family | Example | Rule |
+|---|---|---|
+| `…Current` / `…Noncurrent` / `…IncludingCurrentMaturities` | `LongTermDebtNoncurrent`, `LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities` | Components map to the component concepts (`debt_current`, `debt_noncurrent`); a total maps to `total_debt`; never both for one tag |
+| `…IncludingAssessedTax` / `…ExcludingAssessedTax` | `RevenueFromContractWithCustomerExcludingAssessedTax` | Both map to `revenue`, excluding first |
+| `…ContinuingOperations` on a cash-flow subtotal | `NetCashProvidedByUsedInOperatingActivitiesContinuingOperations` | Mapped at a lower priority than the plain tag: a filer whose statement has that line reports it *instead of* the plain tag, and for a filer with no discontinued operations it is the same number. 5,331 companies use it for operating cash flow, 3,944 with no plain tag at the same period, Apple's FY2014 and FY2015 10-Ks among them; unmapped, their free cash flow, FCF margin and OCF growth were missing or stale |
+| `…ContinuingOperations` on the income statement | `IncomeLossFromContinuingOperations` | A different concept from `net_income` (it excludes discontinued operations); not mapped |
+| Industry variants | `RevenuesNetOfInterestExpense`, `InterestAndDividendIncomeOperating` | Mapped under a `sic_prefix` so they outrank the generic rows only for that industry |
+| Custom extensions | `apa:RevenuesAndOther` | Never mapped; `num.version` says which tags are us-gaap | Every tag is a us-gaap element; custom extensions are never mapped, which is why APA (revenue under `apa:RevenuesAndOther`) and issuers tagging debt by segment (GM, PACCAR, Textron, Deere) stay unresolved rather than wrong.
 
 **Known gaps** (tracked in `features.md`): a few hundred issuers (notably NVDA capex) use custom extension tags not mapped here.
 
