@@ -91,11 +91,19 @@ def _copy_file(
     path: Path,
     table: str,
     columns: tuple[str, ...],
+    quarter: str,
 ) -> int:
-    """Stream *path* into *table* via COPY FROM STDIN. Returns row count."""
+    """Stream *path* into *table* via COPY FROM STDIN. Returns row count.
+
+    ``source_quarter`` is not in the column list; it is filled by the
+    table DEFAULT, which reads the transaction-local setting made here.
+    One pass over the file, no staging table, and a row can never land
+    without its quarter.
+    """
     col_list = ", ".join(columns)
     sql = f"COPY {table} ({col_list}) FROM STDIN WITH ({_COPY_OPTIONS})"
     with open(path, "rb") as fh, conn.cursor() as cur:
+        cur.execute("SELECT set_config('dera.load_quarter', %s, true)", (quarter,))
         with cur.copy(sql) as cp:
             while chunk := fh.read(_CHUNK_BYTES):
                 cp.write(chunk)
@@ -116,21 +124,21 @@ def load_quarter(
     if any header has drifted from the expected schema.
 
     Refuses a quarter that ``sec_raw.load_log`` already lists unless
-    *force* is set. Bronze has no quarter column, so a second COPY of the
-    same quarter cannot be told apart from the first and simply doubles
-    every row for it; the only way back is a full truncate and reload.
-    Nothing in the pipeline needs to load a quarter twice, so the guard
-    costs nothing and the footgun goes away.
+    *force* is set, and with *force* REPLACES it: every bronze row
+    carrying that ``source_quarter`` is deleted first, in the same
+    transaction as the new COPY, so a re-published quarter lands exactly
+    once. Before bronze had the column a second COPY simply doubled the
+    quarter and the only way back was a full reload.
     """
     _ensure_load_log(conn)
-    if not force and quarter_dir.name in loaded_quarters(conn):
-        raise QuarterAlreadyLoaded(
-            f"{quarter_dir.name} is already in sec_raw.load_log. Loading it "
-            "again would duplicate every bronze row for that quarter, and "
-            "bronze has no quarter column to replace by. Use "
-            "`dera load --truncate --full` to reload everything, or "
-            "`--force` if you have removed the rows yourself."
-        )
+    if quarter_dir.name in loaded_quarters(conn):
+        if not force:
+            raise QuarterAlreadyLoaded(
+                f"{quarter_dir.name} is already in sec_raw.load_log. Use "
+                "`--force` to replace its rows, or `dera load --truncate "
+                "--full` to reload everything."
+            )
+        delete_quarter(conn, quarter_dir.name)
     counts: dict[str, int] = {}
     for filename, expected in EXPECTED_COLUMNS.items():
         path = quarter_dir / filename
@@ -138,7 +146,7 @@ def load_quarter(
             raise FileNotFoundError(f"{path} not found")
         _verify_header(path, expected)
         table = TARGET_TABLES[filename]
-        counts[filename] = _copy_file(conn, path, table, expected)
+        counts[filename] = _copy_file(conn, path, table, expected, quarter_dir.name)
         print(f"  {filename:<10} → {table:<20} {counts[filename]:>10,} rows")
     _record_loaded(conn, quarter_dir.name, counts)
     return counts
@@ -189,6 +197,21 @@ def load_all(
             conn.rollback()
             raise
     return result
+
+
+def delete_quarter(conn: psycopg.Connection, quarter: str) -> dict[str, int]:
+    """Remove one quarter's rows from all four bronze tables and the log.
+
+    Sequential over num_raw (30 GB, no quarter index by design); a rare
+    operation, so a few minutes is acceptable. Returns rows removed.
+    """
+    removed: dict[str, int] = {}
+    with conn.cursor() as cur:
+        for table in TARGET_TABLES.values():
+            cur.execute(f"DELETE FROM {table} WHERE source_quarter = %s", (quarter,))
+            removed[table] = cur.rowcount or 0
+        cur.execute("DELETE FROM sec_raw.load_log WHERE quarter = %s", (quarter,))
+    return removed
 
 
 def truncate_bronze(conn: psycopg.Connection) -> None:

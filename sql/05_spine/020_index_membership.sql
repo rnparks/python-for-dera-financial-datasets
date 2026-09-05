@@ -24,16 +24,50 @@
 --                             one interval and starts the next, so the
 --                             classification is as of the fact date.
 --
--- The S&P 400 and 600 have no replayable history yet (their pages carry
--- a CIK column from 2019 and never, respectively), so their membership
--- is today's snapshot as a single interval from 1900-01-01 with source
--- 'current_snapshot'. That is exactly the survivorship-biased state
--- gold was in for every index before this file; it is now confined to
--- two indexes and labelled, and disappears per index as history is
--- replayed.
+-- All three indexes are replayed: the S&P 500 from 2008, the S&P 400
+-- from 2011 (no CIK column ever; the dated crosswalk resolves it) and
+-- the S&P 600 from 2018 (see section 0 for what its early page was).
+-- An index with no observations at all would still fall back to today's
+-- snapshot, labelled 'current_snapshot'; none does now.
 --
 -- Runs after 010_company_spine.sql (it reads company_ticker to check
 -- that a resolved CIK really held the ticker) and before 06_security.
+
+-- ---------------------------------------------------------------
+-- 0. Sightings: the observations, less the rows that were never the
+--    index. THE EARLY S&P 600 PAGE WAS THE S&P 1000. From its first
+--    revision (2018-08-30) until 2021-02 the "List of S&P 600 companies"
+--    table held 950-1,061 rows: measured on 2019-06-22, 994 rows of which
+--    395 were on that month's S&P 400 page and 599 were not. The 599 are
+--    the 600. So for an SP600 capture of more than 700 rows, a ticker the
+--    closest S&P 400 capture (within 45 days) also lists is a mid-cap and
+--    is not a sighting. Evidence-based, not a guess: both pages are
+--    captures of the same month. index_observation stays the raw record.
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sec_reference.index_sighting (LIKE sec_reference.index_observation INCLUDING ALL);
+
+TRUNCATE sec_reference.index_sighting;
+INSERT INTO sec_reference.index_sighting
+WITH raw_size AS (
+    SELECT index_name, observed_on, COUNT(*) AS n FROM sec_reference.index_observation GROUP BY 1, 2
+)
+SELECT o.*
+FROM sec_reference.index_observation o
+JOIN raw_size r USING (index_name, observed_on)
+WHERE NOT (
+    o.index_name = 'SP600' AND r.n > 700
+    AND EXISTS (
+        SELECT 1 FROM sec_reference.index_observation m
+        WHERE m.index_name = 'SP400' AND m.ticker = o.ticker
+          AND m.observed_on = (SELECT x.observed_on FROM raw_size x
+                                WHERE x.index_name = 'SP400'
+                                  AND x.observed_on BETWEEN o.observed_on - 45 AND o.observed_on + 45
+                                ORDER BY ABS(x.observed_on - o.observed_on) LIMIT 1)));
+
+COMMENT ON TABLE sec_reference.index_sighting IS
+    'index_observation after the S&P 1000 rule: rows of an oversized '
+    'S&P 600 capture that the same month''s S&P 400 page also lists are '
+    'removed. What capture quality and membership are derived from.';
 
 -- ---------------------------------------------------------------
 -- 1. Capture quality.
@@ -57,13 +91,25 @@ INSERT INTO sec_reference.index_capture
 SELECT index_name, observed_on, revid,
        ROW_NUMBER() OVER (PARTITION BY index_name ORDER BY observed_on)::INTEGER AS sn,
        n_rows, window_max,
-       n_rows < 0.85 * window_max AS is_partial
+       -- Undersized against its neighbours, or -- for the S&P 600 -- not
+       -- about 600 rows after the S&P 1000 subtraction: the two pages
+       -- drifted apart from 2019-12 (620-625 rows) and the last S&P 1000
+       -- captures (2020-12 to 2021-02) keep 713-755. Such a capture is not
+       -- a list of the 600; its sightings are not used and, being partial,
+       -- its silence closes nothing, so the bridging rules carry members
+       -- seen on both sides across the gap.
+       (n_rows < 0.85 * window_max)
+       OR (index_name = 'SP600' AND n_rows NOT BETWEEN 570 AND 615) AS is_partial
 FROM (
     SELECT index_name, observed_on, revid, n_rows,
-           MAX(n_rows) OVER (PARTITION BY index_name ORDER BY observed_on
-                             ROWS BETWEEN 6 PRECEDING AND 6 FOLLOWING) AS window_max
+           -- An oversized S&P 600 capture is not a list of the 600 and must
+           -- not set the bar its neighbours are judged against: with it in
+           -- the window every plain 601-row capture of 2021 read as partial.
+           MAX(CASE WHEN index_name = 'SP600' AND n_rows NOT BETWEEN 570 AND 615 THEN NULL ELSE n_rows END)
+               OVER (PARTITION BY index_name ORDER BY observed_on
+                     ROWS BETWEEN 6 PRECEDING AND 6 FOLLOWING) AS window_max
     FROM (SELECT index_name, observed_on, MIN(revid) AS revid, COUNT(*) AS n_rows
-          FROM sec_reference.index_observation GROUP BY 1, 2) c
+          FROM sec_reference.index_sighting GROUP BY 1, 2) c
 ) s;
 
 -- ---------------------------------------------------------------
@@ -120,8 +166,15 @@ TRUNCATE sec_reference.index_observation_resolved, sec_reference.index_membershi
 INSERT INTO sec_reference.index_observation_resolved
 WITH obs AS (
     SELECT o.*, c.sn
-    FROM sec_reference.index_observation o
+    FROM sec_reference.index_sighting o
     JOIN sec_reference.index_capture c USING (index_name, observed_on)
+    -- An S&P 600 capture is usable only when what remains after the S&P
+    -- 1000 subtraction is about 600 rows. Where the two pages had drifted
+    -- apart (2019-12 to 2021-02: 620-756 rows) the derived list was 75-80%
+    -- right, which is the kind of plausible-but-wrong the project refuses:
+    -- those captures are unused, and partial, so members seen on both
+    -- sides bridge across and nobody is invented in between.
+    WHERE NOT (o.index_name = 'SP600' AND c.n_rows NOT BETWEEN 570 AND 615)
 ),
 -- Islands of unbroken presence per (index, ticker), in capture numbers.
 runs AS (
@@ -133,10 +186,47 @@ runs AS (
 -- applies to the whole run.
 run_cik AS (
     SELECT index_name, ticker, run_key,
-           (ARRAY_AGG(cik ORDER BY sn) FILTER (WHERE cik IS NOT NULL))[1] AS run_cik,
            MIN(observed_on) AS first_seen, MAX(observed_on) AS last_seen,
            (ARRAY_AGG(name ORDER BY sn DESC))[1] AS last_name
     FROM runs GROUP BY index_name, ticker, run_key
+),
+-- The CIK for a run. The page's CIK column is evidence, not authority:
+-- the S&P 1000-era S&P 600 page (2018-2021) carried most CIKs with an
+-- extra trailing zero (Southwestern Energy 73320 for 7332, Oceaneering
+-- 737560 for 73756) and AAR Corp appears as 17500 in 13 captures. SEC's
+-- own dated crosswalk is the authority for which company held a ticker
+-- on a date, so: a page CIK the crosswalk confirms wins; if the crosswalk
+-- has an answer the page does not match, the crosswalk wins; only when
+-- the crosswalk is silent (before 2018-12 for a ticker with no
+-- back-extension) does the page's most frequent CIK stand alone. One
+-- CIK per run: within an unbroken run the ticker is one company.
+run_xw AS (
+    SELECT rc.index_name, rc.ticker, rc.run_key,
+           sec_reference.cik_at(rc.ticker, rc.last_seen) AS xw_cik
+    FROM run_cik rc
+),
+run_page AS (
+    SELECT DISTINCT ON (p.index_name, p.ticker, p.run_key)
+           p.index_name, p.ticker, p.run_key, p.cik AS page_cik, x.xw_cik
+    FROM (SELECT r.index_name, r.ticker, r.run_key, r.cik, COUNT(*) AS n
+          FROM runs r
+          -- A CIK that never filed anything is not a CIK; the S&P 1000-era
+          -- page's trailing-zero values (73320, 737560 ...) fall out here
+          -- and the run resolves through the crosswalk or the name instead.
+          WHERE r.cik IS NOT NULL
+            AND EXISTS (SELECT 1 FROM sec_reference.company c WHERE c.cik = r.cik)
+          GROUP BY 1, 2, 3, 4) p
+    JOIN run_xw x USING (index_name, ticker, run_key)
+    ORDER BY p.index_name, p.ticker, p.run_key, (p.cik = x.xw_cik) DESC NULLS LAST, p.n DESC
+),
+run_resolved AS (
+    SELECT x.index_name, x.ticker, x.run_key,
+           CASE WHEN rp.page_cik IS NOT NULL AND (x.xw_cik IS NULL OR rp.page_cik = x.xw_cik) THEN rp.page_cik
+                ELSE x.xw_cik END AS cik,
+           CASE WHEN rp.page_cik IS NOT NULL AND (x.xw_cik IS NULL OR rp.page_cik = x.xw_cik) THEN 'page'
+                WHEN x.xw_cik IS NOT NULL THEN 'crosswalk' END AS cik_source
+    FROM run_xw x
+    LEFT JOIN run_page rp USING (index_name, ticker, run_key)
 ),
 spine_names AS (
     SELECT cik, sec_reference.norm_company_name(name) AS n FROM sec_reference.company_name
@@ -151,19 +241,21 @@ name_cik AS (
     FROM run_cik rc
     JOIN spine_names sn ON sn.n = sec_reference.norm_company_name(rc.last_name) AND sn.n <> ''
     JOIN sec_reference.company co ON co.cik = sn.cik
-    WHERE rc.run_cik IS NULL
+    WHERE NOT EXISTS (SELECT 1 FROM run_resolved rr
+                       WHERE rr.index_name = rc.index_name AND rr.ticker = rc.ticker
+                         AND rr.run_key = rc.run_key AND rr.cik IS NOT NULL)
       AND co.first_filed <= rc.last_seen + 400
       AND co.last_filed  >= rc.first_seen - 400
     GROUP BY rc.index_name, rc.ticker, rc.run_key
 )
 SELECT r.index_name, r.observed_on, r.revid, r.sn, r.ticker, r.name,
-       COALESCE(r.cik, rc.run_cik, nc.name_cik) AS cik,
-       CASE WHEN r.cik IS NOT NULL THEN 'page'
-            WHEN rc.run_cik IS NOT NULL THEN 'continuity'
+       COALESCE(rr.cik, nc.name_cik) AS cik,
+       CASE WHEN rr.cik IS NOT NULL THEN rr.cik_source
             WHEN nc.name_cik IS NOT NULL THEN 'name' END AS cik_source,
        r.gics_sector, r.gics_sub_industry, r.date_added
 FROM runs r
 JOIN run_cik rc USING (index_name, ticker, run_key)
+LEFT JOIN run_resolved rr USING (index_name, ticker, run_key)
 LEFT JOIN name_cik nc USING (index_name, ticker, run_key);
 
 INSERT INTO sec_reference.index_membership_unresolved
@@ -199,34 +291,44 @@ CREATE INDEX IF NOT EXISTS idx_index_membership_range ON sec_reference.index_mem
 TRUNCATE sec_reference.index_membership;
 INSERT INTO sec_reference.index_membership
 WITH obs AS (
+    -- One row per (index, company, capture). An issuer listed twice on a
+    -- page (two share classes: Fox, News Corp) is one member; if the two
+    -- rows disagree on GICS the lower sorts first, deterministically.
     SELECT index_name, cik, observed_on, sn,
-           COALESCE(gics_sector, '') AS gics_sector,
-           COALESCE(gics_sub_industry, '') AS gics_sub_industry,
+           COALESCE(MIN(gics_sector), '')       AS gics_sector,
+           COALESCE(MIN(gics_sub_industry), '') AS gics_sub_industry,
            MIN(ticker) AS ticker,
            MIN(date_added) FILTER (WHERE date_added IS NOT NULL) AS date_added
     FROM sec_reference.index_observation_resolved
     WHERE cik IS NOT NULL
-    GROUP BY 1, 2, 3, 4, 5, 6
+    GROUP BY 1, 2, 3, 4
 ),
+-- MEMBERSHIP RUNS PER (INDEX, COMPANY), GICS-BLIND. A company is in or
+-- out; the classification the page gave it is an attribute, segmented
+-- afterwards inside each span. Partitioning the runs by GICS as well
+-- used to open a gap wherever the classification changed -- or first
+-- appeared: the S&P 1000-era page carried no GICS at all, so every
+-- S&P 600 member fell out of the index between its last unclassified
+-- sighting and its first classified one (0 members on 2020-12-30).
 runs AS (
-    SELECT o.*, o.sn - ROW_NUMBER() OVER (PARTITION BY index_name, cik, gics_sector, gics_sub_industry
-                                          ORDER BY sn) AS run_key
+    SELECT o.*, o.sn - ROW_NUMBER() OVER (PARTITION BY index_name, cik ORDER BY sn) AS run_key
     FROM obs o
 ),
 islands AS (
-    SELECT index_name, cik, gics_sector, gics_sub_industry,
+    SELECT index_name, cik,
            MIN(observed_on) AS first_seen, MAX(observed_on) AS last_seen,
-           MIN(sn) AS first_sn, MAX(sn) AS last_sn,
-           MIN(date_added) AS date_added,
-           (ARRAY_AGG(ticker ORDER BY sn DESC))[1] AS ticker
-    FROM runs GROUP BY index_name, cik, gics_sector, gics_sub_industry, run_key
+           MIN(sn) AS first_sn, MAX(sn) AS last_sn
+    FROM runs GROUP BY index_name, cik, run_key
 ),
 neighbours AS (
     SELECT i.*,
-           LAG(i.last_sn)   OVER (PARTITION BY index_name, cik, gics_sector, gics_sub_industry ORDER BY first_sn) AS prev_last_sn,
-           LAG(i.last_seen) OVER (PARTITION BY index_name, cik, gics_sector, gics_sub_industry ORDER BY first_sn) AS prev_last_seen
+           LAG(i.last_sn)   OVER (PARTITION BY index_name, cik ORDER BY first_sn) AS prev_last_sn,
+           LAG(i.last_seen) OVER (PARTITION BY index_name, cik ORDER BY first_sn) AS prev_last_seen
     FROM islands i
 ),
+-- The same two bridging rules as the crosswalk: seen again within 200
+-- days, or every capture in the gap partial (which now includes the
+-- S&P 600 captures that were never a list of the 600).
 grouped AS (
     SELECT n.*,
            SUM(CASE
@@ -237,40 +339,110 @@ grouped AS (
                                       AND g.sn > n.prev_last_sn AND g.sn < n.first_sn
                                       AND NOT g.is_partial) THEN 0
                    ELSE 1
-               END) OVER (PARTITION BY index_name, cik, gics_sector, gics_sub_industry
-                          ORDER BY first_sn ROWS UNBOUNDED PRECEDING) AS grp
+               END) OVER (PARTITION BY index_name, cik ORDER BY first_sn ROWS UNBOUNDED PRECEDING) AS grp
     FROM neighbours n
 ),
-collapsed AS (
-    SELECT index_name, cik, gics_sector, gics_sub_industry,
-           MIN(first_seen) AS first_seen, MAX(last_sn) AS last_sn,
+spans AS (
+    SELECT index_name, cik, grp,
+           MIN(first_sn) AS first_sn, MAX(last_sn) AS last_sn, MIN(first_seen) AS first_seen
+    FROM grouped GROUP BY index_name, cik, grp
+),
+spans_to AS (
+    -- First capture after the span's last sighting: earliest evidence
+    -- of removal. NULL means present in the latest capture.
+    SELECT s.*,
+           (SELECT MIN(g.observed_on) FROM sec_reference.index_capture g
+             WHERE g.index_name = s.index_name AND g.sn > s.last_sn) AS valid_to
+    FROM spans s
+),
+-- GICS segments: consecutive sightings inside a span with the same
+-- classification. A change starts a new interval at its first capture,
+-- contiguous with the one before; an unclassified stretch is its own
+-- segment with NULL GICS rather than a hole in membership.
+sightings AS (
+    SELECT o.index_name, o.cik, o.sn, o.observed_on, o.gics_sector, o.gics_sub_industry,
+           o.ticker, o.date_added, sp.grp, sp.valid_to AS span_valid_to,
+           CASE WHEN LAG(o.gics_sector || '|' || o.gics_sub_industry) OVER w IS NULL THEN 0
+                WHEN LAG(o.gics_sector || '|' || o.gics_sub_industry) OVER w
+                     IS DISTINCT FROM (o.gics_sector || '|' || o.gics_sub_industry) THEN 1
+                ELSE 0 END AS new_segment
+    FROM obs o
+    JOIN spans_to sp ON sp.index_name = o.index_name AND sp.cik = o.cik
+                    AND o.sn BETWEEN sp.first_sn AND sp.last_sn
+    WINDOW w AS (PARTITION BY o.index_name, o.cik, sp.grp ORDER BY o.sn)
+),
+segmented AS (
+    SELECT x.*,
+           SUM(x.new_segment) OVER (PARTITION BY x.index_name, x.cik, x.grp ORDER BY x.sn
+                                    ROWS UNBOUNDED PRECEDING) AS seg
+    FROM sightings x
+),
+segments AS (
+    SELECT index_name, cik, grp, seg, gics_sector, gics_sub_industry,
+           MIN(observed_on) AS first_seen,
            MIN(date_added) AS date_added,
-           (ARRAY_AGG(ticker ORDER BY last_sn DESC))[1] AS ticker
-    FROM grouped GROUP BY index_name, cik, gics_sector, gics_sub_industry, grp
+           (ARRAY_AGG(ticker ORDER BY sn DESC))[1] AS ticker,
+           MIN(span_valid_to) AS span_valid_to
+    FROM segmented
+    GROUP BY index_name, cik, grp, seg, gics_sector, gics_sub_industry
 ),
 history AS (
     SELECT
-        c.index_name, c.cik, c.ticker,
-        NULLIF(c.gics_sector, '') AS gics_sector,
-        NULLIF(c.gics_sub_industry, '') AS gics_sub_industry,
+        s.index_name, s.cik, s.ticker,
+        NULLIF(s.gics_sector, '')       AS gics_sector,
+        NULLIF(s.gics_sub_industry, '') AS gics_sub_industry,
         -- The page's own "date added" where it is earlier than the first
         -- sighting and this is the company's first interval; otherwise
-        -- the first capture that showed it. A GICS change mid-membership
-        -- starts a new interval at its first capture, contiguous with
-        -- the one before.
-        CASE WHEN c.date_added IS NOT NULL AND c.date_added < c.first_seen
-              AND c.first_seen = MIN(c.first_seen) OVER (PARTITION BY c.index_name, c.cik)
-             THEN c.date_added ELSE c.first_seen END AS valid_from,
-        -- First capture after the last sighting: earliest evidence of
-        -- removal. NULL means present in the latest capture.
-        (SELECT MIN(g.observed_on) FROM sec_reference.index_capture g
-          WHERE g.index_name = c.index_name AND g.sn > c.last_sn) AS valid_to,
+        -- the first capture that showed it.
+        CASE WHEN s.seg = 0 AND s.date_added IS NOT NULL AND s.date_added < s.first_seen
+              AND s.first_seen = MIN(s.first_seen) OVER (PARTITION BY s.index_name, s.cik)
+             THEN s.date_added ELSE s.first_seen END AS valid_from,
+        COALESCE(LEAD(s.first_seen) OVER (PARTITION BY s.index_name, s.cik, s.grp ORDER BY s.seg),
+                 s.span_valid_to) AS valid_to,
         'wikipedia_history'::TEXT AS source
-    FROM collapsed c
+    FROM segments s
 ),
--- Indexes without replayed history: today's snapshot, labelled as such.
--- One row per company: an issuer with two listed classes in the index
--- (Fox, News Corp) is one member.
+-- CIK SUCCESSION. A run resolves to one registrant -- the one holding the
+-- ticker at its last sighting -- but a company that re-registered under
+-- a new CIK was two registrants across the run: Apache (6769) until APA
+-- Corp (1841666) took the ticker in 2021, Cigna 701221 until 1739940 in
+-- 2018. An interval that straddles a handoff in cik_succession (010,
+-- section 3c) is split there and its earlier part re-keyed to the old
+-- CIK, so each interval names the registrant that was filing. Unbroken
+-- index presence across the handoff is what makes this a succession
+-- rather than a recycled ticker: a recycled ticker changes company only
+-- after a removal, which ends the run. Chains (A -> B -> C) are split
+-- once per handoff.
+history_split AS (
+    SELECT h.index_name,
+           CASE WHEN x.old_cik IS NOT NULL AND h.valid_from < x.handoff_date THEN x.old_cik ELSE h.cik END AS cik,
+           h.ticker, h.gics_sector, h.gics_sub_industry,
+           h.valid_from,
+           CASE WHEN x.old_cik IS NOT NULL AND h.valid_from < x.handoff_date THEN x.handoff_date ELSE h.valid_to END AS valid_to,
+           h.source
+    FROM history h
+    LEFT JOIN LATERAL (
+        SELECT c.old_cik, c.handoff_date
+        FROM sec_reference.cik_succession c
+        WHERE c.new_cik = h.cik AND c.ticker = h.ticker
+          AND c.handoff_date > h.valid_from
+          AND c.handoff_date < COALESCE(h.valid_to, DATE '9999-12-31')
+        ORDER BY c.handoff_date LIMIT 1
+    ) x ON TRUE
+    UNION ALL
+    -- the part after the handoff stays with the new registrant
+    SELECT h.index_name, h.cik, h.ticker, h.gics_sector, h.gics_sub_industry,
+           x.handoff_date, h.valid_to, h.source
+    FROM history h
+    JOIN LATERAL (
+        SELECT c.handoff_date
+        FROM sec_reference.cik_succession c
+        WHERE c.new_cik = h.cik AND c.ticker = h.ticker
+          AND c.handoff_date > h.valid_from
+          AND c.handoff_date < COALESCE(h.valid_to, DATE '9999-12-31')
+        ORDER BY c.handoff_date LIMIT 1
+    ) x ON TRUE
+),
 snapshot AS (
     SELECT DISTINCT ON (u.index_name, ct.cik)
            u.index_name, ct.cik, u.ticker, u.gics_sector, u.gics_sub_industry,
@@ -281,9 +453,17 @@ snapshot AS (
     WHERE NOT EXISTS (SELECT 1 FROM sec_reference.index_observation o WHERE o.index_name = u.index_name)
     ORDER BY u.index_name, ct.cik, ct.is_primary DESC, u.ticker
 )
-SELECT * FROM history
-UNION ALL
-SELECT * FROM snapshot;
+-- A spin-off can put the old registrant on the page twice around the
+-- handoff (Crane Co 25445 as CXT, and CR's re-keyed earlier part); one
+-- interval per (index, cik, start, classification), the longer kept.
+SELECT DISTINCT ON (index_name, cik, valid_from, COALESCE(gics_sub_industry, ''))
+       index_name, cik, ticker, gics_sector, gics_sub_industry, valid_from, valid_to, source
+FROM (
+    SELECT * FROM history_split
+    UNION ALL
+    SELECT * FROM snapshot
+) u
+ORDER BY index_name, cik, valid_from, COALESCE(gics_sub_industry, ''), valid_to DESC NULLS FIRST;
 
 COMMENT ON TABLE sec_reference.index_membership IS
     'Dated index membership per company with GICS as of the interval. '

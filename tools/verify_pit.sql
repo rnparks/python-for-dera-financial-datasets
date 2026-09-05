@@ -196,7 +196,9 @@ WITH cov AS (
 -- so it is in no FY2024 panel. Revenue 1,428 (was 1,479 on today's
 -- survivors), total_debt 1,063, gross_profit 844. total_debt re-based to
 -- 1,100 after the 2026-09-04 tag additions took it to 1,127 with the
--- noncurrent component required.
+-- noncurrent component required. With the S&P 400 and 600 replayed the
+-- FY2024 panel is the index of the day: revenue 1,474, total_debt 1,133,
+-- gross_profit 863 (2026-09-05).
 SELECT CASE WHEN
             COALESCE((SELECT n FROM cov WHERE concept='total_debt'),0)   >= 1100
         AND COALESCE((SELECT n FROM cov WHERE concept='gross_profit'),0) >=  820
@@ -597,6 +599,9 @@ FROM (
 ) t;
 
 \echo '=== 37. Revenue resolves before ASC 606 too, and never from half a company ==='
+-- FY2015 floor 780 (812 measured 2026-09-05): the panel is the index of
+-- the day and the S&P 600 has no replayed history before 2018, so FY2015
+-- is the 500 and the 400.
 -- SalesRevenueNet and the goods/services components were unmapped:
 -- FY2015 revenue covered 628 of 1,361 tracked issuers against 1,479 in
 -- FY2024. Check 13 guards FY2024 only. The components are safe only
@@ -606,7 +611,7 @@ FROM (
 -- Floors re-based on 2026-09-04 for the dated panel: FY2015 1,192 (a
 -- company in today's S&P 500 that was an S&P 400 member in 2015 is in
 -- no FY2015 panel until the 400's history is replayed), FY2024 1,428.
-SELECT CASE WHEN fy2015 >= 1150 AND fy2024 >= 1400 AND half_company = 0
+SELECT CASE WHEN fy2015 >= 780 AND fy2024 >= 1400 AND half_company = 0
             THEN 'PASS' ELSE 'FAIL' END AS status,
        fy2015 AS ciks_with_revenue_fy2015, fy2024 AS ciks_with_revenue_fy2024,
        half_company AS cik_years_with_both_components_and_no_total
@@ -678,7 +683,12 @@ FROM sec_gold.as_of_snapshot(320193, DATE '2015-06-30');
 \echo '=== 41. The share ladder prefers a point-in-time count to a period average ==='
 -- 216 of 1,569 tracked companies resolved to a weighted average as of
 -- today; for 87 of them an instant count within 400 days existed.
-SELECT CASE WHEN weighted <= 150 AND companies > 1500 THEN 'PASS' ELSE 'FAIL' END AS status,
+-- Relative, not absolute: the population is every company that has ever
+-- had an index interval, and it grew from 1,701 to 2,392 when the S&P 400
+-- and 600 were replayed (2026-09-05). What the check guards is the
+-- share resolving to a period average, which was 14% before the ladder
+-- fix and ~7% after.
+SELECT CASE WHEN weighted <= 0.10 * companies AND companies > 1500 THEN 'PASS' ELSE 'FAIL' END AS status,
        companies, weighted AS resolved_to_weighted_average
 FROM (
     SELECT COUNT(*) AS companies,
@@ -700,9 +710,10 @@ FROM (
 ) t;
 
 \echo '=== 43. S&P 500 history: captures are complete and members resolve ==='
--- 214 monthly Wikipedia captures, none undersized; CIKs from the page,
--- by continuity, or by name; 40 tickers unresolved (21 inside DERA
--- coverage), listed in index_membership_unresolved rather than guessed.
+-- 214 monthly Wikipedia captures, none undersized; CIKs per run from the
+-- page, the dated crosswalk, or the name; 38 tickers unresolved (21
+-- inside DERA coverage), listed in index_membership_unresolved rather
+-- than guessed.
 SELECT CASE WHEN captures >= 200 AND partial = 0 AND unresolved_in_coverage <= 30
              AND m2009 BETWEEN 470 AND 530 AND m2015 BETWEEN 490 AND 530 AND ever >= 800
             THEN 'PASS' ELSE 'FAIL' END AS status,
@@ -712,7 +723,7 @@ FROM (
     SELECT (SELECT COUNT(*) FROM sec_reference.index_capture WHERE index_name = 'SP500') AS captures,
            (SELECT COUNT(*) FROM sec_reference.index_capture WHERE index_name = 'SP500' AND is_partial) AS partial,
            (SELECT COUNT(*) FROM sec_reference.index_membership_unresolved
-             WHERE last_seen >= DATE '2009-04-15') AS unresolved_in_coverage,
+             WHERE index_name = 'SP500' AND last_seen >= DATE '2009-04-15') AS unresolved_in_coverage,
            (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2009-06-30')) AS m2009,
            (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2015-06-30')) AS m2015,
            (SELECT COUNT(DISTINCT cik) FROM sec_reference.index_membership
@@ -990,14 +1001,12 @@ FROM (
 -- peer_stats_asof(index, T) must contain no fact actionable after T,
 -- cover the constituents of the day, and show Apple's FY2024 revenue on
 -- 2024-11-15 (first disclosed 2024-11-01) but still FY2023 on 2024-10-15.
--- Tolerance: a few constituents score nothing because the membership
--- row names a CIK that was not the filer of the day -- holding-company
--- reorganisations (APA Corp for Apache, BlackRock Inc for the old
--- BlackRock, Paramount Skydance for ViacomCBS) and the reverse (Cigna
--- and WestRock's old registrants). Five on 2020-06-30. That is the
--- CIK-succession defect in the spine, listed as its own item; this
--- check must not hide it behind a wide margin.
-SELECT CASE WHEN future_rows = 0 AND companies >= members - 8 AND concepts = 26 AND max_stale <= 550
+-- Tolerance: cik_succession (010, 3c) now re-keys a membership run to
+-- the registrant that was filing, which brought the constituents with
+-- no filer behind their CIK on 2020-06-30 from five to one (Paramount
+-- Global -> Paramount Skydance changed ticker at succession, which no
+-- handoff reveals). The margin is three, not the eight it was.
+SELECT CASE WHEN future_rows = 0 AND companies >= members - 3 AND concepts = 26 AND max_stale <= 550
              AND aapl_oct = DATE '2023-09-30' AND aapl_nov = DATE '2024-09-30'
             THEN 'PASS' ELSE 'FAIL' END AS status,
        rows AS rows_2020_06_30, companies, members AS constituents_that_day, future_rows, concepts, max_stale,
@@ -1010,4 +1019,115 @@ FROM (
            (SELECT value_date FROM sec_gold.peer_stats_asof('SP500', DATE '2024-10-15') WHERE cik = 320193 AND concept = 'revenue' AND peer_level = 'sector') AS aapl_oct,
            (SELECT value_date FROM sec_gold.peer_stats_asof('SP500', DATE '2024-11-15') WHERE cik = 320193 AND concept = 'revenue' AND peer_level = 'sector') AS aapl_nov
     FROM sec_gold.peer_stats_asof('SP500', DATE '2020-06-30')
+) t;
+
+\echo '=== 57. Bronze rows know their quarter, silver holds every quarter once, and the vintage columns are self-consistent ==='
+-- source_quarter is NOT NULL by DDL and BRIN-indexed; every logged
+-- quarter has its filings in sub_silver; num_silver holds the logged
+-- fact count less the few orphans whose filing row is missing; and on
+-- the partitions the newest quarter touched, the stored vintage_seq /
+-- rank_latest / superseded_tradable equal a fresh window computation --
+-- which is exactly what build_quarter() writes, so a fold and a full
+-- build cannot drift apart silently.
+SELECT CASE WHEN not_null_cols = 4 AND quarters_missing = 0 AND ABS(silver_rows - logged_rows) <= 20000
+             AND drift = 0 AND sampled_partitions >= 150
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       not_null_cols AS bronze_tables_with_not_null_quarter, quarters_missing AS logged_quarters_absent_from_silver,
+       silver_rows, logged_rows, sampled_partitions, drift AS rows_whose_vintage_columns_disagree
+FROM (
+    SELECT (SELECT COUNT(*) FROM information_schema.columns
+             WHERE table_schema = 'sec_raw' AND column_name = 'source_quarter' AND is_nullable = 'NO') AS not_null_cols,
+           -- 2009q1 is an empty DERA file (no filings), so only quarters
+           -- that logged filings are expected in silver.
+           (SELECT COUNT(*) FROM sec_raw.load_log l
+             WHERE l.sub_rows > 0
+               AND NOT EXISTS (SELECT 1 FROM sec_raw.sub_raw r JOIN sec_silver.sub_silver s USING (adsh)
+                                WHERE r.source_quarter = l.quarter)) AS quarters_missing,
+           (SELECT COUNT(*) FROM sec_silver.num_silver) AS silver_rows,
+           (SELECT SUM(num_rows) FROM sec_raw.load_log) AS logged_rows,
+           s.sampled_partitions, s.drift
+    FROM (
+        WITH newest AS (SELECT MAX(quarter) AS q FROM sec_raw.load_log),
+        keys AS (
+            SELECT DISTINCT n.cik, n.tag, n.value_date, n.qtrs, n.uom, n.coreg, n.segments
+            FROM sec_silver.num_silver n
+            WHERE n.adsh IN (SELECT adsh FROM sec_raw.sub_raw WHERE source_quarter = (SELECT q FROM newest))
+              AND n.vintage_seq > 1
+            LIMIT 200
+        ),
+        rows_ AS (
+            SELECT n.*
+            FROM keys k JOIN sec_silver.num_silver n
+              ON n.cik = k.cik AND n.tag = k.tag AND n.value_date = k.value_date AND n.qtrs = k.qtrs
+             AND n.uom = k.uom AND n.coreg IS NOT DISTINCT FROM k.coreg AND n.segments IS NOT DISTINCT FROM k.segments
+        ),
+        recomputed AS (
+            SELECT adsh, vintage_seq, rank_latest, superseded_tradable,
+                   ROW_NUMBER() OVER w AS v2,
+                   (COUNT(*) OVER (PARTITION BY cik, tag, value_date, qtrs, uom, coreg, segments) - ROW_NUMBER() OVER w + 1) AS rl2,
+                   LEAD(tradable_from) OVER w AS st2
+            FROM rows_
+            WINDOW w AS (PARTITION BY cik, tag, value_date, qtrs, uom, coreg, segments ORDER BY known_at ASC, adsh ASC)
+        )
+        SELECT (SELECT COUNT(*) FROM keys) AS sampled_partitions,
+               COUNT(*) FILTER (WHERE vintage_seq <> v2 OR rank_latest <> rl2 OR superseded_tradable IS DISTINCT FROM st2) AS drift
+        FROM recomputed
+    ) s
+) t;
+
+\echo '=== 58. S&P 400 and 600 history: the index of the day, and the 600''s hole is a hole, not a guess ==='
+-- The S&P 400 page has no CIK column: the crosswalk resolves it, and it
+-- must cover ~400 on every date since 2011. The early S&P 600 page was
+-- the S&P 1000; after subtracting the same month's S&P 400 it must read
+-- ~600 in 2019 and exactly 600 from 2021, while through the 2019-12 to
+-- 2021-02 gap only members seen on both sides may appear (444), and no
+-- snapshot row may remain for any index.
+SELECT CASE WHEN sp400_2012 BETWEEN 385 AND 405 AND sp400_2024 BETWEEN 390 AND 405
+             AND sp600_2019 BETWEEN 585 AND 615 AND sp600_2024 BETWEEN 595 AND 610
+             AND sp600_2020 BETWEEN 400 AND 500 AND snapshot_rows = 0
+             AND sp400_unresolved <= 25 AND sp600_captures >= 90 AND sp400_captures >= 150
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       sp400_2012, sp400_2024, sp600_2019, sp600_2020 AS sp600_2020_06_30_hole, sp600_2024,
+       snapshot_rows, sp400_unresolved, sp400_captures, sp600_captures
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_reference.index_members('SP400', DATE '2012-06-30')) AS sp400_2012,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP400', DATE '2024-06-30')) AS sp400_2024,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP600', DATE '2019-06-30')) AS sp600_2019,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP600', DATE '2020-06-30')) AS sp600_2020,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP600', DATE '2024-06-30')) AS sp600_2024,
+           (SELECT COUNT(*) FROM sec_reference.index_membership WHERE source = 'current_snapshot') AS snapshot_rows,
+           (SELECT COUNT(*) FROM sec_reference.index_membership_unresolved WHERE index_name = 'SP400') AS sp400_unresolved,
+           (SELECT COUNT(*) FROM sec_reference.index_capture WHERE index_name = 'SP400') AS sp400_captures,
+           (SELECT COUNT(*) FROM sec_reference.index_capture WHERE index_name = 'SP600') AS sp600_captures
+) t;
+
+\echo '=== 59. CIK succession: a membership interval names the registrant that was filing ==='
+-- Apache (6769) became APA Corp (1841666) in 2021; Cigna 701221 became
+-- 1739940 and WestRock 1636023 became 1732845 in late 2018; BlackRock
+-- 1364742 became 2012383 in 2024. Each must be the S&P 500 member under
+-- the CIK that was filing on the date, and no 2020-06-30 constituent but
+-- the Paramount case may lack a filer behind its CIK.
+SELECT CASE WHEN apa_2017 = 6769 AND apa_2020 = 6769 AND apa_2025 = 1841666
+             AND ci_2017 = 701221 AND ci_2020 = 1739940
+             AND wrk_2017 = 1636023 AND wrk_2020 = 1732845
+             AND blk_2020 = 1364742 AND blk_2025 = 2012383
+             AND no_filer <= 1 AND handoffs >= 150 AND rekeyed >= 20
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       apa_2017, apa_2020, apa_2025, ci_2017, ci_2020, wrk_2017, wrk_2020, blk_2020, blk_2025,
+       no_filer AS members_2020_without_a_filer, handoffs AS succession_pairs, rekeyed AS intervals_rekeyed
+FROM (
+    SELECT (SELECT cik FROM sec_reference.index_members('SP500', DATE '2017-06-30') WHERE cik IN (6769, 1841666) LIMIT 1) AS apa_2017,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2020-06-30') WHERE cik IN (6769, 1841666) LIMIT 1) AS apa_2020,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2025-06-30') WHERE cik IN (6769, 1841666) LIMIT 1) AS apa_2025,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2017-06-30') WHERE cik IN (701221, 1739940) LIMIT 1) AS ci_2017,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2020-06-30') WHERE cik IN (701221, 1739940) LIMIT 1) AS ci_2020,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2017-06-30') WHERE cik IN (1636023, 1732845) LIMIT 1) AS wrk_2017,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2020-06-30') WHERE cik IN (1636023, 1732845) LIMIT 1) AS wrk_2020,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2020-06-30') WHERE cik IN (1364742, 2012383) LIMIT 1) AS blk_2020,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2025-06-30') WHERE cik IN (1364742, 2012383) LIMIT 1) AS blk_2025,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2020-06-30') m JOIN sec_reference.company co USING (cik)
+             WHERE co.first_filed > DATE '2020-06-30' OR co.last_filed < DATE '2019-06-30') AS no_filer,
+           (SELECT COUNT(*) FROM sec_reference.cik_succession) AS handoffs,
+           (SELECT COUNT(*) FROM sec_reference.index_membership m JOIN sec_reference.cik_succession c
+              ON c.old_cik = m.cik AND m.valid_to = c.handoff_date) AS rekeyed
 ) t;

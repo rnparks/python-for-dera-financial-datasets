@@ -11,7 +11,12 @@ Eleven subcommands. The medallion pipeline, in order::
     uv run dera build-silver
     uv run dera build-gold
 
-or the shorthand ``uv run dera run-all``.
+or the shorthand ``uv run dera run-all``. Each later DERA quarter is a
+fold rather than a rebuild::
+
+    uv run dera load --quarter 2026q3           # --force replaces a loaded quarter
+    uv run dera build-silver --quarter 2026q3   # recompute only the partitions it touches
+    uv run dera rebuild-reference
 
 The security lifecycle model, an additive second path::
 
@@ -40,7 +45,7 @@ refill.
 
 Verification::
 
-    uv run dera verify        # 56 data-correctness checks
+    uv run dera verify        # 59 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 
@@ -134,8 +139,40 @@ def cmd_load(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_silver_quarter(quarter: str) -> int:
+    """Fold one loaded quarter into the existing silver layer.
+
+    Calls ``sec_silver.build_quarter``: the quarter's filings are
+    upserted, new taxonomy rows added, and every ``num_silver`` fact
+    partition the quarter touches is recomputed whole. Minutes, not the
+    39-minute full build, and idempotent. The spine, security model and
+    gold still need ``dera rebuild-reference`` afterwards.
+    """
+    with db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regprocedure('sec_silver.build_quarter(text)')")
+            if cur.fetchone()[0] is None:
+                print("error: sec_silver.build_quarter does not exist; run a full "
+                      "`dera build-silver` once on this database first.", file=sys.stderr)
+                return 1
+            cur.execute("SELECT 1 FROM sec_raw.load_log WHERE quarter = %s", (quarter,))
+            if cur.fetchone() is None:
+                print(f"error: {quarter} is not in sec_raw.load_log; "
+                      f"`dera load --quarter {quarter}` first.", file=sys.stderr)
+                return 1
+            t0 = time.monotonic()
+            print(f"Folding {quarter} into silver ...", flush=True)
+            conn.add_notice_handler(lambda d: print("  " + (d.message_primary or "")))
+            cur.execute("CALL sec_silver.build_quarter(%s)", (quarter,))
+            print(f"  done in {time.monotonic() - t0:,.0f}s. Next: `dera rebuild-reference`.")
+    return 0
+
+
 def cmd_build_silver(args: argparse.Namespace) -> int:
     """Build the silver layer.
+
+    With ``--quarter Q`` this folds one loaded quarter into the existing
+    silver instead of rebuilding it (see ``_build_silver_quarter``).
 
     Order matters. The trading calendar is created and populated FIRST,
     before `02_silver` runs, because `sub_silver` resolves
@@ -144,6 +181,8 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
     `DROP SCHEMA sec_silver CASCADE` at the top of the silver build does
     not take it out.
     """
+    if getattr(args, "quarter", None):
+        return _build_silver_quarter(args.quarter)
     with db.get_conn() as conn:
         cal_dir = config.SQL_DIR / "00_reference"
         silver_dir = config.SQL_DIR / "02_silver"
@@ -262,6 +301,35 @@ SPINE_DECLARED = (
 )
 
 
+# peer_stats joins a 62-row tag map to 12.4M facts, and the planner's
+# per-tag estimate is the table average, so on a REFRESH it picks a nested
+# loop of per-tag bitmap scans over the most common tags in the table:
+# 37 minutes and counting, against 21 seconds for the hash-join shape.
+# The DDL pins the same two settings for the build (080); a REFRESH
+# re-plans under the session's settings, so the refresh path pins them
+# too, for this matview only, and puts them back.
+_PINNED_PLAN = {"sec_gold.peer_stats": ("enable_nestloop", "enable_bitmapscan")}
+
+
+def _refresh_matview(cur, matview: str) -> None:
+    """REFRESH one matview under the settings its DDL builds with.
+
+    The DDL files set work_mem for their own CREATE; a REFRESH re-plans
+    and re-runs under the session's defaults, and peer_stats' window
+    sorts spilled to disk at the default 4 MB: 4:53 against 15 s for the
+    same query with 1 GB. So every refresh gets the DDL's work_mem, and
+    peer_stats gets its two pinned planner settings as well.
+    """
+    pinned = _PINNED_PLAN.get(matview, ())
+    cur.execute("SET LOCAL work_mem = '1GB'")
+    for guc in pinned:
+        cur.execute(f"SET LOCAL {guc} = off")
+    cur.execute(f"REFRESH MATERIALIZED VIEW {matview}")
+    for guc in pinned:
+        cur.execute(f"RESET {guc}")
+    cur.execute("RESET work_mem")
+
+
 def gold_refresh_plan(changed: set[str]) -> list[str]:
     """The matviews to REFRESH, in dependency order, given the spine
     tables whose contents changed.
@@ -323,7 +391,7 @@ def cmd_build_gold(args: argparse.Namespace) -> int:
                 # tradable_financials, so it must refresh last.
                 for matview in GOLD_MATVIEWS:
                     print(f"  REFRESH {matview}")
-                    cur.execute(f"REFRESH MATERIALIZED VIEW {matview}")
+                    _refresh_matview(cur, matview)
         else:
             db.run_sql_dir(conn, gold_dir)
     return 0
@@ -431,7 +499,7 @@ def cmd_rebuild_reference(args: argparse.Namespace) -> int:
             for matview in plan:
                 print(f"  REFRESH {matview} ...", end="", flush=True)
                 t0 = time.monotonic()
-                cur.execute(f"REFRESH MATERIALIZED VIEW {matview}")
+                _refresh_matview(cur, matview)
                 print(f" {time.monotonic() - t0:,.0f}s")
         skipped = [m for m in GOLD_MATVIEWS if m not in plan]
         if skipped:
@@ -575,12 +643,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_load.add_argument(
         "--force", action="store_true",
-        help="with --quarter: load even if the quarter is already in "
-             "sec_raw.load_log (duplicates rows unless you removed them)",
+        help="with --quarter: replace the quarter if it is already in "
+             "sec_raw.load_log (its bronze rows are deleted first)",
     )
     p_load.set_defaults(func=cmd_load)
 
     p_silver = sub.add_parser("build-silver", help="build the silver layer")
+    p_silver.add_argument(
+        "--quarter", default=None,
+        help="fold one loaded quarter (e.g. 2026q3) into the existing silver "
+             "instead of rebuilding it; then run `dera rebuild-reference`",
+    )
     p_silver.set_defaults(func=cmd_build_silver)
 
     p_gold = sub.add_parser("build-gold", help="build the gold layer")

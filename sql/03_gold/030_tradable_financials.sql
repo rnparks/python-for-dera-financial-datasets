@@ -31,7 +31,7 @@
 --
 -- INDEX MEMBERSHIP IS DATED. The population is every company that has
 -- ever had an interval in sec_reference.index_membership -- the
--- replayed S&P 500 history plus today's S&P 400 and 600 snapshots -- and
+-- replayed history of all three indexes -- and
 -- each fact carries the index and GICS classification AS OF its
 -- tradable_from, with `index_is_asof` saying whether an interval really
 -- covered that date or the company's latest membership was used as a
@@ -40,11 +40,9 @@
 -- Beyond -- was absent, and NVIDIA's 2010 facts wore its 2026
 -- classification.
 --
--- For the S&P 400 and 600 the membership is a single interval from
--- 1900-01-01 labelled current_snapshot, which is exactly the old
--- survivorship-biased state, confined to two indexes and labelled;
--- `index_is_asof` is TRUE for them at every date until their history is
--- replayed, and peer_stats treats them accordingly.
+-- The S&P 400 (since 2011) and 600 (since 2018) are replayed like the
+-- 500; index_membership.source says wikipedia_history on every row, and
+-- the 600 carries a documented hole from 2019-12 to 2021-02.
 
 DROP MATERIALIZED VIEW IF EXISTS sec_gold.tradable_financials        CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS sec_gold.tradable_financials_pit    CASCADE;
@@ -156,7 +154,7 @@ COMMENT ON COLUMN sec_gold.tradable_financials.ticker_is_asof IS
     'history, or the company''s best-known symbol where there is none.';
 COMMENT ON COLUMN sec_gold.tradable_financials.index_name IS
     'Index the company belonged to as of tradable_from (SP500 from '
-    'replayed history; SP400/SP600 from today''s snapshot at every date). '
+    'replayed history for all three indexes). '
     'When no interval covers the date, the company''s latest membership, '
     'and index_is_asof is FALSE.';
 COMMENT ON COLUMN sec_gold.tradable_financials.index_is_asof IS

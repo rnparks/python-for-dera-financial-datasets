@@ -80,7 +80,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 56 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 59 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -89,9 +89,18 @@ Or one stage at a time:
 ```bash
 uv run dera download --from 2009q1 --to 2026q2   # ~29 GB on disk; default --to is the last full quarter
 uv run dera init-db                               # bronze DDL
-uv run dera load                                  # COPY → bronze (incremental; refuses a quarter twice)
+uv run dera load                                  # COPY → bronze (incremental; every row carries its source_quarter)
 uv run dera build-silver                          # ~39 min
 uv run dera build-gold                            # ~26 min, 20 of them fact_asof (22 GB plus 10 GB of indexes)
+```
+
+Each new DERA quarter after that (four a year) is a fold, not a rebuild:
+
+```bash
+uv run dera download --from 2026q3 --to 2026q3
+uv run dera load --quarter 2026q3            # --force replaces a quarter already loaded
+uv run dera build-silver --quarter 2026q3    # recomputes only the fact partitions the quarter touches (~17 min; the full build is 39)
+uv run dera rebuild-reference                # spine, security model, then the gold matviews whose inputs changed
 ```
 
 The security lifecycle model is a separate, additive path:
@@ -173,8 +182,10 @@ The filers query returns 7,298 members, of which **3,012 (41%) have since
 delisted or deregistered**. A universe built from today's index membership
 returns none of them. The S&P 500 query comes from Wikipedia's page history
 replayed monthly since 2008: SVB Financial is a member from 2018-03-19 to
-2023-03-24, Tesla from 2020-12-21, and 840 companies have been in the index
-against 503 on today's page.
+2023-03-24, Tesla from 2020-12-21, and 822 companies have been in the index
+against 503 on today's page. The S&P 400 (since 2011) and S&P 600 (since 2018)
+are replayed the same way, so a mid-cap or small-cap cross-section is the index
+of its day too.
 
 ## Reference data
 

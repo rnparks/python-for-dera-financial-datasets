@@ -54,9 +54,24 @@ The Python loader side-steps all of this:
 1. It runs client-side, so no server-side file access is needed.
 2. `cur.copy("COPY ... (col1, col2, ...) FROM STDIN")` uses an **explicit column list**, so file column order and table DDL order are decoupled — the `coreg` bug cannot recur.
 3. On first load of each quarter it asserts the file header against `loader.EXPECTED_COLUMNS`, so any future SEC schema drift fails loud instead of corrupting silver.
-4. A `sec_raw.load_log` table tracks loaded quarters so `load_all(incremental=True)` skips work already done.
+4. A `sec_raw.load_log` table tracks loaded quarters so `load_all(incremental=True)` skips work already done, and every bronze row carries `source_quarter` — filled by a transaction-local setting the loader makes before each COPY, so the file is read once and a row cannot land without its quarter. `dera load --quarter Q --force` deletes that quarter's rows and loads it again; before the column existed a second COPY could only double the quarter.
 
 ## Silver: bitemporal, not merely dual-ranked
+
+A new DERA quarter is folded in, not rebuilt: `dera build-silver --quarter Q`
+calls `sec_silver.build_quarter`, which upserts the quarter's filings, adds new
+taxonomy rows, and recomputes **every `num_silver` fact partition the quarter
+touches** from the existing rows plus the new ones. The vintage and
+supersession columns are window functions over a partition, and a new vintage
+moves every older one, so recomputing whole partitions is the only correct
+move; untouched partitions are never read. Measured on 2026q2 (3.6M facts
+touching 3.4M partitions, 6.1M rows recomputed): 16:51 against the 39-minute
+full build, two minutes of it finding the rows with one sequential pass and a
+hash semi-join, the rest deleting and re-inserting them under three indexes.
+Validated by recomputing 3,000 random touched partitions from bronze with the
+full build's own SQL: every column identical. The full build stays what it is,
+one `CREATE TABLE AS` over every quarter, for the first build and for a
+re-issued dataset.
 
 `num_silver` retains **every vintage of every fact**, with `known_at`,
 `tradable_from`, `vintage_seq`, `superseded_known_at`, `superseded_tradable` and
@@ -206,8 +221,10 @@ the S&P 500 constituent history (`sp500_history.csv.gz` →
 and it is what gold joins to for index membership and classification: the two
 display matviews carry `index_name`, `index_is_asof` and as-of GICS per fact,
 and `peer_stats` scores only facts whose company was a constituent when the
-fact became actionable. For the S&P 400 and 600, whose histories are not yet
-replayed, the membership is today's snapshot as one labelled interval.
+fact became actionable. All three indexes are replayed (S&P 500 since 2008,
+S&P 400 since 2011, S&P 600 since 2018); the early S&P 600 page was the S&P
+1000, which the spine subtracts the same month's S&P 400 page from, and a run's
+CIK comes from the page only where SEC's dated crosswalk does not disagree.
 
 Share-class mappings come from the issuers' own 10-K cover pages
 (`tools/fetch_cover_page_classes.py`); a dual-class issuer — one that has ever

@@ -41,6 +41,16 @@
 
 SET LOCAL work_mem             = '1GB';
 SET LOCAL maintenance_work_mem = '1GB';
+-- PLAN SHAPE, PINNED. Joining tradable_financials to concept_tag_map on
+-- tag is a 62-row outer against a 12.4M-row inner, and the planner's
+-- estimate for "rows per tag" is the table-wide average (~3,000), so it
+-- picks a nested loop of per-tag bitmap scans. The mapped tags are the
+-- most common ones -- millions of rows each -- and that plan ran past
+-- 37 minutes on a REFRESH; with nested loops and bitmap scans off it is
+-- a parallel sequential scan and hash joins, 21 seconds. The refresh
+-- path in dera_pipeline.cli sets the same two for this matview.
+SET LOCAL enable_nestloop   = off;
+SET LOCAL enable_bitmapscan = off;
 
 DROP MATERIALIZED VIEW IF EXISTS sec_gold.peer_zscore_by_sub_industry CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS sec_gold.peer_stats                  CASCADE;
@@ -56,10 +66,9 @@ DROP MATERIALIZED VIEW IF EXISTS sec_gold.peer_stats                  CASCADE;
 -- period end is vintage-independent and is what "in the index that
 -- year" means. For the S&P 500 that is the replayed history, so a FY2012
 -- cross-section scores 2012's members -- SVB, Sears and the rest -- not
--- today's; for the S&P 400 and 600 it is today's list at every date
--- until their history is replayed, labelled as such in
--- index_membership.source. Before this the panel was today's S&P 1500 at
--- every fiscal year, survivorship bias by construction.
+-- today's; the S&P 400 (from 2011) and 600 (from 2018) are replayed the
+-- same way. Before this the panel was today's S&P 1500 at every fiscal
+-- year, survivorship bias by construction.
 
 CREATE MATERIALIZED VIEW sec_gold.peer_stats AS
 WITH picked AS (
@@ -306,7 +315,8 @@ COMMENT ON MATERIALIZED VIEW sec_gold.peer_stats IS
     'should read fact_asof.';
 COMMENT ON COLUMN sec_gold.peer_stats.index_name IS
     'Index the company belonged to on the fiscal period end date. SP500 '
-    'from replayed history; SP400/SP600 from today''s snapshot until '
+    'from replayed history for all three indexes; the SP600 carries a '
+    'documented hole from 2019-12 to 2021-02 where '
     'their history is replayed.';
 COMMENT ON COLUMN sec_gold.peer_stats.peer_level IS
     'Which GICS level this row was scored against. Sector is the '

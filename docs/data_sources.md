@@ -158,13 +158,15 @@ asserts the newest capture is a recent live fetch.
 
 ## 4. Wikipedia S&P index constituent pages
 
-**Today's S&P 1500 membership, and — for the S&P 500 — dated membership since
-2008, replayed from the page's revision history.**
+**Today's S&P 1500 membership, and dated membership for all three indexes,
+replayed from each page's revision history: the S&P 500 since 2008, the S&P 400
+since 2011, the S&P 600 since 2018.**
 
 - **Pages**: `List_of_S&P_{500,400,600}_companies`
 - **Today**: `tools/fetch_sp1500.py` → `sec_silver.universe_sp1500` (no dates)
-- **History**: `tools/fetch_sp500_history.py` → `data/reference/sp500_history.csv.gz`
-  → `sec_reference.index_observation` → `index_membership`
+- **History**: `tools/fetch_sp500_history.py [--index SP400|SP600]` →
+  `data/reference/sp{500,400,600}_history.csv.gz` → `sec_reference.index_observation`
+  → `index_sighting` → `index_membership`
 
 The history tool asks the MediaWiki API for the latest revision at the start of
 each month from October 2008 and parses the rendered constituents table: **214
@@ -173,18 +175,23 @@ undersized; the same 85%-of-window rule as the crosswalk stands guard anyway).
 Because the page carried GICS sector on every revision and sub-industry from
 2016, the classification is **as of** for the first time.
 
-**CIK resolution.** The page has a CIK column only from 2014. Earlier rows are
-resolved three ways, in order, each recorded in `cik_source`: the page itself;
-**continuity** — a ticker present in every capture from the row up to the first
-capture with a CIK is the same company, since a recycled ticker shows a removal
-and a later re-addition; and the **name**, normalised, matching exactly one
-company the spine has ever known under any name and that was filing at the time.
-Measured: 74,743 sightings from the page, 28,851 by continuity, 3,373 by name;
-**40 tickers unresolved** (588 sightings), 21 of them ending inside DERA coverage
-— Sunoco, J.C. Penney, Washington Post, Viacom's two Viacoms — listed in
-`sec_reference.index_membership_unresolved` and never guessed. The 2009-06-30
-cross-section resolves 497 of its members; 840 companies have been in the index
-since 2008 against 503 on today's page.
+**CIK resolution, per run.** A ticker present in consecutive captures is one
+company for that whole run, and the run gets one CIK from three sources, in
+order, recorded in `cik_source`. The **page**'s CIK column — where it exists
+(S&P 500 from 2014, S&P 600 from 2018-10, S&P 400 never) and only if the value
+is a CIK that has ever filed, since the S&P 1000-era S&P 600 page carried most
+CIKs with an extra trailing zero (73320 for Southwestern Energy's 7332) and AAR
+Corp as 17500 in 13 captures. Then SEC's own dated **crosswalk**,
+`cik_at(ticker, last sighting)`, which outranks a page CIK it disagrees with and
+resolves the S&P 400 almost entirely (56,086 of its 61,201 sightings; Sonoco,
+First American, Rayonier, Crane, AGCO all failed a name match). Then the
+**name**, normalised, matching exactly one company the spine has ever known
+under any name and that was filing at the time. Measured 2026-09-04 across the
+three indexes: 150,851 sightings from the page, 59,100 by crosswalk, 3,539 by
+name; **138 tickers unresolved** (953 sightings: S&P 500 38, S&P 400 14, S&P 600
+86), listed in `sec_reference.index_membership_unresolved` and never guessed.
+The S&P 500's 2009-06-30 cross-section resolves 497 of its members; 822
+companies have been in it since 2008 against 503 on today's page.
 
 **Granularity.** Membership starts at the page's own "date added" where it has
 one (Tesla: 2020-12-21), else the first monthly capture, and ends at the first
@@ -193,21 +200,46 @@ overlaps by up to a month, so a cross-section can count a few more than 500
 (518 on 2015-06-30). The page's "changes" table has exact dates and is the
 obvious refinement.
 
-The coverage limit for the other two indexes is not revision depth but whether
-the page carried a CIK column:
+**The other two indexes.** The S&P 400 page (153 monthly captures from
+2011-01, always 400 rows) has never carried a CIK column; the crosswalk
+resolves it, and it covers 391 of 400 members in mid-2012 and 399 in 2024. The
+S&P 600 page (92 captures from 2018-08) needed two findings. From its first
+revision until 2021-02 it was the **S&P 1000**: measured on 2019-06-22, 994
+rows of which 395 were on that month's S&P 400 page and 599 were not, so for an
+S&P 600 capture over 700 rows a ticker the closest S&P 400 capture (within 45
+days) also lists is removed — `sec_reference.index_sighting` is
+`index_observation` after that rule, and `index_observation` stays the raw
+record. The subtraction is only as good as the two pages' agreement: it holds
+from 2018-11 through 2019 (596–597 of 600) and fails as the pages drift apart
+(620–756 rows from 2019-12 to 2021-02), so a capture whose remainder is not
+within 570–615 rows is unused and partial, and through that gap
+`index_membership` carries only the 444 members seen on both sides — an
+honest under-count rather than a 75%-right list. From 2021-03 the page is a
+plain list of the 600 and membership is exact. Also measured: ~1.6% of S&P 500
+revisions are malformed (one 309-byte anonymous edit truncated the table from
+506 companies to 370), and a removed ticker survives for months in a page's
+changes table, so only the constituents table is read.
 
-| Index | Real CIK column | Ticker + name only |
-|---|---|---|
-| S&P 500 | 2014 → now | 2008–2013 (resolved as above) |
-| S&P 400 | **never**, including the 2026 page | 2011 → now |
-| S&P 600 | 2019 → now | — |
+| Index | Captures | Page CIK column | Resolved by | Coverage |
+|---|---|---|---|---|
+| S&P 500 | 214, 2008-09 → | 2014 → | page; crosswalk and name before | 500–505 members on every mid-year date |
+| S&P 400 | 153, 2011-01 → | never | crosswalk (92%), page, name | 390–400 |
+| S&P 600 | 92, 2018-08 → | 2018-10 → (unreliable to 2021-02) | page, crosswalk | 596–600, except 444 through the 2020 gap |
 
-Until those are replayed, `index_membership` carries the 400 and 600 as a single
-interval from 1900-01-01 with `source = 'current_snapshot'` — the old
-survivorship-biased state, confined to two indexes and labelled. Also measured:
-~1.6% of revisions are malformed (one 309-byte anonymous edit truncated the
-table from 506 companies to 370), and a removed ticker survives for months in
-the page's changes table, so only the constituents table is read.
+**CIK succession.** A holding-company reorganisation gives a company a new
+CIK, and the index pages know only one CIK per ticker, so a run resolved to
+one registrant named either a CIK that did not exist yet (APA Corp 1841666 for
+Apache 6769 before 2021) or one that had stopped filing (Cigna 701221 after
+2018): five S&P 500 constituents of 2020-06-30 had no filer behind them.
+`sec_reference.cik_succession` records the ticker handoffs in SEC's own file —
+a primary ticker whose interval for one CIK ends where a newer CIK's begins,
+211 pairs — and the spine splits a membership interval that straddles a
+handoff, re-keying the earlier part to the old registrant (32 intervals). What
+tells succession from a recycled ticker is unbroken index presence across the
+handoff; a recycled ticker changes company only after a removal, which ends
+the run. Not caught: a ticker change at succession (Paramount Global PARA →
+Paramount Skydance PSKY, 2025) and handoffs before the crosswalk's 2018-12
+start where neither registrant's ticker is back-extended.
 
 ## 4b. Issuer 10-K cover pages (share-class mapping)
 
@@ -318,8 +350,10 @@ Honest gaps, all at the acquisition boundary:
   how stale it is.
 - **`tickers.csv` is replaced by hand with no date stamp.**
 - **`data/raw/` quarters are not checksummed.** `sec_raw.load_log` records which
-  quarters were loaded, but not what their contents hashed to, so a silently
-  re-issued quarter would not be detected.
+  quarters were loaded and every bronze row carries its `source_quarter`, but
+  nothing records what the files hashed to, so a silently re-issued quarter
+  would not be detected (it can at least be replaced: `dera load --quarter Q
+  --force`).
 - **The xlsx reference files have no recorded origin or date.**
 
 None of these are hard to fix and none are fixed yet. The pattern to follow is
@@ -331,11 +365,14 @@ the specific archived captures a run resolved to, so the run is reproducible.
 ## Refreshing everything
 
 ```bash
-uv run dera download --from 2026q2 --to 2026q2   # new DERA quarter
-uv run dera load --quarter 2026q2                # into bronze (refuses a quarter already loaded)
-uv run dera build-silver                         # ~39 min, single transaction
-uv run dera build-gold                           # ~26 min
+uv run dera download --from 2026q3 --to 2026q3   # new DERA quarter
+uv run dera load --quarter 2026q3                # into bronze; --force replaces a loaded quarter
+uv run dera build-silver --quarter 2026q3        # fold: only the fact partitions it touches are recomputed (~17 min)
+uv run dera rebuild-reference                    # spine, security model, gold matviews whose inputs changed
 uv run dera verify                               # correctness suite
+
+uv run dera build-silver                         # the full rebuild, ~39 min: first build or a re-issued dataset
+uv run dera build-gold                           # ~26 min
 
 uv run dera fetch-filing-index                   # EDGAR archive, ~1.5 GB
 uv run dera build-security-model                 # security lifecycle

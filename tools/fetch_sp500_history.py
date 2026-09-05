@@ -31,8 +31,19 @@ capture is evidence of presence, not proof of absence; and a removed
 ticker survives for months in the page's "changes" table, which is why
 only the constituents table is read.
 
+THE OTHER TWO INDEXES. The same replay works for "List of S&P 400
+companies" (revisions from 2010-12-31; the page has never carried a CIK
+column, so every row resolves downstream by ticker continuity or name)
+and "List of S&P 600 companies" (from 2018-08-27; CIK column from 2019).
+`--index SP400` / `--index SP600` select the page, the probe start and
+the output file; the spine's resolution rules are the same for all three
+and its snapshot fallback for an index switches itself off the moment
+that index has observations.
+
 Run:  uv run python tools/fetch_sp500_history.py            # resumes
       uv run python tools/fetch_sp500_history.py --batch 0  # everything in one run
+      uv run python tools/fetch_sp500_history.py --index SP400 --batch 0
+      uv run python tools/fetch_sp500_history.py --index SP600 --batch 0
 """
 
 from __future__ import annotations
@@ -55,7 +66,15 @@ from lxml import html as lxml_html
 from dera_pipeline import config
 
 API = "https://en.wikipedia.org/w/api.php"
-PAGE = "List of S&P 500 companies"
+# Per-index page, probe start (the month after the page's first revision)
+# and output file. SP500 is the default so existing invocations and the
+# tracked file name are unchanged.
+INDEXES = {
+    "SP500": {"page": "List of S&P 500 companies", "start": (2008, 10), "out": "sp500_history.csv.gz"},
+    "SP400": {"page": "List of S&P 400 companies", "start": (2011, 1),  "out": "sp400_history.csv.gz"},
+    "SP600": {"page": "List of S&P 600 companies", "start": (2018, 9),  "out": "sp600_history.csv.gz"},
+}
+PAGE = INDEXES["SP500"]["page"]
 INDEX_NAME = "SP500"
 
 # One probe per month. DERA coverage opens 2009-04 and the calendar
@@ -85,8 +104,8 @@ def _get_json(params: dict) -> dict:
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 
-def _probes() -> list[str]:
-    y, m = PROBE_START
+def _probes(start: tuple[int, int] = PROBE_START) -> list[str]:
+    y, m = start
     today = time.gmtime()
     out = []
     while (y, m) <= (today.tm_year, today.tm_mon):
@@ -97,10 +116,10 @@ def _probes() -> list[str]:
     return out
 
 
-def revision_at(probe: str) -> tuple[int, str] | None:
+def revision_at(probe: str, page: str = PAGE) -> tuple[int, str] | None:
     """The latest revision at or before *probe*, as (revid, timestamp)."""
     payload = _get_json({
-        "action": "query", "prop": "revisions", "titles": PAGE,
+        "action": "query", "prop": "revisions", "titles": page,
         "rvlimit": 1, "rvstart": probe, "rvdir": "older",
         "rvprop": "ids|timestamp",
     })
@@ -207,9 +226,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--batch", type=int, default=DEFAULT_BATCH_SIZE,
                         help=f"captures to fetch this run (default {DEFAULT_BATCH_SIZE}; 0 = all)")
+    parser.add_argument("--index", choices=sorted(INDEXES), default="SP500",
+                        help="which index page to replay (default SP500)")
     args = parser.parse_args(argv)
+    spec = INDEXES[args.index]
 
-    out_path = config.REFERENCE_DIR / OUT_NAME
+    out_path = config.REFERENCE_DIR / spec["out"]
     done = _completed_revids(out_path)
     if done:
         print(f"Resuming: {len(done)} revision(s) already captured.")
@@ -223,9 +245,9 @@ def main(argv: list[str] | None = None) -> int:
     budget = args.batch if args.batch > 0 else 10**9
     written = 0
     try:
-        for probe in _probes():
+        for probe in _probes(spec["start"]):
             try:
-                rev = revision_at(probe)
+                rev = revision_at(probe, spec["page"])
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
                 print(f"  {probe[:10]}: revision lookup failed ({exc})", file=sys.stderr)
                 continue

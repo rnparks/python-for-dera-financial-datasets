@@ -350,16 +350,18 @@ def load_calendar_only(conn: psycopg.Connection) -> int:
     # Optional: without it the S&P 500 has no dated membership and the
     # index_membership derivation falls back to today's snapshot for it,
     # labelled current_snapshot, exactly as for the 400 and 600.
-    hist = config.REFERENCE_DIR / "sp500_history.csv.gz"
-    if not hist.exists():
-        hist = config.REFERENCE_DIR / "sp500_history.csv"
-    if hist.exists():
-        k = load_index_history(conn, hist, "SP500")
-        print(f"  index_observation → {k:>6,} S&P 500 constituent sightings")
-    else:
-        print("  sp500_history.csv.gz absent — S&P 500 membership will be "
-              "today's snapshot only. Build it with "
-              "`uv run python tools/fetch_sp500_history.py --batch 0`.")
+    for index_name, label in (("SP500", "S&P 500"), ("SP400", "S&P 400"), ("SP600", "S&P 600")):
+        stem = f"{index_name.lower()}_history"
+        hist = config.REFERENCE_DIR / f"{stem}.csv.gz"
+        if not hist.exists():
+            hist = config.REFERENCE_DIR / f"{stem}.csv"
+        if hist.exists():
+            k = load_index_history(conn, hist, index_name)
+            print(f"  index_observation → {k:>6,} {label} constituent sightings")
+        else:
+            print(f"  {stem}.csv.gz absent — {label} membership will be "
+                  "today's snapshot only. Build it with "
+                  f"`uv run python tools/fetch_sp500_history.py --index {index_name} --batch 0`.")
     return n
 
 

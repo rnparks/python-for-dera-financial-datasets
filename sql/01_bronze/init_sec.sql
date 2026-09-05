@@ -9,6 +9,16 @@
 -- act, file, film, wc) that never appear in real sub.txt.
 --
 -- Bronze is loaded by dera_pipeline.loader, not by a plpgsql procedure.
+--
+-- Every table carries `source_quarter`, the DERA file the row came from
+-- (e.g. '2026q2'). COPY cannot set a constant, so the column takes its
+-- DEFAULT from a transaction-local setting the loader makes before each
+-- COPY -- one pass over the file, no staging table -- and loading with
+-- the setting absent fails outright rather than writing NULLs. It is
+-- what lets one quarter be replaced (`dera load --quarter Q --force`)
+-- and what the incremental silver build reads. Bronze had no such
+-- column until 2026-09-04, when a second COPY of a quarter could only
+-- double its rows and the only way back was a full reload.
 
 DROP SCHEMA IF EXISTS sec_raw CASCADE;
 CREATE SCHEMA sec_raw;
@@ -50,7 +60,8 @@ CREATE TABLE sec_raw.sub_raw (
     detail TEXT,
     instance TEXT,
     nciks TEXT,
-    aciks TEXT
+    aciks TEXT,
+    source_quarter TEXT NOT NULL DEFAULT current_setting('dera.load_quarter')
 );
 
 -- tag.txt — 9 columns
@@ -63,7 +74,8 @@ CREATE TABLE sec_raw.tag_raw (
     iord TEXT,
     crdr TEXT,
     tlabel TEXT,
-    doc TEXT
+    doc TEXT,
+    source_quarter TEXT NOT NULL DEFAULT current_setting('dera.load_quarter')
 );
 
 -- num.txt — 10 columns (coreg is position 8, not position 4)
@@ -77,7 +89,8 @@ CREATE TABLE sec_raw.num_raw (
     segments TEXT,
     coreg TEXT,
     value TEXT,
-    footnote TEXT
+    footnote TEXT,
+    source_quarter TEXT NOT NULL DEFAULT current_setting('dera.load_quarter')
 );
 
 -- pre.txt — 10 columns
@@ -91,5 +104,16 @@ CREATE TABLE sec_raw.pre_raw (
     tag TEXT,
     version TEXT,
     plabel TEXT,
-    negating TEXT
+    negating TEXT,
+    source_quarter TEXT NOT NULL DEFAULT current_setting('dera.load_quarter')
 );
+
+-- Replacing one quarter, and the incremental silver build, walk these
+-- tables by source_quarter. Rows are appended a quarter at a time, so
+-- each quarter is physically contiguous and a BRIN index -- a few
+-- hundred kilobytes on the 30 GB num_raw against ~4 GB for a btree --
+-- prunes nearly every block. It costs nothing measurable at COPY time.
+CREATE INDEX idx_sub_raw_quarter ON sec_raw.sub_raw USING brin (source_quarter);
+CREATE INDEX idx_tag_raw_quarter ON sec_raw.tag_raw USING brin (source_quarter);
+CREATE INDEX idx_num_raw_quarter ON sec_raw.num_raw USING brin (source_quarter);
+CREATE INDEX idx_pre_raw_quarter ON sec_raw.pre_raw USING brin (source_quarter);

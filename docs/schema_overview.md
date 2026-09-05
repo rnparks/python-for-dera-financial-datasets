@@ -40,7 +40,9 @@ reasoned about rather than at ingest.
 | `pre_raw` | 44.1M | 6.7 GB | Presentation: how facts map to statement lines |
 | `tag_raw` | 4.7M | 1.2 GB | XBRL taxonomy: tag names, labels, definitions |
 | `sub_raw` | 419.8K | 141 MB | Submissions: one row per filing |
-| `load_log` | 70 | 32 kB | Which quarters have been loaded (drives incremental load; a logged quarter is refused a second time) |
+| `load_log` | 70 | 32 kB | Which quarters have been loaded (drives incremental load; a logged quarter is refused unless `--force` replaces it) |
+
+Every row of the four raw tables carries `source_quarter`, the DERA file it came from, filled by a transaction-local setting the loader makes before each COPY. It is what `dera load --quarter Q --force` deletes by and what `dera build-silver --quarter Q` reads; a BRIN index on it is enough because rows are appended a quarter at a time.
 
 ## `sec_silver` — silver
 
@@ -53,7 +55,7 @@ is established.
 | `tag_silver` | 4.5M | 1.5 GB | Deduplicated taxonomy |
 | `sub_silver` | 433.7K | 111 MB | Filings with `known_at` (acceptance instant) and `tradable_from` |
 | `ticker_map` | 10.2K | 1.3 MB | Legacy CIK ↔ ticker crosswalk (superseded by `sec_reference`) |
-| `universe_sp1500` | 1,505 | 376 kB | **Today's** S&P 1500 membership — no dates; the source of the S&P 400/600 snapshot intervals in `sec_reference.index_membership` |
+| `universe_sp1500` | 1,505 | 376 kB | **Today's** S&P 1500 membership — no dates; only the `is_primary` tie-break reads it now |
 
 `num_silver` carries the availability columns everything else depends on:
 `known_at`, `tradable_from`, `vintage_seq`, `superseded_known_at`,
@@ -63,10 +65,8 @@ query time. (It no longer carries indexes on `rank_pit` and `rank_latest`: 2.4 G
 that the planner never used, since `= 1` matches most of the table.)
 
 > **Caveat — `universe_sp1500` is current-constituents-only.** It has no date
-> columns at all. Nothing in gold joins to it directly any more: gold reads
-> `sec_reference.index_membership`, which holds replayed S&P 500 history and,
-> for the S&P 400 and 600 only, this table's snapshot as a labelled interval
-> from 1900-01-01 until their histories are replayed.
+> columns at all. Nothing in gold joins to it any more: gold reads
+> `sec_reference.index_membership`, replayed history for all three indexes.
 
 ### Raw SEC fields → silver columns
 
@@ -101,13 +101,15 @@ construction: it holds every CIK that ever filed, not the ones that survived.
 | `ticker_observation` | 861,755 | Raw dated crosswalk observations: 81 captures, monthly from 2018-12 |
 | `ticker_capture` | 81 | One row per capture with its size and whether it is partial |
 | `company_ticker` | 41,925 | Dated CIK ↔ ticker intervals with `is_primary` and `source`: 35,520 observed intervals over 20,326 CIKs (12,321 absent from SEC's live file) plus 6,405 back-extended single-ticker histories reaching the first filing |
-| `index_observation` | 107,555 | Raw S&P 500 constituent sightings: 214 monthly Wikipedia captures, 2008-09 to 2026-08, GICS as the page gave it |
-| `index_capture` | 214 | One row per capture with its size and partial flag (none partial) |
-| `index_observation_resolved` | 107,555 | The same sightings with a CIK from the page (74,743), by continuity (28,851) or by name (3,373); 588 unresolved |
-| `index_membership_unresolved` | 40 | Tickers that never resolved to a CIK — the members the historical universe is missing, listed rather than guessed |
-| **`index_membership`** | **2,708** | **Dated membership with GICS as of the interval**: 1,738 replayed S&P 500 intervals over 840 companies (`wikipedia_history`), 970 S&P 400/600 snapshot intervals (`current_snapshot`) |
-| `index_membership_latest` | 1,711 | One row per company: its current or most recent membership, the label gold falls back to |
-| `index_membership_timeline` | 2,931 | `index_membership` resolved to one non-overlapping interval set per company (1,711 companies; replayed history beats a snapshot, then the later start). What gold joins with a plain range condition; an EXCLUDE constraint enforces the non-overlap |
+| `cik_succession` | 211 | Ticker handoffs between two registrants in SEC's own file (the old CIK's primary interval ends where a newer CIK's begins): evidence of a holding-company reorganisation, consumed only by the membership split |
+| `index_observation` | 233,265 | Raw constituent sightings from monthly Wikipedia captures: S&P 500 214 (2008-09 →), S&P 400 153 (2011-01 →), S&P 600 92 (2018-08 →); GICS as the page gave it |
+| `index_sighting` | 224,536 | The sightings after the S&P 1000 rule: rows of an oversized early S&P 600 capture that the same month's S&P 400 page also lists are removed |
+| `index_capture` | 459 | One row per capture with its size and partial flag (16 partial: the S&P 600 captures that are not a list of about 600) |
+| `index_observation_resolved` | 214,443 | The same sightings with a CIK per run: from the page (150,851), the dated crosswalk (59,100) or the name (3,539); 953 unresolved |
+| `index_membership_unresolved` | 138 | Tickers that never resolved to a CIK — the members the historical universe is missing, listed rather than guessed (S&P 500 38, S&P 400 14, S&P 600 86) |
+| **`index_membership`** | **6,232** | **Dated membership with GICS as of the interval, all three indexes replayed**: S&P 500 1,852 intervals over 833 companies, S&P 400 2,139 over 1,040, S&P 600 2,241 over 1,160; 32 intervals re-keyed to a predecessor registrant by `cik_succession`; no snapshot rows remain |
+| `index_membership_latest` | 2,408 | One row per company: its current or most recent membership, the label gold falls back to |
+| `index_membership_timeline` | 6,242 | `index_membership` resolved to one non-overlapping interval set per company (2,408 companies; the later start wins). What gold joins with a plain range condition; an EXCLUDE constraint enforces the non-overlap |
 | **`security`** | **17,030** | **A tradable instrument, distinct from its issuer.** Listed classes only |
 | `listing` | 28,287 | Security ↔ ticker over time; `source` says observed crosswalk (21,844), extended crosswalk (6,352) or share-class map (91) |
 | `eligibility` | 36,199 | Universe membership intervals with reasons in and out: `filers_10k_15m` 17,700, `filers_10k_15m_strict` 17,635 (1,832 of them entering at a 424B pricing rather than a first periodic report), `sp500` 864 |
@@ -183,7 +185,7 @@ full reference including every function signature.
 | `fact_asof` | matview | 97.9M | 33 GB | **Bitemporal facts, every vintage. The backtest source** |
 | `tradable_financials` | matview | 12.4M | 3.5 GB | Latest-restated facts, one row per fact; index membership and GICS dated |
 | `tradable_financials_pit` | matview | 12.4M | 3.6 GB | Earliest-sighting twin |
-| `peer_stats` | matview | 827.9K | 214 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the time |
+| `peer_stats` | matview | 636.2K | 163 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the day for all three indexes |
 | `share_class_shares` | matview | 777.5K | 218 MB | Per-class share counts for 9,654 companies, delisted included — the market-cap denominator |
 | `canonical_concepts` | table | 26 | — | Research taxonomy (revenue, total_debt, net_margin, revenue_growth, …) |
 | `concept_tag_map` | table | 62 | — | Priority-ordered XBRL tag resolution |
@@ -222,11 +224,11 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 56 checks; exits non-zero on any FAIL
+uv run dera verify     # 59 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 
 Covers restatement preservation, availability correctness, crosswalk capture
 quality, share-class summing, derived-concept resolution, and the survivorship /
-future-existence tests on the universe. Checks 29–56 each name the defect found
+future-existence tests on the universe. Checks 29–59 each name the defect found
 in the 2026-09-04 review, or the gap closed since, that they guard against.

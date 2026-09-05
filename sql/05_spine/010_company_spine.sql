@@ -364,6 +364,57 @@ COMMENT ON COLUMN sec_reference.company_ticker.valid_to IS
     'partial captures, is bridged rather than closed; see ticker_capture.';
 
 -- ---------------------------------------------------------------
+-- 3c. CIK succession: one company, two registrants.
+-- ---------------------------------------------------------------
+-- A holding-company reorganisation gives a company a new CIK. The old
+-- registrant may go silent (Cigna 701221 -> 1739940 in 2018, WestRock
+-- 1636023 -> 1732845, BlackRock 1364742 -> 2012383 in 2024) or keep
+-- filing as a subsidiary (Apache 6769 kept filing after APA Corp 1841666
+-- took the ticker in 2021). The index pages know only one CIK per
+-- ticker, so a membership run resolved to one registrant would either
+-- name a CIK that did not exist yet or one that had stopped filing:
+-- five S&P 500 constituents scored nothing on 2020-06-30 for that reason.
+-- The evidence of succession is the ticker handoff in SEC's own file: a
+-- primary ticker held by one CIK whose interval ends where another,
+-- newer CIK's interval for the same ticker begins. A recycled ticker
+-- between unrelated companies looks the same here (CalAmp's CAMP went
+-- to CAMP4 Therapeutics four months after it delisted), which is why
+-- this table is evidence, not a merge: the only consumer is the index
+-- membership split in 020, where a run of unbroken index presence is
+-- what tells succession from recycling. Ticker changes at succession
+-- (Paramount Global PARA -> Paramount Skydance PSKY) are not caught.
+CREATE TABLE IF NOT EXISTS sec_reference.cik_succession (
+    old_cik      INTEGER NOT NULL,
+    new_cik      INTEGER NOT NULL,
+    ticker       TEXT    NOT NULL,
+    handoff_date DATE    NOT NULL,
+    old_last_filed  DATE,
+    new_first_filed DATE,
+    PRIMARY KEY (old_cik, new_cik, ticker)
+);
+
+TRUNCATE sec_reference.cik_succession;
+INSERT INTO sec_reference.cik_succession
+SELECT DISTINCT ON (a.cik, b.cik, a.ticker)
+       a.cik, b.cik, a.ticker, b.valid_from, ca.last_filed, cb.first_filed
+FROM sec_reference.company_ticker a
+JOIN sec_reference.company_ticker b
+  ON b.ticker = a.ticker AND b.cik <> a.cik
+ AND a.is_primary AND b.is_primary
+ AND b.valid_from BETWEEN a.valid_to - 45 AND a.valid_to + 120
+JOIN sec_reference.company ca ON ca.cik = a.cik
+JOIN sec_reference.company cb ON cb.cik = b.cik
+WHERE a.valid_to IS NOT NULL
+  AND cb.first_filed > ca.first_filed + 30
+ORDER BY a.cik, b.cik, a.ticker, b.valid_from;
+
+COMMENT ON TABLE sec_reference.cik_succession IS
+    'Ticker handoffs between two registrants in SEC''s own file: the old '
+    'CIK''s primary interval ends where the newer CIK''s begins. Evidence of '
+    'a holding-company reorganisation, indistinguishable here from a '
+    'recycled ticker; consumed only by the index membership split.';
+
+-- ---------------------------------------------------------------
 -- 4. Convenience view: the ticker to show for a CIK today.
 -- ---------------------------------------------------------------
 CREATE OR REPLACE VIEW sec_reference.company_label AS
