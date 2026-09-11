@@ -91,6 +91,7 @@ LANGUAGE sql STABLE AS $$
       AND f.value_date = p_value_date
       AND f.qtrs = p_qtrs
       AND f.value IS NOT NULL
+      AND f.uom = 'USD'
       AND f.tradable_from <= k.d
       AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
       AND (m.sic_prefix = '' OR c.sic_latest::TEXT LIKE m.sic_prefix || '%')
@@ -101,6 +102,36 @@ $$;
 COMMENT ON FUNCTION sec_gold.as_of_resolve_direct(INTEGER, TEXT, DATE, INTEGER, DATE, INTEGER) IS
     'Tag-map walk against fact_asof, no formula fallback. Operand '
     'resolver for derived concepts; callers want as_of_canonical.';
+
+-- The variant guard, as of a date: a custom-namespace debt line the
+-- filer had reported for this balance date by the knowledge date.
+DROP FUNCTION IF EXISTS sec_gold.as_of_custom_line_present(INTEGER, DATE, TEXT, TEXT, DATE, INTEGER);
+
+CREATE FUNCTION sec_gold.as_of_custom_line_present(
+    p_cik              INTEGER,
+    p_value_date       DATE,
+    p_match            TEXT,
+    p_except           TEXT,
+    p_asof             DATE,
+    p_buffer_sessions  INTEGER DEFAULT 0
+) RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM sec_gold.fact_asof f,
+             LATERAL (SELECT sec_gold.shift_sessions(p_asof, p_buffer_sessions) AS d) k
+        WHERE f.cik = p_cik
+          AND f.value_date = p_value_date
+          AND f.qtrs = 0
+          AND f.value > 0
+          AND f.tradable_from <= k.d
+          AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
+          AND f.tag ~ p_match
+          AND (p_except IS NULL OR f.tag !~ p_except)
+          AND NOT EXISTS (SELECT 1 FROM sec_silver.tag_silver t
+                           WHERE t.tag = f.tag AND t.version LIKE 'us-gaap%')
+    );
+$$;
 
 DROP FUNCTION IF EXISTS sec_gold.as_of_canonical(INTEGER, TEXT, DATE, INTEGER, DATE, INTEGER);
 
@@ -118,26 +149,45 @@ LANGUAGE sql STABLE AS $$
         sec_gold.as_of_resolve_direct(
             p_cik, p_concept, p_value_date, p_qtrs, p_asof, p_buffer_sessions),
         (
-            SELECT CASE
-                WHEN bool_or(fm.required AND v.val IS NULL) THEN NULL
-                WHEN count(v.val) = 0                       THEN NULL
-                ELSE sum(fm.coefficient * COALESCE(v.val, 0))
-            END
-            FROM sec_gold.concept_formula fm
+            -- The formula variants in order, every operand and the guard
+            -- bounded by the same knowledge date.
+            SELECT v.total
+            FROM sec_gold.concept_formula_variant fv
+            LEFT JOIN sec_reference.company co ON co.cik = p_cik
             CROSS JOIN LATERAL (
-                SELECT sec_gold.as_of_resolve_direct(
-                    p_cik, fm.operand, p_value_date, p_qtrs,
-                    p_asof, p_buffer_sessions) AS val
+                SELECT CASE
+                    WHEN bool_or(fm.required AND o.val IS NULL) THEN NULL
+                    WHEN count(o.val) = 0                       THEN NULL
+                    ELSE sum(fm.coefficient * COALESCE(o.val, 0))
+                END AS total
+                FROM sec_gold.concept_formula fm
+                CROSS JOIN LATERAL (
+                    SELECT sec_gold.as_of_resolve_direct(
+                        p_cik, fm.operand, p_value_date, p_qtrs,
+                        p_asof, p_buffer_sessions) AS val
+                ) o
+                WHERE fm.concept = fv.concept AND fm.variant = fv.variant
             ) v
-            WHERE fm.concept = p_concept
+            WHERE fv.concept = p_concept
+              AND (cardinality(fv.sic_prefixes) = 0
+                   OR EXISTS (SELECT 1 FROM unnest(fv.sic_prefixes) sp
+                               WHERE co.sic_latest::TEXT LIKE sp || '%'))
+              AND (fv.guard_match IS NULL
+                   OR NOT sec_gold.as_of_custom_line_present(
+                          p_cik, p_value_date, fv.guard_match, fv.guard_except,
+                          p_asof, p_buffer_sessions))
+              AND v.total IS NOT NULL
+            ORDER BY fv.variant
+            LIMIT 1
         )
     );
 $$;
 
 COMMENT ON FUNCTION sec_gold.as_of_canonical(INTEGER, TEXT, DATE, INTEGER, DATE, INTEGER) IS
-    'Concept value knowable on p_asof: direct tags first, then '
-    'concept_formula. Every operand is filtered by the same knowledge '
-    'date, so a derived value never mixes vintages.';
+    'Concept value knowable on p_asof: direct tags first, then the '
+    'concept_formula variants in order. Every operand and the guard are '
+    'filtered by the same knowledge date, so a derived value never mixes '
+    'vintages.';
 
 -- ---------------------------------------------------------------
 -- Most recent annual observation as of a date, fiscal-year aware.
@@ -223,6 +273,8 @@ LANGUAGE sql STABLE AS $$
         WHERE m.concept = (SELECT concept FROM target)
           AND f.cik = p_cik
           AND f.qtrs = ct.qtrs
+          AND f.uom = 'USD'
+          AND f.uom = 'USD'
           AND f.value IS NOT NULL
           AND f.tradable_from <= k.d
           AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
@@ -251,6 +303,7 @@ LANGUAGE sql STABLE AS $$
                 WHERE fm.concept = (SELECT concept FROM target)
                   AND f.cik = p_cik
                   AND f.qtrs = ct.qtrs
+                  AND f.uom = 'USD'
                   AND f.value IS NOT NULL
                   AND f.tradable_from <= k.d
                   AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
@@ -357,6 +410,7 @@ LANGUAGE sql STABLE AS $$
     LEFT JOIN LATERAL sec_gold.as_of_latest_annual(
         p_cik, c.concept, p_asof, p_buffer_sessions
     ) la ON TRUE
+    WHERE c.scored
     ORDER BY c.concept;
 $$;
 

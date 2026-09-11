@@ -88,6 +88,7 @@ hist_direct AS (
     LEFT JOIN sec_reference.company  co ON co.cik = f.cik
     CROSS JOIN k
     WHERE f.value IS NOT NULL
+      AND f.uom = 'USD'
       AND f.tradable_from <= k.d
       AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
       AND f.value_date >  p_asof - (p_max_age_days + 430)
@@ -95,18 +96,54 @@ hist_direct AS (
       AND (m.sic_prefix = '' OR co.sic_latest::TEXT LIKE m.sic_prefix || '%')
     ORDER BY f.cik, m.concept, f.value_date, m.sic_prefix <> '' DESC, m.priority ASC
 ),
--- Formulas per period, from operands that share the period. A missing
--- required operand means no row for that period, as everywhere else.
+-- The variant guard (050), bounded by the knowledge date: a member's
+-- balance date at which a plain balance under a custom-namespace tag
+-- matches the variant's pattern.
+guarded AS (
+    SELECT DISTINCT fv.concept, fv.variant, f.cik, f.value_date
+    FROM sec_gold.concept_formula_variant fv
+    JOIN members mb ON TRUE
+    JOIN sec_gold.fact_asof f ON f.cik = mb.cik AND f.qtrs = 0 AND f.value > 0
+    CROSS JOIN k
+    WHERE fv.guard_match IS NOT NULL
+      AND f.tradable_from <= k.d
+      AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
+      AND f.value_date >  p_asof - (p_max_age_days + 430)
+      AND f.value_date <= p_asof
+      AND f.tag ~ fv.guard_match
+      AND (fv.guard_except IS NULL OR f.tag !~ fv.guard_except)
+      AND NOT EXISTS (SELECT 1 FROM sec_silver.tag_silver t
+                       WHERE t.tag = f.tag AND t.version LIKE 'us-gaap%')
+),
+-- Formulas per period, from operands that share the period, per
+-- variant in order (050): the first that resolves wins. A missing
+-- required operand means no row for that period, as everywhere else;
+-- a variant outside its industries or with its guard fired, likewise.
 hist_derived AS (
-    SELECT h.cik, fm.concept, h.value_date,
-           MAX(h.tradable_from)             AS tradable_from,
-           SUM(fm.coefficient * h.value)    AS value
-    FROM sec_gold.concept_formula fm
-    JOIN hist_direct h ON h.concept = fm.operand
-    GROUP BY h.cik, fm.concept, h.value_date
-    HAVING COUNT(*) FILTER (WHERE fm.required)
-         = (SELECT COUNT(*) FROM sec_gold.concept_formula f2
-             WHERE f2.concept = fm.concept AND f2.required)
+    SELECT DISTINCT ON (x.cik, x.concept, x.value_date)
+           x.cik, x.concept, x.value_date, x.tradable_from, x.value
+    FROM (
+        SELECT h.cik, fv.concept, fv.variant, h.value_date,
+               MAX(h.tradable_from)             AS tradable_from,
+               SUM(fm.coefficient * h.value)    AS value
+        FROM sec_gold.concept_formula_variant fv
+        JOIN sec_gold.concept_formula fm ON fm.concept = fv.concept AND fm.variant = fv.variant
+        JOIN hist_direct h ON h.concept = fm.operand
+        LEFT JOIN sec_reference.company co ON co.cik = h.cik
+        WHERE (cardinality(fv.sic_prefixes) = 0
+               OR EXISTS (SELECT 1 FROM unnest(fv.sic_prefixes) sp
+                           WHERE co.sic_latest::TEXT LIKE sp || '%'))
+          AND NOT EXISTS (
+            SELECT 1 FROM guarded g
+            WHERE g.concept = fv.concept AND g.variant = fv.variant
+              AND g.cik = h.cik AND g.value_date = h.value_date
+        )
+        GROUP BY h.cik, fv.concept, fv.variant, h.value_date
+        HAVING COUNT(*) FILTER (WHERE fm.required)
+             = (SELECT COUNT(*) FROM sec_gold.concept_formula f2
+                 WHERE f2.concept = fv.concept AND f2.variant = fv.variant AND f2.required)
+    ) x
+    ORDER BY x.cik, x.concept, x.value_date, x.variant
 ),
 hist AS (
     SELECT DISTINCT ON (cik, concept, value_date)
@@ -155,7 +192,7 @@ fresh AS (
            (p_asof - r.value_date)::INTEGER AS days_stale, r.value
     FROM resolved r
     JOIN members mb ON mb.cik = r.cik
-    JOIN sec_gold.canonical_concepts c ON c.concept = r.concept
+    JOIN sec_gold.canonical_concepts c ON c.concept = r.concept AND c.scored
     WHERE p_asof - r.value_date <= p_max_age_days
 ),
 levelled AS (

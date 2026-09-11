@@ -17,12 +17,14 @@
 --   - sign_multiplier is usually +1 but set to -1 for tags that are
 --     reported as negative numbers (e.g., some CostOfRevenue variants).
 
--- All three tables, so this file can be re-run on its own after a
--- mapping change (peer_stats goes with them and 080 recreates it). It
+-- All five tables, so this file can be re-run on its own after a
+-- mapping change (peer_stats goes with them and 080 recreates it; 060,
+-- 065, 070 and 085 must follow so the resolvers see the new shape). It
 -- once dropped only the first two, and a standalone re-run failed on
 -- concept_formula already existing.
 DROP TABLE IF EXISTS sec_gold.concept_ratio       CASCADE;
 DROP TABLE IF EXISTS sec_gold.concept_formula     CASCADE;
+DROP TABLE IF EXISTS sec_gold.concept_formula_variant CASCADE;
 DROP TABLE IF EXISTS sec_gold.concept_tag_map     CASCADE;
 DROP TABLE IF EXISTS sec_gold.canonical_concepts  CASCADE;
 
@@ -31,7 +33,11 @@ CREATE TABLE sec_gold.canonical_concepts (
     display_name  TEXT NOT NULL,
     fact_type     TEXT NOT NULL CHECK (fact_type IN ('flow','balance','ratio','growth','derived')),
     expected_uom  TEXT NOT NULL,
-    description   TEXT
+    description   TEXT,
+    -- Scored concepts are what peer_stats ranks and the snapshots list.
+    -- An operand that means nothing on its own -- a bank's FHLB advances
+    -- line -- resolves like any concept but is not scored.
+    scored        BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 INSERT INTO sec_gold.canonical_concepts VALUES
@@ -66,6 +72,39 @@ INSERT INTO sec_gold.canonical_concepts VALUES
     ('net_income_growth',    'Net Income Growth',       'growth',  'ratio',     'Net income change over the prior fiscal year; undefined from a loss'),
     ('eps_growth',           'Diluted EPS Growth',      'growth',  'ratio',     'Diluted EPS change over the prior fiscal year; undefined from a loss'),
     ('operating_cash_flow_growth', 'Operating Cash Flow Growth', 'growth', 'ratio', 'Operating cash flow change over the prior fiscal year; undefined from a non-positive base');
+
+-- INSTRUMENT LINES. A bank, a REIT or an insurer files no current /
+-- noncurrent split: its balance sheet lists each borrowing as its own
+-- line -- mortgages payable, unsecured notes, the revolver, FHLB
+-- advances, subordinated debt, trust-preferred debentures -- and total
+-- debt is their sum. Each line is a concept here so that the second
+-- total_debt variant can add them (concept_formula below); within one
+-- concept the tags are alternatives for the same line, across concepts
+-- the lines are disjoint. Measured 2026-09-11 over every FY2024 10-K:
+-- the common pairs (secured + unsecured 43 filers, line of credit +
+-- secured 43, FHLB advances + subordinated 32) never carry the same
+-- value, so they are lines, not restatements of one another. Not
+-- scored: nobody ranks on a subordinated-debt line.
+INSERT INTO sec_gold.canonical_concepts (concept, display_name, fact_type, expected_uom, description, scored) VALUES
+    ('debt_secured',               'Secured Debt',                 'balance', 'USD', 'Collateralised debt (mortgages payable), current and noncurrent', FALSE),
+    ('debt_secured_current',       'Secured Debt, Current',        'balance', 'USD', 'Current portion of collateralised debt, where the filer splits it', FALSE),
+    ('debt_unsecured',             'Unsecured Debt',               'balance', 'USD', 'Uncollateralised debt (term loans, notes), current and noncurrent', FALSE),
+    ('debt_senior_notes',          'Senior Notes',                 'balance', 'USD', 'Senior notes, current and noncurrent', FALSE),
+    ('debt_line_of_credit',        'Line of Credit',               'balance', 'USD', 'Drawn revolving credit, current and noncurrent', FALSE),
+    ('debt_line_of_credit_current','Line of Credit, Current',      'balance', 'USD', 'Current portion of drawn revolving credit, where the filer splits it', FALSE),
+    ('debt_notes_payable',         'Notes Payable',                'balance', 'USD', 'Notes payable, current and noncurrent', FALSE),
+    ('debt_loans_payable',         'Loans Payable',                'balance', 'USD', 'Loans payable (term loans, bank loans), current and noncurrent', FALSE),
+    ('debt_loans_payable_current', 'Loans Payable, Current',       'balance', 'USD', 'Current portion of loans payable, where the filer splits it', FALSE),
+    ('debt_convertible',           'Convertible Debt',             'balance', 'USD', 'Convertible notes, current and noncurrent', FALSE),
+    ('debt_other_long_term',       'Other Long-Term Debt',         'balance', 'USD', 'Long-term debt classified as other', FALSE),
+    ('debt_subordinated',          'Subordinated Debt',            'balance', 'USD', 'Subordinated debt', FALSE),
+    ('debt_junior_subordinated',   'Junior Subordinated Debt',     'balance', 'USD', 'Junior subordinated debentures and notes (trust-preferred)', FALSE),
+    ('debt_fhlb_advances',         'FHLB Advances',                'balance', 'USD', 'Federal Home Loan Bank advances, all maturities', FALSE),
+    ('debt_fhlb_advances_current', 'FHLB Advances, Short-Term',    'balance', 'USD', 'Short-term FHLB advances, where the filer splits them', FALSE),
+    ('debt_other_borrowings',      'Other Borrowings',             'balance', 'USD', 'Borrowings classified as other', FALSE),
+    ('debt_short_term_borrowings', 'Short-Term Borrowings',        'balance', 'USD', 'Fed funds purchased, repos and other short-term borrowings', FALSE),
+    ('debt_warehouse',             'Warehouse Borrowings',         'balance', 'USD', 'Warehouse lines of a mortgage lender', FALSE),
+    ('debt_surplus_notes',         'Surplus Notes',                'balance', 'USD', 'Surplus notes of an insurer', FALSE);
 
 CREATE TABLE sec_gold.concept_tag_map (
     concept          TEXT NOT NULL REFERENCES sec_gold.canonical_concepts (concept) ON DELETE CASCADE,
@@ -106,7 +145,8 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
     ('revenue', 'SalesRevenueNet',                                     5, 'Pre-ASC 606 (retired 2018) total sales; 470 tracked issuers used it for FY2015 and resolved to nothing'),
     ('revenue', 'RealEstateRevenueNet',                                6, 'REIT rental revenue total; 31 tracked issuers file only this'),
     ('revenue', 'SalesRevenueGoodsNet',                                7, 'Pre-ASC 606 goods component; safe only because no tracked issuer files it alongside SalesRevenueServicesNet without a total (check 37)'),
-    ('revenue', 'SalesRevenueServicesNet',                             8, 'Pre-ASC 606 services component; same guard as above');
+    ('revenue', 'SalesRevenueServicesNet',                             8, 'Pre-ASC 606 services component; same guard as above'),
+    ('revenue', 'RevenuesExcludingInterestAndDividends',               9, 'A total-revenue element a handful of non-financials file alone (Universal Corp 2.9B); 4 FY2024 filers');
 -- Banks (SIC 60) — prefer Revenues or RevenuesNetOfInterestExpense over the non-financial default
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes) VALUES
     ('revenue', 'Revenues',                            1, '60', 'Some banks file plain Revenues'),
@@ -129,12 +169,32 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes)
     ('revenue', 'Revenues',                                            1, '6798', 'Total, when filed'),
     ('revenue', 'RevenueFromContractWithCustomerExcludingAssessedTax', 2, '6798', 'Total, when filed'),
     ('revenue', 'RealEstateRevenueNet',                                3, '6798', 'Rental revenue total'),
-    ('revenue', 'OperatingLeaseLeaseIncome',                           4, '6798', 'ASC 842 rental income; the only revenue line 5 tracked REITs file');
+    ('revenue', 'OperatingLeaseLeaseIncome',                           4, '6798', 'ASC 842 rental income; the only revenue line 5 tracked REITs file'),
+    ('revenue', 'RevenueFromContractWithCustomerIncludingAssessedTax', 5, '6798', 'Total, when filed; restated above the interest line'),
+    ('revenue', 'InterestAndDividendIncomeOperating',                  6, '6798', 'A mortgage REIT has no rental line: gross interest income is its top line (Ready Capital, Two Harbors, Redwood, Adamas)');
+-- Brokers and advisers (SIC 62). Advisory boutiques file only
+-- InvestmentBankingRevenue (Moelis 1.2B); Navient (6211) only gross
+-- interest income. The totals are restated above both so a broker that
+-- files Revenues beside a component keeps the total (Stifel, Goldman).
+INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes) VALUES
+    ('revenue', 'Revenues',                                            1, '62', 'Total, when filed'),
+    ('revenue', 'RevenuesNetOfInterestExpense',                        2, '62', 'Net revenue of a large broker-dealer (Goldman, Morgan Stanley)'),
+    ('revenue', 'RevenueFromContractWithCustomerExcludingAssessedTax', 3, '62', 'Total, when filed'),
+    ('revenue', 'RevenueFromContractWithCustomerIncludingAssessedTax', 4, '62', 'Total, when filed'),
+    ('revenue', 'InvestmentBankingRevenue',                            5, '62', 'The only revenue line an advisory boutique files (Moelis)'),
+    ('revenue', 'InterestAndDividendIncomeOperating',                  6, '62', 'Gross interest income of a lender classified here (Navient 3.8B)');
 -- Regulated utilities (SIC 49) — 11 S&P 1500 issuers including NextEra
 -- report only this tag, so they resolved to no revenue at all before.
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, sic_prefix, notes) VALUES
     ('revenue', 'RegulatedAndUnregulatedOperatingRevenue', 1, '49', 'Standard regulated-utility revenue line'),
-    ('revenue', 'Revenues',                                2, '49', 'Utility fallback');
+    ('revenue', 'Revenues',                                2, '49', 'Utility fallback'),
+    -- An industry row outranks every generic row, so the ASC 606 totals
+    -- are restated here above the regulated line: of the 10 FY2024
+    -- filers of RegulatedOperatingRevenue, 8 file a total beside it
+    -- (Southern Company 12.5B against 8.0B regulated) and must keep it.
+    ('revenue', 'RevenueFromContractWithCustomerExcludingAssessedTax', 3, '49', 'Total, when filed'),
+    ('revenue', 'RevenueFromContractWithCustomerIncludingAssessedTax', 4, '49', 'Total, when filed'),
+    ('revenue', 'RegulatedOperatingRevenue',               5, '49', 'The only revenue line a gas utility may file (ONE Gas 2.1B, Spire 3.2B)');
 
 -- Gross profit -----------------------------------------------------
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
@@ -202,11 +262,14 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
 -- totals are totals by taxonomy definition. The components were added
 -- from the FY2024 S&P 500 gap: 88 members had no total_debt, and the
 -- ones that file debt at all use convertible, senior, unsecured or
--- notes-payable lines that no row here named. What is still NOT mapped,
--- on purpose: REIT secured/unsecured pairs and bank borrowings/deposits
--- (sibling components with no total; summing them needs double-count
--- guards this table cannot express), and anything dimensioned (GM,
--- PACCAR, Textron, Deere tag their debt by segment).
+-- notes-payable lines that no row here named. The REIT secured /
+-- unsecured pairs and the bank borrowing lines -- sibling components
+-- with no total, which this table could not sum -- are the instrument
+-- concepts above and the second total_debt variant below (2026-09-11).
+-- Still NOT mapped, on purpose: anything dimensioned (GM, PACCAR,
+-- Textron, Deere tag their debt by segment), and any instrument line
+-- of a non-financial, whose lines are too often partial (see the
+-- variant's notes).
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
     ('total_debt', 'DebtLongtermAndShorttermCombinedAmount',                           1, 'Cleanest roll-up but only filed by ~17 companies'),
     ('total_debt', 'LongTermDebt',                                                     2, 'Older single-tag usage; already a total'),
@@ -235,6 +298,56 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
     ('debt_current',    'ConvertibleNotesPayableCurrent',                8, 'Convertible notes, current'),
     ('debt_current',    'ConvertibleDebtCurrent',                        9, 'Convertible debt, current'),
     ('debt_current',    'ShortTermBorrowings',                          10, 'Short-term borrowings alone; last because DebtCurrent already includes them when both are filed');
+
+-- Instrument lines (operands of the second total_debt variant). Within
+-- a concept, priority orders alternatives for the same line: the tag
+-- that includes both portions first, then the noncurrent form, then a
+-- current-only form for the filers who report nothing else of that
+-- instrument (a revolver classified current). The current-portion
+-- concepts exist for the split pairs the taxonomy defines
+-- (SecuredLongTermDebt + SecuredDebtCurrent: 23 FY2024 filers,
+-- LongTermLineOfCredit + LinesOfCreditCurrent: 14) and would double
+-- count only against the both-portions tag of the same instrument,
+-- which those filers do not file. Every tag is a us-gaap element; the
+-- definitions quoted are the taxonomy's.
+INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
+    ('debt_secured',                'SecuredDebt',                                                     1, 'Collateralised debt, current and noncurrent portions (28 of the 49 FY2024 S&P 400/600 REITs without a total)'),
+    ('debt_secured',                'SecuredLongTermDebt',                                             2, 'Collateralised debt due beyond one year'),
+    ('debt_secured_current',        'SecuredDebtCurrent',                                              1, 'Current portion of collateralised long-term debt'),
+    ('debt_unsecured',              'UnsecuredDebt',                                                   1, 'Uncollateralised debt, current and noncurrent portions (22 REITs)'),
+    ('debt_senior_notes',           'SeniorNotes',                                                     1, 'Senior notes, current and noncurrent portions'),
+    ('debt_line_of_credit',         'LineOfCredit',                                                    1, 'Drawn line of credit, current and noncurrent portions (24 REITs)'),
+    ('debt_line_of_credit',         'LongTermLineOfCredit',                                            2, 'Drawn line of credit, noncurrent portion'),
+    ('debt_line_of_credit',         'LinesOfCreditCurrent',                                            3, 'Drawn line of credit, current portion, for a filer that reports nothing else of it'),
+    ('debt_line_of_credit_current', 'LinesOfCreditCurrent',                                            1, 'Current portion, alongside LongTermLineOfCredit'),
+    ('debt_notes_payable',          'NotesPayable',                                                    1, 'Notes payable, current and noncurrent portions (CNO 1.8B)'),
+    ('debt_notes_payable',          'NotesAndLoansPayable',                                            2, 'Notes and loans payable, both portions (CubeSmart)'),
+    ('debt_notes_payable',          'OtherNotesPayable',                                               3, 'Notes payable classified as other'),
+    ('debt_loans_payable',          'LoansPayable',                                                    1, 'Loans payable, current and noncurrent portions'),
+    ('debt_loans_payable',          'LongTermLoansPayable',                                            2, 'Loans payable due beyond one year'),
+    ('debt_loans_payable',          'LoansPayableToBank',                                              3, 'Bank loans, both portions'),
+    ('debt_loans_payable',          'LongTermLoansFromBank',                                           4, 'Bank loans due beyond one year'),
+    ('debt_loans_payable_current',  'LoansPayableToBankCurrent',                                       1, 'Current portion of bank loans'),
+    ('debt_loans_payable_current',  'ShortTermBankLoansAndNotesPayable',                               2, 'Short-term bank loans and notes'),
+    ('debt_convertible',            'ConvertibleNotesPayable',                                         1, 'Convertible notes, both portions'),
+    ('debt_convertible',            'ConvertibleDebt',                                                 2, 'Convertible debt, both portions'),
+    ('debt_other_long_term',        'OtherLongTermDebt',                                               1, 'Long-term debt classified as other (First Horizon 1.2B)'),
+    ('debt_other_long_term',        'OtherLongTermDebtNoncurrent',                                     2, 'Other long-term debt, noncurrent portion'),
+    ('debt_subordinated',           'SubordinatedDebt',                                                1, 'Subordinated debt, both portions (20 of the 50 FY2024 S&P 400/600 banks without a total)'),
+    ('debt_subordinated',           'SubordinatedLongTermDebt',                                        2, 'Subordinated debt due beyond one year'),
+    ('debt_junior_subordinated',    'JuniorSubordinatedDebentureOwedToUnconsolidatedSubsidiaryTrust',  1, 'Trust-preferred debentures (14 banks)'),
+    ('debt_junior_subordinated',    'JuniorSubordinatedNotes',                                         2, 'Junior subordinated notes, both portions'),
+    ('debt_junior_subordinated',    'JuniorSubordinatedLongTermNotes',                                 3, 'Junior subordinated notes due beyond one year'),
+    ('debt_fhlb_advances',          'AdvancesFromFederalHomeLoanBanks',                                1, 'FHLB advances, all maturities (Pinnacle 1.9B)'),
+    ('debt_fhlb_advances',          'FederalHomeLoanBankAdvancesLongTerm',                             2, 'FHLB advances initially due beyond one year, both portions (Wintrust 3.2B)'),
+    ('debt_fhlb_advances',          'FederalHomeLoanBankAdvancesBranchOfFHLBBankAmountOfAdvancesByBranch', 3, 'FHLB advances, the by-branch element filed on the face'),
+    ('debt_fhlb_advances',          'LongTermFederalHomeLoanBankAdvancesNoncurrent',                   4, 'FHLB advances, noncurrent portion'),
+    ('debt_fhlb_advances_current',  'FederalHomeLoanBankAdvancesShortTerm',                            1, 'Short-term FHLB advances, alongside a long-term line'),
+    ('debt_other_borrowings',       'OtherBorrowings',                                                 1, 'Other borrowings (19 banks)'),
+    ('debt_other_borrowings',       'OtherShortTermBorrowings',                                        2, 'Other short-term borrowings'),
+    ('debt_short_term_borrowings',  'ShortTermBorrowings',                                             1, 'Fed funds purchased, repos and other short-term borrowings; a line of its own for a bank (First Financial Bankshares files nothing else)'),
+    ('debt_warehouse',              'WarehouseAgreementBorrowings',                                    1, 'Warehouse lines of a mortgage lender'),
+    ('debt_surplus_notes',          'SurplusNotes',                                                    1, 'Surplus notes of an insurer');
 
 -- Operating cash flow ---------------------------------------------
 -- TAG-NAME FAMILIES, and how this table treats each. The taxonomy
@@ -302,36 +415,98 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
 -- every one silently understated. NULL is the honest answer there. The
 -- current portion stays optional: no current maturities is common.
 
+-- A formula comes in VARIANTS, tried in order; the first whose
+-- operands satisfy it wins, and a filed figure beats any of them at the
+-- same period. A variant can be confined to industries (sic_prefixes)
+-- and can carry a GUARD: a regex over the filer's plain balance-sheet
+-- tags at that date in a custom namespace, and when one matches, the
+-- variant yields nothing. The guard exists for the instrument sum:
+-- measured 2026-09-11, 51 of the 212 banks and 39 of the 129 REITs
+-- whose lines would be summed also carry a company-extension debt line
+-- -- Home Bancshares' "AdvancesFromFederalHomeLoanBanksAndOtherBorrowings"
+-- (601M beside 439M of subordinated debt in us-gaap), Omega
+-- Healthcare's "SeniorNotesAndOtherUnsecuredBorrowingsNet" (its notes,
+-- beside 243M of secured debt) -- and a sum of the us-gaap lines alone
+-- would be the plausible, wrong answer. Those resolve to nothing; the
+-- rest to their balance sheet's own arithmetic.
+CREATE TABLE sec_gold.concept_formula_variant (
+    concept       TEXT     NOT NULL REFERENCES sec_gold.canonical_concepts (concept) ON DELETE CASCADE,
+    variant       SMALLINT NOT NULL,
+    sic_prefixes  TEXT[]   NOT NULL DEFAULT '{}',   -- empty: any industry
+    guard_match   TEXT,                             -- regex; NULL: no guard
+    guard_except  TEXT,                             -- regex; a match here is not a match above
+    notes         TEXT,
+    PRIMARY KEY (concept, variant)
+);
+
 CREATE TABLE sec_gold.concept_formula (
     concept      TEXT     NOT NULL REFERENCES sec_gold.canonical_concepts (concept) ON DELETE CASCADE,
+    variant      SMALLINT NOT NULL DEFAULT 1,
     operand      TEXT     NOT NULL REFERENCES sec_gold.canonical_concepts (concept),
     coefficient  SMALLINT NOT NULL CHECK (coefficient IN (-1, 1)),
     required     BOOLEAN  NOT NULL DEFAULT TRUE,
     notes        TEXT,
-    PRIMARY KEY (concept, operand),
+    PRIMARY KEY (concept, variant, operand),
+    FOREIGN KEY (concept, variant) REFERENCES sec_gold.concept_formula_variant (concept, variant) ON DELETE CASCADE,
     CHECK (concept <> operand)
 );
 
-INSERT INTO sec_gold.concept_formula (concept, operand, coefficient, required, notes) VALUES
+INSERT INTO sec_gold.concept_formula_variant (concept, variant, sic_prefixes, guard_match, guard_except, notes) VALUES
+    ('gross_profit',   1, '{}', NULL, NULL, 'Revenue minus cost of revenue'),
+    ('free_cash_flow', 1, '{}', NULL, NULL, 'Operating cash flow minus capex'),
+    ('total_debt',     1, '{}', NULL, NULL, 'The split: noncurrent (required) plus current'),
+    ('total_debt',     2, '{60,63,6798}',
+        '(Debt|Borrowing|NotesPayable|LoansPayable|Advances|Debenture|LineOfCredit|CreditFacilit|TermLoan|Bonds?|SeniorNotes|Subordinated)',
+        '(Receivable|Servicing|Stock|Deposit|Asset|Escrow|Enhancement|InterestExpense|InterestIncome|InterestRate|InterestPayable|AccruedInterest|InterestBearing|Expense|FairValue|Cost|Unamortized|Deferred|Allowance|Income|Loss|Gain|HeldFor|HeldTo|Sale|InvestmentsHeld|InvestmentSecurit|InvestmentIn|Securit|Percent|Rate|Capacity|Availab|Maturit|Issu|Repay|Proceed|Discount|Premium|Accrued|Payment|Commitment|Guarantee|Covenant|Equity|Tax|Weighted|Number|Count|Restricted)',
+        'The instrument lines of a bank (SIC 60), an insurer (63) or a REIT (6798), summed. Not for a non-financial: measured 2026-09-11, 98 of the 259 non-financial sums with an interest-expense line implied a rate over 15%, the lines being partial (a revolver in us-gaap, the term loan in a custom tag). Guarded against a custom debt line at the same date.');
+
+INSERT INTO sec_gold.concept_formula (concept, variant, operand, coefficient, required, notes) VALUES
     -- Recovers 253 issuers that file cost but no gross profit line,
     -- taking coverage from 604 to 857. The ceiling is structural: banks,
     -- REITs and insurers do not report a gross profit line at all, so
     -- 857 of 1,569 is as far as this can go.
-    ('gross_profit',   'revenue',             1, TRUE,  'Revenue minus cost of revenue'),
-    ('gross_profit',   'cost_of_revenue',    -1, TRUE,  NULL),
+    ('gross_profit',   1, 'revenue',             1, TRUE,  'Revenue minus cost of revenue'),
+    ('gross_profit',   1, 'cost_of_revenue',    -1, TRUE,  NULL),
     -- Both operands already resolved; this proves the mechanism on a
     -- concept that has been declared and uncomputed for months.
-    ('free_cash_flow', 'operating_cash_flow', 1, TRUE,  'Operating cash flow minus capex'),
-    ('free_cash_flow', 'capex',              -1, FALSE, 'A company with no capex still has FCF'),
+    ('free_cash_flow', 1, 'operating_cash_flow', 1, TRUE,  'Operating cash flow minus capex'),
+    ('free_cash_flow', 1, 'capex',              -1, FALSE, 'A company with no capex still has FCF'),
     -- Fires only when no combined debt tag resolves. Fixes the
     -- understatement described above, and recovers 266 issuers.
-    ('total_debt',     'debt_noncurrent',     1, TRUE,  'Sum of the two components when no combined tag exists; the noncurrent part is required, see above'),
-    ('total_debt',     'debt_current',        1, FALSE, NULL);
+    ('total_debt',     1, 'debt_noncurrent',     1, TRUE,  'Sum of the two components when no combined tag exists; the noncurrent part is required, see above'),
+    ('total_debt',     1, 'debt_current',        1, FALSE, NULL),
+    -- The instrument sum. Every line optional, at least one present
+    -- (the resolver's rule); no current-portion concept of the split
+    -- form here, because the both-portions lines already include it.
+    ('total_debt',     2, 'debt_secured',                1, FALSE, 'Mortgages payable'),
+    ('total_debt',     2, 'debt_secured_current',        1, FALSE, 'Only beside SecuredLongTermDebt'),
+    ('total_debt',     2, 'debt_unsecured',              1, FALSE, NULL),
+    ('total_debt',     2, 'debt_senior_notes',           1, FALSE, NULL),
+    ('total_debt',     2, 'debt_line_of_credit',         1, FALSE, NULL),
+    ('total_debt',     2, 'debt_line_of_credit_current', 1, FALSE, 'Only beside LongTermLineOfCredit'),
+    ('total_debt',     2, 'debt_notes_payable',          1, FALSE, NULL),
+    ('total_debt',     2, 'debt_loans_payable',          1, FALSE, NULL),
+    ('total_debt',     2, 'debt_loans_payable_current',  1, FALSE, NULL),
+    ('total_debt',     2, 'debt_convertible',            1, FALSE, NULL),
+    ('total_debt',     2, 'debt_other_long_term',        1, FALSE, NULL),
+    ('total_debt',     2, 'debt_subordinated',           1, FALSE, NULL),
+    ('total_debt',     2, 'debt_junior_subordinated',    1, FALSE, NULL),
+    ('total_debt',     2, 'debt_fhlb_advances',          1, FALSE, NULL),
+    ('total_debt',     2, 'debt_fhlb_advances_current',  1, FALSE, 'Only beside FederalHomeLoanBankAdvancesLongTerm'),
+    ('total_debt',     2, 'debt_other_borrowings',       1, FALSE, NULL),
+    ('total_debt',     2, 'debt_short_term_borrowings',  1, FALSE, 'A line of its own for a bank; for a non-financial it stays in debt_current, never a total alone'),
+    ('total_debt',     2, 'debt_warehouse',              1, FALSE, NULL),
+    ('total_debt',     2, 'debt_surplus_notes',          1, FALSE, NULL);
 
+COMMENT ON TABLE sec_gold.concept_formula_variant IS
+    'The variants of a derived concept, tried in order: an industry scope '
+    'and a guard against a custom-namespace balance tag at the same date. '
+    'The first variant whose operands satisfy it wins; a filed figure '
+    'beats every variant at the same period.';
 COMMENT ON TABLE sec_gold.concept_formula IS
-    'Derived concepts as linear combinations of other concepts. One '
-    'level deep by design: operands must resolve from tags, never from '
-    'another formula. Consulted only when direct tags fail.';
+    'Derived concepts as linear combinations of other concepts, per '
+    'variant. One level deep by design: operands must resolve from tags, '
+    'never from another formula. Consulted only when direct tags fail.';
 
 -- ---------------------------------------------------------------
 -- Ratios and growth: scale-free concepts over the ones above.

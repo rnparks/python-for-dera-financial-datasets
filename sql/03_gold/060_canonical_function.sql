@@ -39,7 +39,9 @@
 -- branch calls resolve_direct on its operands, never get_canonical, so
 -- a formula can never reference another formula. No recursion, no
 -- cycles, no ordering problem, enforced by construction rather than by
--- convention.
+-- convention. A formula has variants (concept_formula_variant), tried
+-- in order with an industry scope and a custom-line guard each; see
+-- 050 for the rule and the measurements behind it.
 
 DROP FUNCTION IF EXISTS sec_gold.resolve_direct(INTEGER, TEXT, DATE, INTEGER, TEXT);
 
@@ -61,6 +63,12 @@ LANGUAGE sql STABLE AS $$
       AND n.qtrs = p_qtrs
       AND n.segments IS NULL AND n.coreg IS NULL
       AND n.value IS NOT NULL
+      -- Dollars only. Berkshire files its euro, sterling and yen notes
+      -- as undimensioned DebtAndCapitalLeaseObligations rows in those
+      -- currencies, and total_debt resolved to whichever the tie-break
+      -- picked: 1.26 trillion yen for FY2023, read as dollars (found
+      -- 2026-09-11). DERA records per-share values in USD as well.
+      AND n.uom = 'USD'
       AND (
           (p_mode = 'latest' AND n.rank_latest = 1)
        OR (p_mode = 'pit'    AND n.rank_pit    = 1)
@@ -79,6 +87,44 @@ COMMENT ON FUNCTION sec_gold.resolve_direct(INTEGER, TEXT, DATE, INTEGER, TEXT) 
     'Tag-map walk only, no formula fallback. Operand resolver for '
     'derived concepts; most callers want get_canonical instead.';
 
+-- The guard behind a formula variant: does the filer carry, at this
+-- date, a plain balance under a company-extension tag whose name says
+-- debt? A tag is custom when no version of it is us-gaap. See the
+-- variant table in 050 for why this exists.
+DROP FUNCTION IF EXISTS sec_gold.custom_line_present(INTEGER, DATE, TEXT, TEXT, TEXT);
+
+CREATE FUNCTION sec_gold.custom_line_present(
+    p_cik         INTEGER,
+    p_value_date  DATE,
+    p_match       TEXT,
+    p_except      TEXT,
+    p_mode        TEXT DEFAULT 'pit'
+) RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM sec_silver.num_silver n
+        WHERE n.cik = p_cik
+          AND n.value_date = p_value_date
+          AND n.qtrs = 0
+          AND n.segments IS NULL AND n.coreg IS NULL
+          AND n.value > 0
+          AND (
+              (p_mode = 'latest' AND n.rank_latest = 1)
+           OR (p_mode = 'pit'    AND n.rank_pit    = 1)
+          )
+          AND n.tag ~ p_match
+          AND (p_except IS NULL OR n.tag !~ p_except)
+          AND NOT EXISTS (SELECT 1 FROM sec_silver.tag_silver t
+                           WHERE t.tag = n.tag AND t.version LIKE 'us-gaap%')
+    );
+$$;
+
+COMMENT ON FUNCTION sec_gold.custom_line_present(INTEGER, DATE, TEXT, TEXT, TEXT) IS
+    'TRUE when the filer has a positive, undimensioned balance at the date '
+    'under a custom-namespace tag matching p_match and not p_except. The '
+    'guard of a concept_formula_variant.';
+
 DROP FUNCTION IF EXISTS sec_gold.get_canonical(INTEGER, TEXT, DATE, INTEGER, TEXT);
 
 CREATE FUNCTION sec_gold.get_canonical(
@@ -94,30 +140,48 @@ LANGUAGE sql STABLE AS $$
         -- outright should never be handed a reconstruction.
         sec_gold.resolve_direct(p_cik, p_concept, p_value_date, p_qtrs, p_mode),
         (
-            SELECT CASE
-                -- A required operand that did not resolve poisons the
-                -- whole formula: gross profit from revenue alone is not
-                -- gross profit.
-                WHEN bool_or(f.required AND v.val IS NULL) THEN NULL
-                -- Guard against a company that simply has none of the
-                -- components returning a confident zero.
-                WHEN count(v.val) = 0                     THEN NULL
-                ELSE sum(f.coefficient * COALESCE(v.val, 0))
-            END
-            FROM sec_gold.concept_formula f
+            -- Then the formula variants, in order; the first that
+            -- resolves wins. A variant is skipped outside its industries
+            -- or when its guard finds a custom debt line at the date.
+            SELECT v.total
+            FROM sec_gold.concept_formula_variant fv
+            LEFT JOIN sec_reference.company co ON co.cik = p_cik
             CROSS JOIN LATERAL (
-                SELECT sec_gold.resolve_direct(
-                    p_cik, f.operand, p_value_date, p_qtrs, p_mode) AS val
+                SELECT CASE
+                    -- A required operand that did not resolve poisons the
+                    -- whole variant: gross profit from revenue alone is not
+                    -- gross profit.
+                    WHEN bool_or(f.required AND o.val IS NULL) THEN NULL
+                    -- Guard against a company that simply has none of the
+                    -- components returning a confident zero.
+                    WHEN count(o.val) = 0                     THEN NULL
+                    ELSE sum(f.coefficient * COALESCE(o.val, 0))
+                END AS total
+                FROM sec_gold.concept_formula f
+                CROSS JOIN LATERAL (
+                    SELECT sec_gold.resolve_direct(
+                        p_cik, f.operand, p_value_date, p_qtrs, p_mode) AS val
+                ) o
+                WHERE f.concept = fv.concept AND f.variant = fv.variant
             ) v
-            WHERE f.concept = p_concept
+            WHERE fv.concept = p_concept
+              AND (cardinality(fv.sic_prefixes) = 0
+                   OR EXISTS (SELECT 1 FROM unnest(fv.sic_prefixes) sp
+                               WHERE co.sic_latest::TEXT LIKE sp || '%'))
+              AND (fv.guard_match IS NULL
+                   OR NOT sec_gold.custom_line_present(
+                          p_cik, p_value_date, fv.guard_match, fv.guard_except, p_mode))
+              AND v.total IS NOT NULL
+            ORDER BY fv.variant
+            LIMIT 1
         )
     );
 $$;
 
 COMMENT ON FUNCTION sec_gold.get_canonical(INTEGER, TEXT, DATE, INTEGER, TEXT) IS
-    'Resolve a concept: direct tags first, then concept_formula. '
-    'Returns NULL when a required operand is missing rather than a '
-    'partial figure.';
+    'Resolve a concept: direct tags first, then the concept_formula '
+    'variants in order. Returns NULL when a required operand is missing '
+    'rather than a partial figure.';
 
 
 -- get_canonical_by_ticker — convenience wrapper that accepts a ticker

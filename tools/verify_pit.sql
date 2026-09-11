@@ -198,9 +198,11 @@ WITH cov AS (
 -- 1,100 after the 2026-09-04 tag additions took it to 1,127 with the
 -- noncurrent component required. With the S&P 400 and 600 replayed the
 -- FY2024 panel is the index of the day: revenue 1,474, total_debt 1,133,
--- gross_profit 863 (2026-09-05).
+-- gross_profit 863 (2026-09-05). total_debt re-based to 1,200 after the
+-- instrument sum for banks, REITs and insurers took it to 1,229
+-- (2026-09-11).
 SELECT CASE WHEN
-            COALESCE((SELECT n FROM cov WHERE concept='total_debt'),0)   >= 1100
+            COALESCE((SELECT n FROM cov WHERE concept='total_debt'),0)   >= 1200
         AND COALESCE((SELECT n FROM cov WHERE concept='gross_profit'),0) >=  820
         AND COALESCE((SELECT n FROM cov WHERE concept='revenue'),0)      >= 1400
        THEN 'PASS' ELSE 'FAIL' END AS status,
@@ -899,7 +901,7 @@ FROM (
 SELECT CASE WHEN jpm BETWEEN 350 AND 500 AND gs > 200 AND orcl BETWEEN 80 AND 120
              AND (deere IS NULL OR deere > 40) AND dfs > 15 AND eqr > 2
              AND realty_tag <> 'OperatingLeaseLeaseIncome'
-             AND sp500_debt >= 430 AND sp500_rev >= 498
+             AND sp500_debt >= 445 AND sp500_rev >= 498
             THEN 'PASS' ELSE 'FAIL' END AS status,
        jpm AS jpm_total_debt_bn, gs AS goldman_bn, orcl AS oracle_bn, deere AS deere_bn_or_null,
        dfs AS discover_revenue_bn, eqr AS equity_residential_revenue_bn, realty_tag AS realty_income_revenue_tag,
@@ -1186,4 +1188,62 @@ FROM (
            EXISTS (SELECT 1 FROM sec_reference.index_members('SP400', DATE '2018-06-30') WHERE cik = 814184)  AS tcf_2018,
            EXISTS (SELECT 1 FROM sec_reference.index_members('SP400', DATE '2012-06-30') WHERE cik = 107140)  AS wiley_2012,
            EXISTS (SELECT 1 FROM sec_reference.index_members('SP400', DATE '2012-06-30') WHERE cik = 1514991) AS amc_2012
+) t;
+
+\echo '=== 62. A bank, REIT or insurer with no debt total resolves to the sum of its instrument lines; never past a custom line, never for a non-financial, always in dollars ==='
+-- A bank's balance sheet lists FHLB advances, subordinated debt and
+-- trust-preferred debentures; a REIT's lists mortgages, unsecured notes
+-- and the revolver. None of them files a current/noncurrent split, so
+-- total_debt's second variant sums the lines (Acadia 954 + 570 + 14,
+-- Wintrust 3,151 + 254 + 535 + 298). It must not fire past a
+-- company-extension debt line the sum would miss (Home Bancshares'
+-- custom FHLB-and-other line beside 439M of subordinated debt in
+-- us-gaap; Omega's custom senior notes; CNO's variable-interest-entity
+-- borrowings), nor for a non-financial (Caleres' revolver is not its
+-- total, Avista's commercial paper is not its total), nor for a broker
+-- (Stifel). Deere stays NULL. Every tag walk takes dollar facts only:
+-- Berkshire's FY2023 total_debt was 1.26 trillion yen read as dollars;
+-- it files no undimensioned dollar total, so it resolves to nothing (or,
+-- should one appear, to a figure in the 100-200B range).
+-- The instrument lines resolve as operands and are not scored: none in
+-- peer_stats, and a snapshot still lists 26 concepts.
+SELECT CASE WHEN acadia BETWEEN 1500 AND 1600 AND wintrust BETWEEN 4200 AND 4300 AND pinnacle BETWEEN 2250 AND 2350
+             AND ffin BETWEEN 100 AND 200
+             AND home IS NULL AND omega IS NULL AND cno IS NULL AND caleres IS NULL AND avista IS NULL AND stifel IS NULL
+             AND (deere IS NULL OR deere > 40000) AND (brk_2023 IS NULL OR brk_2023 BETWEEN 100000 AND 200000)
+             AND moelis BETWEEN 1100 AND 1300 AND one_gas BETWEEN 2000 AND 2200 AND universal BETWEEN 2800 AND 3100
+             AND sp400_debt >= 320 AND sp600_debt >= 445 AND sp400_rev >= 396 AND sp600_rev >= 584
+             AND unscored_rows = 0 AND snapshot_rows = 26
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       acadia AS acadia_musd, wintrust AS wintrust_musd, pinnacle AS pinnacle_musd, ffin AS first_financial_musd,
+       home AS home_bancshares, omega, cno, caleres, avista, stifel, deere AS deere_musd_or_null, brk_2023 AS berkshire_fy2023_musd,
+       moelis AS moelis_revenue_musd, one_gas AS one_gas_revenue_musd, universal AS universal_revenue_musd,
+       sp400_debt AS sp400_members_with_fy2024_total_debt, sp600_debt AS sp600_members_with_fy2024_total_debt,
+       sp400_rev AS sp400_with_revenue, sp600_rev AS sp600_with_revenue, unscored_rows AS unscored_concepts_in_peer_stats, snapshot_rows
+FROM (
+    SELECT (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 899629  AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS acadia,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1015328 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS wintrust,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1115055 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS pinnacle,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 36029   AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS ffin,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1331520 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS home,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 888491  AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS omega,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1224608 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS cno,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 14707   AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS caleres,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 104918  AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS avista,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 720672  AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS stifel,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 315189  AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS deere,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1067983 AND fiscal_year = 2023 AND concept = 'total_debt' AND peer_level = 'sector') AS brk_2023,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1596967 AND fiscal_year = 2024 AND concept = 'revenue' AND peer_level = 'sector') AS moelis,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1587732 AND fiscal_year = 2024 AND concept = 'revenue' AND peer_level = 'sector') AS one_gas,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 102037  AND fiscal_year = 2024 AND concept = 'revenue' AND peer_level = 'sector') AS universal,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP400', DATE '2024-12-31') m
+             WHERE EXISTS (SELECT 1 FROM sec_gold.peer_stats p WHERE p.cik = m.cik AND p.fiscal_year = 2024 AND p.concept = 'total_debt')) AS sp400_debt,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP600', DATE '2024-12-31') m
+             WHERE EXISTS (SELECT 1 FROM sec_gold.peer_stats p WHERE p.cik = m.cik AND p.fiscal_year = 2024 AND p.concept = 'total_debt')) AS sp600_debt,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP400', DATE '2024-12-31') m
+             WHERE EXISTS (SELECT 1 FROM sec_gold.peer_stats p WHERE p.cik = m.cik AND p.fiscal_year = 2024 AND p.concept = 'revenue')) AS sp400_rev,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP600', DATE '2024-12-31') m
+             WHERE EXISTS (SELECT 1 FROM sec_gold.peer_stats p WHERE p.cik = m.cik AND p.fiscal_year = 2024 AND p.concept = 'revenue')) AS sp600_rev,
+           (SELECT COUNT(*) FROM sec_gold.peer_stats p JOIN sec_gold.canonical_concepts c ON c.concept = p.concept WHERE NOT c.scored) AS unscored_rows,
+           (SELECT COUNT(*) FROM sec_gold.company_snapshot('AAPL')) AS snapshot_rows
 ) t;

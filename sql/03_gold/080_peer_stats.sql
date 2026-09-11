@@ -100,6 +100,7 @@ WITH picked AS (
     LEFT JOIN sec_reference.company    co ON co.cik = tf.cik
     WHERE tf.qtrs = CASE WHEN c.fact_type = 'balance' THEN 0 ELSE 4 END
       AND tf.value IS NOT NULL
+      AND tf.uom = 'USD'      -- dollars only: Berkshire's yen notes (060)
       -- A BALANCE BELONGS TO ITS FISCAL YEAR-END. fiscal_year_of() maps a
       -- period ending January to May to the prior year (so NVIDIA's
       -- January close aligns with December filers), and a December
@@ -139,7 +140,8 @@ direct AS (
      AND mem.valid_from <= p.value_date
      AND (mem.valid_to IS NULL OR mem.valid_to > p.value_date)
 ),
--- Derived concepts, assembled from what the tag walk just resolved.
+-- Derived concepts, assembled from what the tag walk just resolved,
+-- per formula variant.
 --
 -- peer_stats is tag-driven, so a concept with no tags could never appear
 -- here no matter what the resolver did. That is why free_cash_flow has
@@ -150,36 +152,72 @@ direct AS (
 -- Only fires where the direct walk produced nothing for that
 -- company-year: an issuer filing GrossProfit outright keeps its filed
 -- figure rather than a reconstruction.
-derived AS (
-    SELECT
-        d.cik,
-        max(d.ticker)            AS ticker,
-        max(d.index_name)        AS index_name,
-        max(d.gics_sector)       AS gics_sector,
-        max(d.gics_sub_industry) AS gics_sub_industry,
-        f.concept,
-        max(c.fact_type)         AS fact_type,
-        d.fiscal_year,
-        max(d.value_date)        AS value_date,
-        max(d.tradable_from)     AS tradable_from,
-        sum(f.coefficient * d.value) AS value
-    FROM sec_gold.concept_formula   f
-    JOIN direct                     d ON d.concept = f.operand
-    JOIN sec_gold.canonical_concepts c ON c.concept = f.concept
-    WHERE NOT EXISTS (
-        SELECT 1 FROM direct d2
-        WHERE d2.cik = d.cik AND d2.concept = f.concept
-          AND d2.fiscal_year = d.fiscal_year
-    )
-    GROUP BY d.cik, f.concept, d.fiscal_year
-    HAVING count(*) FILTER (WHERE f.required)
-         = (SELECT count(*) FROM sec_gold.concept_formula f2
-             WHERE f2.concept = f.concept AND f2.required)
+-- The variant guard (050): a company-date where a plain balance under a
+-- custom-namespace tag matches the variant's pattern. The instrument
+-- sum is not the whole picture there and yields nothing.
+guarded AS (
+    SELECT DISTINCT fv.concept, fv.variant, g.cik, g.value_date
+    FROM sec_gold.concept_formula_variant fv
+    JOIN sec_gold.tradable_financials g
+      ON g.qtrs = 0 AND g.value > 0
+     AND g.tag ~ fv.guard_match
+     AND (fv.guard_except IS NULL OR g.tag !~ fv.guard_except)
+    WHERE fv.guard_match IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM sec_silver.tag_silver t
+                       WHERE t.tag = g.tag AND t.version LIKE 'us-gaap%')
 ),
+-- Formula variants in order (050): the first that resolves for a
+-- company-year wins. A variant is skipped outside its industries or
+-- where its guard fires.
+derived AS (
+    SELECT DISTINCT ON (x.cik, x.concept, x.fiscal_year)
+        x.cik, x.ticker, x.index_name, x.gics_sector, x.gics_sub_industry,
+        x.concept, x.fact_type, x.fiscal_year, x.value_date, x.tradable_from, x.value
+    FROM (
+        SELECT
+            d.cik,
+            max(d.ticker)            AS ticker,
+            max(d.index_name)        AS index_name,
+            max(d.gics_sector)       AS gics_sector,
+            max(d.gics_sub_industry) AS gics_sub_industry,
+            fv.concept,
+            fv.variant,
+            max(c.fact_type)         AS fact_type,
+            d.fiscal_year,
+            max(d.value_date)        AS value_date,
+            max(d.tradable_from)     AS tradable_from,
+            sum(f.coefficient * d.value) AS value
+        FROM sec_gold.concept_formula_variant fv
+        JOIN sec_gold.concept_formula    f  ON f.concept = fv.concept AND f.variant = fv.variant
+        JOIN direct                      d  ON d.concept = f.operand
+        JOIN sec_gold.canonical_concepts c  ON c.concept = fv.concept
+        LEFT JOIN sec_reference.company  co ON co.cik = d.cik
+        WHERE NOT EXISTS (
+            SELECT 1 FROM direct d2
+            WHERE d2.cik = d.cik AND d2.concept = fv.concept
+              AND d2.fiscal_year = d.fiscal_year
+        )
+          AND (cardinality(fv.sic_prefixes) = 0
+               OR EXISTS (SELECT 1 FROM unnest(fv.sic_prefixes) sp
+                           WHERE co.sic_latest::TEXT LIKE sp || '%'))
+          AND NOT EXISTS (
+            SELECT 1 FROM guarded g
+            WHERE g.concept = fv.concept AND g.variant = fv.variant
+              AND g.cik = d.cik AND g.value_date = d.value_date
+        )
+        GROUP BY d.cik, fv.concept, fv.variant, d.fiscal_year
+        HAVING count(*) FILTER (WHERE f.required)
+             = (SELECT count(*) FROM sec_gold.concept_formula f2
+                 WHERE f2.concept = fv.concept AND f2.variant = fv.variant AND f2.required)
+    ) x
+    ORDER BY x.cik, x.concept, x.fiscal_year, x.variant
+),
+-- Scored concepts only from here on: an instrument line (050) resolves
+-- as an operand and is not ranked.
 resolved AS (
-    SELECT * FROM direct
+    SELECT d.* FROM direct  d JOIN sec_gold.canonical_concepts c ON c.concept = d.concept AND c.scored
     UNION ALL
-    SELECT * FROM derived
+    SELECT x.* FROM derived x JOIN sec_gold.canonical_concepts c ON c.concept = x.concept AND c.scored
 ),
 -- Scale-free concepts (concept_ratio). A ratio divides two resolved
 -- concepts of the same company and fiscal year -- and since a balance

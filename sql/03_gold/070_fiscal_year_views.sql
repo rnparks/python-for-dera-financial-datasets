@@ -104,6 +104,7 @@ LANGUAGE sql STABLE AS $$
           AND n.cik = p_cik
           AND n.qtrs = ct.qtrs
           AND n.segments IS NULL AND n.coreg IS NULL
+          AND n.uom = 'USD'
           -- Same NULL-shadowing guard as get_canonical: a priority-1
           -- tag with no parseable value must not mask a valid
           -- lower-priority fallback.
@@ -151,6 +152,7 @@ LANGUAGE sql STABLE AS $$
                 WHERE f.concept = (SELECT concept FROM target)
                   AND n.cik = p_cik
                   AND n.qtrs = ct.qtrs
+                  AND n.uom = 'USD'
                   AND n.segments IS NULL AND n.coreg IS NULL
                   AND n.value IS NOT NULL
                   AND (
@@ -261,5 +263,6 @@ LANGUAGE sql STABLE AS $$
         la.tag
     FROM sec_gold.canonical_concepts c
     LEFT JOIN LATERAL sec_gold.latest_annual_by_ticker(p_ticker, c.concept, p_mode) la ON TRUE
+    WHERE c.scored
     ORDER BY c.concept;
 $$;

@@ -186,11 +186,12 @@ full reference including every function signature.
 | `fact_asof` | matview | 97.9M | 33 GB | **Bitemporal facts, every vintage. The backtest source** |
 | `tradable_financials` | matview | 12.4M | 3.5 GB | Latest-restated facts, one row per fact; index membership and GICS dated |
 | `tradable_financials_pit` | matview | 12.4M | 3.6 GB | Earliest-sighting twin |
-| `peer_stats` | matview | 636.2K | 163 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the day for all three indexes |
+| `peer_stats` | matview | 650.5K | 167 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the day for all three indexes; scored concepts only |
 | `share_class_shares` | matview | 777.5K | 218 MB | Per-class share counts for 9,654 companies, delisted included — the market-cap denominator |
-| `canonical_concepts` | table | 26 | — | Research taxonomy (revenue, total_debt, net_margin, revenue_growth, …) |
-| `concept_tag_map` | table | 63 | — | Priority-ordered XBRL tag resolution |
-| `concept_formula` | table | 6 | — | Derived concepts as linear combinations |
+| `canonical_concepts` | table | 45 | — | Research taxonomy: 26 scored concepts (revenue, total_debt, net_margin, revenue_growth, …) and 19 unscored instrument lines that only serve as operands |
+| `concept_tag_map` | table | 112 | — | Priority-ordered XBRL tag resolution; dollar facts only |
+| `concept_formula_variant` | table | 4 | — | The variants of a derived concept, in order, with an industry scope and a custom-line guard |
+| `concept_formula` | table | 25 | — | Derived concepts as linear combinations, per variant |
 | `concept_ratio` | table | 11 | — | Margins, returns, leverage and year-over-year growth as ratios of concepts |
 | `metric_aliases` | table | 4 | — | Legacy display-name remap |
 
