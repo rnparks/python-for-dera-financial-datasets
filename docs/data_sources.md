@@ -367,8 +367,8 @@ the specific archived captures a run resolved to, so the run is reproducible.
 ```bash
 uv run dera download --from 2026q3 --to 2026q3   # new DERA quarter
 uv run dera load --quarter 2026q3                # into bronze; --force replaces a loaded quarter
-uv run dera build-silver --quarter 2026q3        # fold: only the fact partitions it touches are recomputed (~17 min)
-uv run dera rebuild-reference                    # spine, security model, gold matviews whose inputs changed
+uv run dera build-silver --quarter 2026q3        # fold: only the fact partitions it touches are recomputed (~18 min)
+uv run dera rebuild-reference                    # spine, security model, gold matviews whose inputs changed (~27 min for a new quarter)
 uv run dera verify                               # correctness suite
 
 uv run dera build-silver                         # the full rebuild, ~39 min: first build or a re-issued dataset
@@ -388,3 +388,16 @@ A crosswalk, membership or mapping refresh always ends with `rebuild-reference`.
 The fetch tools write files, never the database, so it reloads these files
 first, then refills the spine in place and refreshes only the gold matviews
 whose inputs changed.
+
+**Rehearsed 2026-09-10** on 2026q2, reloaded under `--force` and folded again,
+then `rebuild-reference --refresh-all`: load 1:16, fold 17:48 (the same
+6,055,685 rows out and in as the September run; 184,957,927 silver facts before
+and after), rebuild 26:34 (`tradable_financials` 2:52, `_pit` 2:54, `fact_asof`
+19:03, `share_class_shares` 0:18, `peer_stats` 0:15), 52 minutes end to end.
+Every silver, reference and gold row count was identical to before the run,
+the suite passed, and `tradable_financials` held 2,392 companies: every company
+in `index_membership_latest` (2,408) that has silver facts. The 1,701 seen once
+on 2026-09-04 was the pre-replay population, not a refresh defect: that
+refresh ran before the S&P 400 and 600 histories had been fetched (their files
+are stamped 22:23 and 22:30 that evening; the bronze reload 21:42), and check
+41 records the population growing from 1,701 to 2,392 when they were loaded.

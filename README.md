@@ -99,9 +99,14 @@ Each new DERA quarter after that (four a year) is a fold, not a rebuild:
 ```bash
 uv run dera download --from 2026q3 --to 2026q3
 uv run dera load --quarter 2026q3            # --force replaces a quarter already loaded
-uv run dera build-silver --quarter 2026q3    # recomputes only the fact partitions the quarter touches (~17 min; the full build is 39)
-uv run dera rebuild-reference                # spine, security model, then the gold matviews whose inputs changed
+uv run dera build-silver --quarter 2026q3    # recomputes only the fact partitions the quarter touches (~18 min; the full build is 39)
+uv run dera rebuild-reference                # spine, security model, then the gold matviews whose inputs changed (a new quarter changes them all: ~27 min)
+uv run dera verify                           # the correctness suite
 ```
+
+Rehearsed end to end on 2026-09-10 by reloading 2026q2 under `--force`: 52
+minutes, every silver, reference and gold row count identical afterwards, and
+the suite green. `docs/data_sources.md` has the stage timings.
 
 The security lifecycle model is a separate, additive path:
 

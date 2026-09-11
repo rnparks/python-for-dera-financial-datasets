@@ -65,7 +65,8 @@ touches** from the existing rows plus the new ones. The vintage and
 supersession columns are window functions over a partition, and a new vintage
 moves every older one, so recomputing whole partitions is the only correct
 move; untouched partitions are never read. Measured on 2026q2 (3.6M facts
-touching 3.4M partitions, 6.1M rows recomputed): 16:51 against the 39-minute
+touching 3.4M partitions, 6.1M rows recomputed): 16:51, and 17:48 when
+rehearsed on 2026-09-10, against the 39-minute
 full build, two minutes of it finding the rows with one sequential pass and a
 hash semi-join, the rest deleting and re-inserting them under three indexes.
 Validated by recomputing 3,000 random touched partitions from bronze with the
