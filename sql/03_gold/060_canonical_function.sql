@@ -125,6 +125,40 @@ COMMENT ON FUNCTION sec_gold.custom_line_present(INTEGER, DATE, TEXT, TEXT, TEXT
     'under a custom-namespace tag matching p_match and not p_except. The '
     'guard of a concept_formula_variant.';
 
+-- A zero read from the balance-sheet face (037_debt_face): the filing
+-- that reported this balance date printed no borrowing line, its
+-- interest expense is nil, and it is not a bank. The filing is chosen
+-- the way the tag walk chooses vintages -- the first filing for the
+-- date in 'pit' mode, the latest in 'latest' -- and the answer is zero
+-- only if THAT filing's face is debt-free. Consulted last, so it can
+-- fill a NULL and never replace a figure.
+DROP FUNCTION IF EXISTS sec_gold.face_zero_debt(INTEGER, TEXT, DATE, INTEGER, TEXT);
+
+CREATE FUNCTION sec_gold.face_zero_debt(
+    p_cik         INTEGER,
+    p_concept     TEXT,
+    p_value_date  DATE,
+    p_qtrs        INTEGER,
+    p_mode        TEXT DEFAULT 'pit'
+) RETURNS NUMERIC
+LANGUAGE sql STABLE AS $$
+    SELECT CASE WHEN x.zero_by_face THEN 0::NUMERIC END
+    FROM (
+        SELECT df.zero_by_face
+        FROM sec_gold.debt_face df
+        WHERE df.cik = p_cik AND df.period_date = p_value_date
+        ORDER BY CASE WHEN p_mode = 'pit' THEN df.filed_date END ASC NULLS LAST,
+                 df.filed_date DESC
+        LIMIT 1
+    ) x
+    WHERE p_concept = 'total_debt' AND p_qtrs = 0;
+$$;
+
+COMMENT ON FUNCTION sec_gold.face_zero_debt(INTEGER, TEXT, DATE, INTEGER, TEXT) IS
+    'Zero for total_debt when the filing reporting the date has a debt-free '
+    'balance-sheet face (sec_gold.debt_face); NULL otherwise. The last resort '
+    'of get_canonical, after the tag walk and the formula variants.';
+
 DROP FUNCTION IF EXISTS sec_gold.get_canonical(INTEGER, TEXT, DATE, INTEGER, TEXT);
 
 CREATE FUNCTION sec_gold.get_canonical(
@@ -174,13 +208,17 @@ LANGUAGE sql STABLE AS $$
               AND v.total IS NOT NULL
             ORDER BY fv.variant
             LIMIT 1
-        )
+        ),
+        -- Last, a zero from the balance-sheet face: fills what the tag
+        -- walk and the formulas left NULL, never replaces a figure.
+        sec_gold.face_zero_debt(p_cik, p_concept, p_value_date, p_qtrs, p_mode)
     );
 $$;
 
 COMMENT ON FUNCTION sec_gold.get_canonical(INTEGER, TEXT, DATE, INTEGER, TEXT) IS
     'Resolve a concept: direct tags first, then the concept_formula '
-    'variants in order. Returns NULL when a required operand is missing '
+    'variants in order, then (total_debt only) a zero from a debt-free '
+    'balance-sheet face. Returns NULL when a required operand is missing '
     'rather than a partial figure.';
 
 

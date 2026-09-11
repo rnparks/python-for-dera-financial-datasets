@@ -170,14 +170,36 @@ LANGUAGE sql STABLE AS $$
         ORDER BY x.value_date DESC
         LIMIT 1
     )
+    -- A zero from the balance-sheet face (037_debt_face), for total_debt
+    -- only: the company's NEWEST filing (10-K or 10-Q, as the direct walk
+    -- above takes a balance from any filing) printed no borrowing line.
+    -- Only the newest filing counts, so a company that borrowed since
+    -- its debt-free years never inherits an old zero; if that newest
+    -- face has a borrowing line the branch is empty and the walk above
+    -- decides, as it does today.
+    , zero_hit AS (
+        SELECT n.period_date AS value_date, n.filed_date, 0::NUMERIC AS value, NULL::TEXT AS tag
+        FROM (
+            SELECT df.period_date, df.filed_date, df.zero_by_face
+            FROM sec_gold.debt_face df
+            WHERE df.cik = p_cik
+            ORDER BY df.period_date DESC,
+                     CASE WHEN p_mode = 'pit' THEN df.filed_date END ASC NULLS LAST,
+                     df.filed_date DESC
+            LIMIT 1
+        ) n
+        WHERE n.zero_by_face AND (SELECT concept FROM target) = 'total_debt'
+    )
     -- Newest period wins; at the same period a filed figure beats a
-    -- reconstruction.
+    -- reconstruction, and both beat a zero from the face.
     , hit AS (
         SELECT u.value_date, u.filed_date, u.value, u.tag
         FROM (
             SELECT dh.value_date, dh.filed_date, dh.value, dh.tag, 0 AS pref FROM direct_hit  dh
             UNION ALL
             SELECT xh.value_date, xh.filed_date, xh.value, xh.tag, 1 AS pref FROM derived_hit xh
+            UNION ALL
+            SELECT zh.value_date, zh.filed_date, zh.value, zh.tag, 2 AS pref FROM zero_hit    zh
         ) u
         ORDER BY u.value_date DESC, u.pref ASC
         LIMIT 1

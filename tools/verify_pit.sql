@@ -1247,3 +1247,57 @@ FROM (
            (SELECT COUNT(*) FROM sec_gold.peer_stats p JOIN sec_gold.canonical_concepts c ON c.concept = p.concept WHERE NOT c.scored) AS unscored_rows,
            (SELECT COUNT(*) FROM sec_gold.company_snapshot('AAPL')) AS snapshot_rows
 ) t;
+
+\echo '=== 63. A zero total_debt comes only from a debt-free balance-sheet face, and only where nothing else resolved ==='
+-- sec_gold.debt_face reads every 10-K and 10-Q balance sheet as the
+-- filer printed it. A company-year's total_debt is zero only when that
+-- filing's face is complete, shows no borrowing line with a value,
+-- carries no borrowing line without an undimensioned value, its
+-- interest expense is nil, and the filer is not a bank or broker. The
+-- zero fills a NULL and never replaces a figure: every zero row in
+-- peer_stats must trace to a debt_face row that says so or to a mapped
+-- debt line the filer reported at zero, no bank may carry a zero from
+-- the face, the verified debt holders of 2026-09-11 (Brixmor,
+-- Perdoceo, REGENXBIO, Cinemark, Hudson Pacific) stay NULL, and the
+-- verified debt-free (Texas Roadhouse, Williams-Sonoma, Chewy,
+-- DocuSign) read zero. pre_silver must hold every presentation row the
+-- load log counts.
+SELECT CASE WHEN zeros_without_face = 0 AND bank_zeros = 0 AND zero_members_2024 >= 100
+             AND txrh = 0 AND wsm = 0 AND chwy = 0 AND docu = 0
+             AND brx IS NULL AND prdo IS NULL AND rgnx IS NULL AND cnk IS NULL AND hpp IS NULL
+             AND pre_rows = logged_pre_rows AND faces > 300000
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       zeros_without_face AS zeros_without_evidence, bank_zeros AS bank_zeros_from_the_face, zero_members_2024 AS fy2024_members_at_zero,
+       txrh, wsm, chwy, docu, brx, prdo, rgnx, cnk, hpp,
+       pre_rows, logged_pre_rows, faces AS debt_face_rows, zero_faces
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_gold.peer_stats p
+             WHERE p.concept = 'total_debt' AND p.value = 0 AND p.peer_level = 'sector'
+               AND NOT EXISTS (SELECT 1 FROM sec_gold.debt_face df
+                               WHERE df.cik = p.cik AND df.period_date = p.value_date AND df.zero_by_face)
+               -- a zero the tag path filed: a mapped debt line at zero (a
+               -- bank's "other borrowings: 0" summed by the instrument variant)
+               AND NOT EXISTS (SELECT 1 FROM sec_gold.tradable_financials tf JOIN sec_gold.concept_tag_map m ON m.tag = tf.tag
+                               WHERE tf.cik = p.cik AND tf.value_date = p.value_date AND tf.qtrs = 0 AND tf.value = 0
+                                 AND m.concept LIKE '%debt%')) AS zeros_without_face,
+           (SELECT COUNT(*) FROM sec_gold.peer_stats p JOIN sec_reference.company c ON c.cik = p.cik
+             WHERE p.concept = 'total_debt' AND p.value = 0 AND p.peer_level = 'sector'
+               AND c.sic_latest BETWEEN 6000 AND 6299
+               AND EXISTS (SELECT 1 FROM sec_gold.debt_face df
+                           WHERE df.cik = p.cik AND df.period_date = p.value_date AND df.zero_by_face)) AS bank_zeros,
+           (SELECT COUNT(DISTINCT p.cik) FROM sec_gold.peer_stats p
+             WHERE p.concept = 'total_debt' AND p.value = 0 AND p.peer_level = 'sector' AND p.fiscal_year = 2024) AS zero_members_2024,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1289460 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS txrh,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 719955  AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS wsm,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1766502 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS chwy,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1261333 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS docu,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1581068 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS brx,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1046568 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS prdo,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1590877 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS rgnx,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1385280 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS cnk,
+           (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1482512 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS hpp,
+           (SELECT COUNT(*) FROM sec_silver.pre_silver) AS pre_rows,
+           (SELECT SUM(pre_rows) FROM sec_raw.load_log) AS logged_pre_rows,
+           (SELECT COUNT(*) FROM sec_gold.debt_face) AS faces,
+           (SELECT COUNT(*) FROM sec_gold.debt_face WHERE zero_by_face) AS zero_faces
+) t;

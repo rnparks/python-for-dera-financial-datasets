@@ -39,7 +39,7 @@ Plus a small set of hand-maintained files described under [Manual inputs](#manua
 - **Shape**: four tab-separated files per quarter — `sub` (submissions), `num`
   (numeric facts), `tag` (taxonomy), `pre` (presentation)
 - **Licence**: US government work, public domain
-- **Becomes**: `sec_raw.{sub,tag,num,pre}_raw` → `sec_silver.*` → `sec_gold.*`
+- **Becomes**: `sec_raw.{sub,tag,num,pre}_raw` → `sec_silver.*` → `sec_gold.*`. The `pre` file is the statements' layout, kept typed in `sec_silver.pre_silver`; the gold layer reads the balance-sheet face from it to tell a company that filed no debt tag because it has no debt from one whose debt is tagged some other way (`sec_gold.debt_face`).
 
 **The critical limitation, and the reason source 2 exists:** DERA publishes only
 filings that carry XBRL *financial statements*. Verified against the live

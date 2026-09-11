@@ -145,6 +145,23 @@ hist_derived AS (
     ) x
     ORDER BY x.cik, x.concept, x.value_date, x.variant
 ),
+-- A zero from the balance-sheet face (037_debt_face), bounded by the
+-- knowledge date: an annual filing that printed no borrowing line. Ranks
+-- below a filed figure and a formula at the same period, so it fills
+-- what those left empty and nothing else.
+hist_zero AS (
+    SELECT DISTINCT ON (df.cik, df.period_date)
+           df.cik, 'total_debt'::TEXT AS concept, df.period_date AS value_date,
+           df.tradable_from, 0::NUMERIC AS value
+    FROM members mb
+    JOIN sec_gold.debt_face df ON df.cik = mb.cik
+    CROSS JOIN k
+    WHERE df.zero_by_face
+      AND df.tradable_from <= k.d
+      AND df.period_date >  p_asof - (p_max_age_days + 430)
+      AND df.period_date <= p_asof
+    ORDER BY df.cik, df.period_date, df.tradable_from DESC
+),
 hist AS (
     SELECT DISTINCT ON (cik, concept, value_date)
            cik, concept, value_date, tradable_from, value
@@ -152,6 +169,8 @@ hist AS (
         SELECT cik, concept, value_date, tradable_from, value, 0 AS pref FROM hist_direct
         UNION ALL
         SELECT cik, concept, value_date, tradable_from, value, 1 FROM hist_derived
+        UNION ALL
+        SELECT cik, concept, value_date, tradable_from, value, 2 FROM hist_zero
     ) u
     ORDER BY cik, concept, value_date, pref
 ),

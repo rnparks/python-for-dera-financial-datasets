@@ -252,8 +252,8 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
 
 
 # Gold materialized views, in dependency order. The first four read
-# silver directly; only peer_stats reads another matview
-# (tradable_financials), so it must come last. Declared once here so --refresh-only cannot drift out of sync
+# silver directly; only peer_stats reads other matviews
+# (tradable_financials and debt_face), so it must come last. Declared once here so --refresh-only cannot drift out of sync
 # with the DDL again.
 #
 # fact_asof was missing from this tuple until now, which meant
@@ -266,6 +266,7 @@ GOLD_MATVIEWS = (
     "sec_gold.tradable_financials_pit",
     "sec_gold.fact_asof",
     "sec_gold.share_class_shares",
+    "sec_gold.debt_face",
     "sec_gold.peer_stats",
 )
 
@@ -290,8 +291,9 @@ GOLD_INPUTS: dict[str, frozenset[str]] = {
         {"company", "index_membership_timeline", "index_membership_latest"}),
     "sec_gold.share_class_shares": frozenset(
         {"company", "company_ticker", "share_class"}),
+    "sec_gold.debt_face": frozenset({"company"}),
     "sec_gold.peer_stats": frozenset(
-        {"company", "index_membership_timeline", "sec_gold.tradable_financials"}),
+        {"company", "index_membership_timeline", "sec_gold.tradable_financials", "sec_gold.debt_face"}),
 }
 # Everything 05_spine declares, for --recreate-spine.
 SPINE_DECLARED = (
@@ -375,8 +377,8 @@ def _missing_matviews(conn) -> list[str]:
 def cmd_build_gold(args: argparse.Namespace) -> int:
     """Build (or refresh) the gold layer.
 
-    On first build the ``sql/03_gold`` DDL creates the five matviews
-    across four files (030, 035, 056, 080) with
+    On first build the ``sql/03_gold`` DDL creates the six matviews
+    across five files (030, 035, 037, 056, 080) with
     ``CREATE MATERIALIZED VIEW ... AS SELECT``, which populates them
     immediately — no separate REFRESH is needed. On a
     rebuild against an existing gold schema, pass ``--refresh-only`` to run
@@ -515,7 +517,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     `tools/verify_pit.sql` had 15 passing checks at the time and was
     invoked from nothing: no test runner, no CI, no CLI path. It now
-    holds 62. A correctness suite
+    holds 63. A correctness suite
     nobody runs is documentation, not a guard. This gives it a command.
 
     It shells out to psql rather than going through psycopg because the

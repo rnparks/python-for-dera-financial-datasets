@@ -133,6 +133,33 @@ LANGUAGE sql STABLE AS $$
     );
 $$;
 
+-- A zero from the balance-sheet face, as of a date: the latest filing
+-- for this balance date that was actionable by the knowledge date, and
+-- only if that filing's face is debt-free (037_debt_face).
+DROP FUNCTION IF EXISTS sec_gold.as_of_face_zero_debt(INTEGER, TEXT, DATE, INTEGER, DATE, INTEGER);
+
+CREATE FUNCTION sec_gold.as_of_face_zero_debt(
+    p_cik              INTEGER,
+    p_concept          TEXT,
+    p_value_date       DATE,
+    p_qtrs             INTEGER,
+    p_asof             DATE,
+    p_buffer_sessions  INTEGER DEFAULT 0
+) RETURNS NUMERIC
+LANGUAGE sql STABLE AS $$
+    SELECT CASE WHEN x.zero_by_face THEN 0::NUMERIC END
+    FROM (
+        SELECT df.zero_by_face
+        FROM sec_gold.debt_face df,
+             LATERAL (SELECT sec_gold.shift_sessions(p_asof, p_buffer_sessions) AS d) k
+        WHERE df.cik = p_cik AND df.period_date = p_value_date
+          AND df.tradable_from <= k.d
+        ORDER BY df.tradable_from DESC, df.filed_date DESC
+        LIMIT 1
+    ) x
+    WHERE p_concept = 'total_debt' AND p_qtrs = 0;
+$$;
+
 DROP FUNCTION IF EXISTS sec_gold.as_of_canonical(INTEGER, TEXT, DATE, INTEGER, DATE, INTEGER);
 
 CREATE FUNCTION sec_gold.as_of_canonical(
@@ -179,7 +206,10 @@ LANGUAGE sql STABLE AS $$
               AND v.total IS NOT NULL
             ORDER BY fv.variant
             LIMIT 1
-        )
+        ),
+        -- Last, a zero from the balance-sheet face, bounded by the same
+        -- knowledge date: fills a NULL, never replaces a figure.
+        sec_gold.as_of_face_zero_debt(p_cik, p_concept, p_value_date, p_qtrs, p_asof, p_buffer_sessions)
     );
 $$;
 
@@ -318,12 +348,32 @@ LANGUAGE sql STABLE AS $$
         ORDER BY x.value_date DESC
         LIMIT 1
     )
+    -- A zero from the balance-sheet face (037_debt_face), total_debt
+    -- only: the NEWEST filing knowable at k (10-K or 10-Q, as the direct
+    -- walk takes a balance from any filing) printed no borrowing line.
+    -- Only that filing counts, so a company that borrowed since its
+    -- debt-free years never inherits an old zero.
+    , zero_hit AS (
+        SELECT n.period_date AS value_date, n.tradable_from, 0::NUMERIC AS value, NULL::TEXT AS tag
+        FROM (
+            SELECT df.period_date, df.tradable_from, df.zero_by_face
+            FROM sec_gold.debt_face df
+            CROSS JOIN k
+            WHERE df.cik = p_cik
+              AND df.tradable_from <= k.d
+            ORDER BY df.period_date DESC, df.tradable_from DESC
+            LIMIT 1
+        ) n
+        WHERE n.zero_by_face AND (SELECT concept FROM target) = 'total_debt'
+    )
     , hit AS (
         SELECT u.value_date, u.tradable_from, u.value, u.tag
         FROM (
             SELECT dh.value_date, dh.tradable_from, dh.value, dh.tag, 0 AS pref FROM direct_hit  dh
             UNION ALL
             SELECT xh.value_date, xh.tradable_from, xh.value, xh.tag, 1 AS pref FROM derived_hit xh
+            UNION ALL
+            SELECT zh.value_date, zh.tradable_from, zh.value, zh.tag, 2 AS pref FROM zero_hit    zh
         ) u
         ORDER BY u.value_date DESC, u.pref ASC
         LIMIT 1

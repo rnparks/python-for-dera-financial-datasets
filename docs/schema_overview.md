@@ -37,7 +37,7 @@ reasoned about rather than at ingest.
 | Table | Rows | Size | What it is |
 |---|---:|---:|---|
 | `num_raw` | 176.2M | 30 GB | Numeric facts — the actual financial data |
-| `pre_raw` | 44.1M | 6.7 GB | Presentation: how facts map to statement lines |
+| `pre_raw` | 45.8M | 6.7 GB | Presentation: how facts map to statement lines |
 | `tag_raw` | 4.7M | 1.2 GB | XBRL taxonomy: tag names, labels, definitions |
 | `sub_raw` | 419.8K | 141 MB | Submissions: one row per filing |
 | `load_log` | 70 | 32 kB | Which quarters have been loaded (drives incremental load; a logged quarter is refused unless `--force` replaces it) |
@@ -54,6 +54,7 @@ is established.
 | `num_silver` | 185.0M | 60 GB | **The core fact table.** Every vintage of every fact |
 | `tag_silver` | 4.5M | 1.5 GB | Deduplicated taxonomy |
 | `sub_silver` | 433.7K | 111 MB | Filings with `known_at` (acceptance instant) and `tradable_from` |
+| `pre_silver` | 45.8M | 9.5 GB | Every statement line of every filing as rendered: statement, row order, the tag behind the line and the label the filer printed. The balance-sheet face `sec_gold.debt_face` reads |
 | `ticker_map` | 10.2K | 1.3 MB | Legacy CIK ↔ ticker crosswalk (superseded by `sec_reference`) |
 | `universe_sp1500` | 1,505 | 376 kB | **Today's** S&P 1500 membership — no dates; only the `is_primary` tie-break reads it now |
 
@@ -186,7 +187,8 @@ full reference including every function signature.
 | `fact_asof` | matview | 97.9M | 33 GB | **Bitemporal facts, every vintage. The backtest source** |
 | `tradable_financials` | matview | 12.4M | 3.5 GB | Latest-restated facts, one row per fact; index membership and GICS dated |
 | `tradable_financials_pit` | matview | 12.4M | 3.6 GB | Earliest-sighting twin |
-| `peer_stats` | matview | 650.5K | 167 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the day for all three indexes; scored concepts only |
+| `debt_face` | matview | 401.1K | 136 MB | Every 10-K and 10-Q balance sheet read for borrowing lines by the labels the filer printed; `zero_by_face` (82,342 filings) is the only source of a `total_debt` of zero and `reason` says why every other face is not one |
+| `peer_stats` | matview | 655.0K | 168 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the day for all three indexes; scored concepts only |
 | `share_class_shares` | matview | 777.5K | 218 MB | Per-class share counts for 9,654 companies, delisted included — the market-cap denominator |
 | `canonical_concepts` | table | 45 | — | Research taxonomy: 26 scored concepts (revenue, total_debt, net_margin, revenue_growth, …) and 19 unscored instrument lines that only serve as operands |
 | `concept_tag_map` | table | 112 | — | Priority-ordered XBRL tag resolution; dollar facts only |

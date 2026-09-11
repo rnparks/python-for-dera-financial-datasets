@@ -9,6 +9,8 @@
 --
 --   1. sub_silver gains the quarter's filings, typed and given their
 --      tradable_from against the calendar, exactly as 020 does;
+--   1b. pre_silver gains the quarter's presentation rows (045): a
+--      filing's layout is never restated, so its rows are replaced;
 --   2. tag_silver gains any (tag, version) not seen before;
 --   3. num_silver: the quarter's facts are typed as in 040, the set of
 --      fact partitions they belong to -- (cik, tag, value_date, qtrs,
@@ -42,6 +44,7 @@ CREATE OR REPLACE PROCEDURE sec_silver.build_quarter(p_quarter TEXT)
 LANGUAGE plpgsql AS $$
 DECLARE
     v_sub      BIGINT;
+    v_pre      BIGINT;
     v_tag      BIGINT;
     v_new      BIGINT;
     v_keys     BIGINT;
@@ -96,6 +99,21 @@ BEGIN
         was_amended_later = EXCLUDED.was_amended_later, is_detailed = EXCLUDED.is_detailed,
         nciks = EXCLUDED.nciks, aciks = EXCLUDED.aciks, tradable_from = EXCLUDED.tradable_from;
     GET DIAGNOSTICS v_sub = ROW_COUNT;
+
+    -- 1b. Presentation rows for the quarter's filings, typed as in
+    --     045_pre_silver. A filing's layout is never restated by a later
+    --     filing, so the quarter's rows are simply replaced.
+    DELETE FROM sec_silver.pre_silver p
+    WHERE p.adsh IN (SELECT DISTINCT adsh FROM sec_raw.pre_raw WHERE source_quarter = p_quarter);
+    INSERT INTO sec_silver.pre_silver (adsh, report, line, stmt, inpth, rfile, tag, version, plabel, negating)
+    SELECT DISTINCT ON (adsh, report::INTEGER, line::INTEGER)
+           adsh, report::INTEGER, line::INTEGER, stmt, inpth = '1', rfile, tag, version, plabel,
+           NULLIF(negating, '') = '1'
+    FROM sec_raw.pre_raw
+    WHERE source_quarter = p_quarter AND adsh IS NOT NULL
+      AND report ~ '^[0-9]+$' AND line ~ '^[0-9]+$'
+    ORDER BY adsh, report::INTEGER, line::INTEGER;
+    GET DIAGNOSTICS v_pre = ROW_COUNT;
 
     -- 2. Taxonomy rows first seen in this quarter.
     INSERT INTO sec_silver.tag_silver (tag, version, custom, abstract, datatype, tlabel, doc)
@@ -209,8 +227,8 @@ BEGIN
     ANALYZE sec_silver.sub_silver;
     ANALYZE sec_silver.num_silver;
 
-    RAISE NOTICE 'build_quarter(%): % filings upserted, % taxonomy rows added, % facts in the quarter, % partitions touched, % rows out, % rows in',
-        p_quarter, v_sub, v_tag, v_new, v_keys, v_deleted, v_inserted;
+    RAISE NOTICE 'build_quarter(%): % filings upserted, % presentation rows, % taxonomy rows added, % facts in the quarter, % partitions touched, % rows out, % rows in',
+        p_quarter, v_sub, v_pre, v_tag, v_new, v_keys, v_deleted, v_inserted;
 END;
 $$;
 

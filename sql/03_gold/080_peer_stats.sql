@@ -212,12 +212,45 @@ derived AS (
     ) x
     ORDER BY x.cik, x.concept, x.fiscal_year, x.variant
 ),
+-- A zero from the balance-sheet face (037_debt_face) for a company-year
+-- whose total_debt neither the tag walk nor a formula produced: the
+-- annual filing printed no borrowing line and its interest is nil. The
+-- company-year must already be in the panel with a balance sheet (a
+-- total_assets row on the same date, which is the fiscal year-end rule
+-- applied), and the row carries that row's index and GICS. Fills NULLs
+-- only, by construction: the NOT EXISTS clauses are the whole rule.
+face_zero AS (
+    SELECT DISTINCT ON (df.cik, sec_gold.fiscal_year_of(df.period_date))
+        df.cik,
+        a.ticker, a.index_name, a.gics_sector, a.gics_sub_industry,
+        'total_debt'::TEXT AS concept, 'balance'::TEXT AS fact_type,
+        sec_gold.fiscal_year_of(df.period_date) AS fiscal_year,
+        df.period_date AS value_date, df.tradable_from, 0::NUMERIC AS value
+    FROM sec_gold.debt_face df
+    JOIN LATERAL (
+        SELECT d.ticker, d.index_name, d.gics_sector, d.gics_sub_industry
+        FROM direct d
+        WHERE d.cik = df.cik AND d.concept = 'total_assets' AND d.value_date = df.period_date
+        LIMIT 1
+    ) a ON TRUE
+    WHERE df.zero_by_face
+      AND df.form IN ('10-K', '10-K/A', '10-KT')
+      AND NOT EXISTS (SELECT 1 FROM direct d2
+                       WHERE d2.cik = df.cik AND d2.concept = 'total_debt'
+                         AND d2.fiscal_year = sec_gold.fiscal_year_of(df.period_date))
+      AND NOT EXISTS (SELECT 1 FROM derived x2
+                       WHERE x2.cik = df.cik AND x2.concept = 'total_debt'
+                         AND x2.fiscal_year = sec_gold.fiscal_year_of(df.period_date))
+    ORDER BY df.cik, sec_gold.fiscal_year_of(df.period_date), df.filed_date DESC
+),
 -- Scored concepts only from here on: an instrument line (050) resolves
 -- as an operand and is not ranked.
 resolved AS (
     SELECT d.* FROM direct  d JOIN sec_gold.canonical_concepts c ON c.concept = d.concept AND c.scored
     UNION ALL
     SELECT x.* FROM derived x JOIN sec_gold.canonical_concepts c ON c.concept = x.concept AND c.scored
+    UNION ALL
+    SELECT z.* FROM face_zero z
 ),
 -- Scale-free concepts (concept_ratio). A ratio divides two resolved
 -- concepts of the same company and fiscal year -- and since a balance
