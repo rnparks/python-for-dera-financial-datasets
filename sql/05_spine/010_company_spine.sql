@@ -403,16 +403,24 @@ JOIN sec_reference.company_ticker b
  AND a.is_primary AND b.is_primary
  AND b.valid_from BETWEEN a.valid_to - 45 AND a.valid_to + 120
 JOIN sec_reference.company ca ON ca.cik = a.cik
-JOIN sec_reference.company cb ON cb.cik = b.cik
+LEFT JOIN sec_reference.company cb ON cb.cik = b.cik
 WHERE a.valid_to IS NOT NULL
-  AND cb.first_filed > ca.first_filed + 30
+  AND (cb.first_filed > ca.first_filed + 30
+       -- A successor with no filing in DERA yet (Exxon Mobil's 2115436
+       -- took XOM on 2026-07-16; its first 10-Q lands with 2026q3) counts
+       -- when the old registrant was filing up to the handoff. A ticker
+       -- that resurfaces years after its holder went dark is a recycled
+       -- ticker, not a succession (RailAmerica's RA, Alberto-Culver's ACV).
+       OR (cb.cik IS NULL AND ca.last_filed >= a.valid_to - 400))
 ORDER BY a.cik, b.cik, a.ticker, b.valid_from;
 
 COMMENT ON TABLE sec_reference.cik_succession IS
     'Ticker handoffs between two registrants in SEC''s own file: the old '
-    'CIK''s primary interval ends where the newer CIK''s begins. Evidence of '
-    'a holding-company reorganisation, indistinguishable here from a '
-    'recycled ticker; consumed only by the index membership split.';
+    'CIK''s primary interval ends where the newer CIK''s begins, the newer '
+    'CIK first filed later or has not filed in DERA yet while the old one '
+    'was filing up to the handoff. Evidence of a holding-company '
+    'reorganisation, indistinguishable here from a recycled ticker; '
+    'consumed only by the index membership split.';
 
 -- ---------------------------------------------------------------
 -- 4. Convenience view: the ticker to show for a CIK today.

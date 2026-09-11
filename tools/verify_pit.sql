@@ -1003,12 +1003,13 @@ FROM (
 -- peer_stats_asof(index, T) must contain no fact actionable after T,
 -- cover the constituents of the day, and show Apple's FY2024 revenue on
 -- 2024-11-15 (first disclosed 2024-11-01) but still FY2023 on 2024-10-15.
--- Tolerance: cik_succession (010, 3c) now re-keys a membership run to
--- the registrant that was filing, which brought the constituents with
--- no filer behind their CIK on 2020-06-30 from five to one (Paramount
--- Global -> Paramount Skydance changed ticker at succession, which no
--- handoff reveals). The margin is three, not the eight it was.
-SELECT CASE WHEN future_rows = 0 AND companies >= members - 3 AND concepts = 26 AND max_stale <= 550
+-- Tolerance: one constituent of 2020-06-30 has no filer behind its CIK
+-- and never will: First Republic Bank (1132979) reported to the FDIC,
+-- not to EDGAR. The margin was eight before cik_succession (010, 3c)
+-- re-keyed membership runs to the registrant that was filing, three
+-- until the seat's "date added" stopped back-dating Paramount Skydance
+-- to 1994 and Exxon Mobil's history was returned to 34088 (2026-09-11).
+SELECT CASE WHEN future_rows = 0 AND companies >= members - 1 AND concepts = 26 AND max_stale <= 550
              AND aapl_oct = DATE '2023-09-30' AND aapl_nov = DATE '2024-09-30'
             THEN 'PASS' ELSE 'FAIL' END AS status,
        rows AS rows_2020_06_30, companies, members AS constituents_that_day, future_rows, concepts, max_stale,
@@ -1106,17 +1107,41 @@ FROM (
 \echo '=== 59. CIK succession: a membership interval names the registrant that was filing ==='
 -- Apache (6769) became APA Corp (1841666) in 2021; Cigna 701221 became
 -- 1739940 and WestRock 1636023 became 1732845 in late 2018; BlackRock
--- 1364742 became 2012383 in 2024. Each must be the S&P 500 member under
--- the CIK that was filing on the date, and no 2020-06-30 constituent but
--- the Paramount case may lack a filer behind its CIK.
+-- 1364742 became 2012383 in 2024; Google Inc 1288776 became Alphabet
+-- 1652044 on 2015-10-02 (SEC's file kept the old CIK under GOOG until
+-- 2019-10, so the interval that ended before that date is cut at
+-- Alphabet's first filing instead); Exxon Mobil 34088 handed XOM to
+-- ExxonMobil Holdings 2115436 on 2026-07-16 before the new registrant
+-- had a filing in DERA. Each must be the S&P 500 member under the CIK
+-- that was filing on the date. No constituent of 2020-06-30 or
+-- 2023-06-30 may lack a filer behind its CIK. The page's "date added"
+-- belongs to the seat and survives a ticker change at succession, so it
+-- never back-dates an interval to before the first EDGAR filing of the
+-- registrant that will hold it (020, history): Paramount Skydance
+-- (2041610, PSKY from 2025-08-29) is not a member from CBS's 1994-09-30,
+-- Walgreens Boots Alliance not from 1979, Linde plc not from 1992,
+-- Viatris not from 2004, Kraft Heinz not from 2012 (2026-09-11). What
+-- remains is 22 intervals over 16 seats that name a registrant from its
+-- first capture, before it existed: successions with no handoff in
+-- SEC's file because they predate its reach (Mylan N.V. from 2008,
+-- Medtronic plc, Perrigo plc), a chain cut once (STERIS) and a recycled
+-- ticker (WMS). Pinned so that the count can only fall.
 SELECT CASE WHEN apa_2017 = 6769 AND apa_2020 = 6769 AND apa_2025 = 1841666
              AND ci_2017 = 701221 AND ci_2020 = 1739940
              AND wrk_2017 = 1636023 AND wrk_2020 = 1732845
              AND blk_2020 = 1364742 AND blk_2025 = 2012383
-             AND no_filer <= 1 AND handoffs >= 150 AND rekeyed >= 20
+             AND goog_2012 = 1288776 AND goog_2017 = 1652044
+             AND xom_2020 = 34088 AND xom_intervals >= 2
+             AND no_filer = 0 AND no_filer_2023 = 0 AND handoffs >= 150 AND rekeyed >= 20
+             AND psky_from >= DATE '2025-08-01' AND para_2023 = 813828
+             AND backdated_before_birth = 0 AND pre_birth <= 22
             THEN 'PASS' ELSE 'FAIL' END AS status,
        apa_2017, apa_2020, apa_2025, ci_2017, ci_2020, wrk_2017, wrk_2020, blk_2020, blk_2025,
-       no_filer AS members_2020_without_a_filer, handoffs AS succession_pairs, rekeyed AS intervals_rekeyed
+       goog_2012, goog_2017, xom_2020, xom_intervals,
+       no_filer AS members_2020_without_a_filer, no_filer_2023 AS members_2023_without_a_filer,
+       handoffs AS succession_pairs, rekeyed AS intervals_ending_at_a_handoff,
+       psky_from AS paramount_skydance_member_from, para_2023 AS paramount_cik_2023_06_30,
+       backdated_before_birth, pre_birth AS intervals_naming_a_registrant_before_its_first_filing
 FROM (
     SELECT (SELECT cik FROM sec_reference.index_members('SP500', DATE '2017-06-30') WHERE cik IN (6769, 1841666) LIMIT 1) AS apa_2017,
            (SELECT cik FROM sec_reference.index_members('SP500', DATE '2020-06-30') WHERE cik IN (6769, 1841666) LIMIT 1) AS apa_2020,
@@ -1129,6 +1154,26 @@ FROM (
            (SELECT cik FROM sec_reference.index_members('SP500', DATE '2025-06-30') WHERE cik IN (1364742, 2012383) LIMIT 1) AS blk_2025,
            (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2020-06-30') m JOIN sec_reference.company co USING (cik)
              WHERE co.first_filed > DATE '2020-06-30' OR co.last_filed < DATE '2019-06-30') AS no_filer,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2023-06-30') m JOIN sec_reference.company co USING (cik)
+             WHERE co.first_filed > DATE '2023-06-30' OR co.last_filed < DATE '2022-06-30') AS no_filer_2023,
+           (SELECT MIN(valid_from) FROM sec_reference.index_membership WHERE cik = 2041610 AND index_name = 'SP500') AS psky_from,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2023-06-30') WHERE cik IN (813828, 2041610) LIMIT 1) AS para_2023,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2012-06-30') WHERE cik IN (1288776, 1652044) LIMIT 1) AS goog_2012,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2017-06-30') WHERE cik IN (1288776, 1652044) LIMIT 1) AS goog_2017,
+           (SELECT cik FROM sec_reference.index_members('SP500', DATE '2020-06-30') WHERE cik IN (34088, 2115436) LIMIT 1) AS xom_2020,
+           (SELECT COUNT(*) FROM sec_reference.index_membership WHERE cik = 34088 AND index_name = 'SP500') AS xom_intervals,
+           -- an interval that starts at the page's "date added" for its own registrant, before that
+           -- registrant's first EDGAR filing
+           (SELECT COUNT(*)
+              FROM sec_reference.index_membership m
+              JOIN (SELECT cik, MIN(event_date) AS first_edgar FROM sec_reference.security_event_raw GROUP BY cik) b USING (cik)
+             WHERE m.valid_from < b.first_edgar
+               AND EXISTS (SELECT 1 FROM sec_reference.index_observation_resolved o
+                            WHERE o.index_name = m.index_name AND o.cik = m.cik AND o.date_added = m.valid_from)) AS backdated_before_birth,
+           (SELECT COUNT(*)
+              FROM sec_reference.index_membership m
+              JOIN (SELECT cik, MIN(event_date) AS first_edgar FROM sec_reference.security_event_raw GROUP BY cik) b USING (cik)
+             WHERE m.valid_from < b.first_edgar) AS pre_birth,
            (SELECT COUNT(*) FROM sec_reference.cik_succession) AS handoffs,
            (SELECT COUNT(*) FROM sec_reference.index_membership m JOIN sec_reference.cik_succession c
               ON c.old_cik = m.cik AND m.valid_to = c.handoff_date) AS rekeyed

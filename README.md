@@ -187,7 +187,7 @@ The filers query returns 7,298 members, of which **3,012 (41%) have since
 delisted or deregistered**. A universe built from today's index membership
 returns none of them. The S&P 500 query comes from Wikipedia's page history
 replayed monthly since 2008: SVB Financial is a member from 2018-03-19 to
-2023-03-24, Tesla from 2020-12-21, and 840 companies have been in the index
+2023-03-24, Tesla from 2020-12-21, and 841 companies have been in the index
 against 503 on today's page. The S&P 400 (since 2011) and S&P 600 (since 2018)
 are replayed the same way, so a mid-cap or small-cap cross-section is the index
 of its day too.

@@ -25,6 +25,11 @@
 --                             is partial. A GICS reclassification ends
 --                             one interval and starts the next, so the
 --                             classification is as of the fact date.
+--                             The page's "date added" back-dates a
+--                             company's first interval, but never to
+--                             before the registrant's first EDGAR
+--                             filing: the date belongs to the seat and
+--                             survives a ticker change at succession.
 --
 -- All three indexes are replayed: the S&P 500 from 2008, the S&P 400
 -- from 2011 (no CIK column ever; the dated crosswalk resolves it) and
@@ -534,62 +539,108 @@ segments AS (
     FROM segmented
     GROUP BY index_name, cik, grp, seg, gics_sector, gics_sub_industry
 ),
+segments_dated AS (
+    SELECT s.*,
+           s.first_seen = MIN(s.first_seen) OVER (PARTITION BY s.index_name, s.cik) AS is_first,
+           COALESCE(LEAD(s.first_seen) OVER (PARTITION BY s.index_name, s.cik, s.grp ORDER BY s.seg),
+                    s.span_valid_to) AS valid_to
+    FROM segments s
+),
+-- The page's "date added" belongs to the seat, not the registrant: it
+-- survives a ticker change at succession, so Paramount Skydance (2041610,
+-- first EDGAR filing 2024-11-04, PSKY on the page from 2025-08-29)
+-- carried CBS's 1994-09-30, Walgreens Boots Alliance carried Walgreen
+-- Co's 1979-12-31, Linde plc Praxair's 1992-07-01, Viatris Mylan's
+-- 2004-04-23, Kraft Heinz Kraft Foods Group's 2012-10-02 -- each a second
+-- member of the same seat for the years the predecessor's run already
+-- covers. An interval never starts before the first EDGAR filing
+-- (security_event_raw) of the registrant it will start under: the
+-- predecessor where a handoff in cik_succession falls inside it (the
+-- split below re-keys that part, so Bunge Ltd keeps its 2023-03-15 and
+-- Avago its 2014-05-08), else the run's own. When the seat's date
+-- precedes that filing, the interval starts at the first capture that
+-- showed this registrant, which is the capture where the predecessor's
+-- run ends.
+birth AS (
+    SELECT cik, MIN(event_date) AS first_edgar
+    FROM sec_reference.security_event_raw
+    GROUP BY cik
+),
 history AS (
     SELECT
         s.index_name, s.cik, s.ticker,
         NULLIF(s.gics_sector, '')       AS gics_sector,
         NULLIF(s.gics_sub_industry, '') AS gics_sub_industry,
         -- The page's own "date added" where it is earlier than the first
-        -- sighting and this is the company's first interval; otherwise
-        -- the first capture that showed it.
-        CASE WHEN s.seg = 0 AND s.date_added IS NOT NULL AND s.date_added < s.first_seen
-              AND s.first_seen = MIN(s.first_seen) OVER (PARTITION BY s.index_name, s.cik)
+        -- sighting, this is the company's first interval, and the
+        -- registrant existed by then; otherwise the first capture that
+        -- showed it.
+        CASE WHEN s.seg = 0 AND s.is_first AND s.date_added IS NOT NULL AND s.date_added < s.first_seen
+              AND s.date_added >= COALESCE(b.first_edgar, s.date_added)
              THEN s.date_added ELSE s.first_seen END AS valid_from,
-        COALESCE(LEAD(s.first_seen) OVER (PARTITION BY s.index_name, s.cik, s.grp ORDER BY s.seg),
-                 s.span_valid_to) AS valid_to,
+        s.valid_to,
         'wikipedia_history'::TEXT AS source
-    FROM segments s
+    FROM segments_dated s
+    LEFT JOIN LATERAL (
+        SELECT c.old_cik
+        FROM sec_reference.cik_succession c
+        WHERE c.new_cik = s.cik AND c.ticker = s.ticker
+          AND c.handoff_date > s.first_seen
+        ORDER BY c.handoff_date LIMIT 1
+    ) x ON TRUE
+    LEFT JOIN birth b ON b.cik = COALESCE(x.old_cik, s.cik)
 ),
 -- CIK SUCCESSION. A run resolves to one registrant -- the one holding the
 -- ticker at its last sighting -- but a company that re-registered under
 -- a new CIK was two registrants across the run: Apache (6769) until APA
 -- Corp (1841666) took the ticker in 2021, Cigna 701221 until 1739940 in
--- 2018. An interval that straddles a handoff in cik_succession (010,
--- section 3c) is split there and its earlier part re-keyed to the old
--- CIK, so each interval names the registrant that was filing. Unbroken
--- index presence across the handoff is what makes this a succession
--- rather than a recycled ticker: a recycled ticker changes company only
--- after a removal, which ends the run. Chains (A -> B -> C) are split
--- once per handoff.
-history_split AS (
-    SELECT h.index_name,
-           CASE WHEN x.old_cik IS NOT NULL AND h.valid_from < x.handoff_date THEN x.old_cik ELSE h.cik END AS cik,
-           h.ticker, h.gics_sector, h.gics_sub_industry,
-           h.valid_from,
-           CASE WHEN x.old_cik IS NOT NULL AND h.valid_from < x.handoff_date THEN x.handoff_date ELSE h.valid_to END AS valid_to,
-           h.source
+-- 2018. An interval of the new registrant that begins before a handoff
+-- in cik_succession (010, section 3c) is cut and its earlier part
+-- re-keyed to the old CIK, so each interval names the registrant that
+-- was filing. The cut is the handoff for an interval that straddles it.
+-- An interval that ends before the handoff -- a GICS segment of the
+-- same run, which the 2018 reclassification made of Alphabet's 2008 to
+-- 2018 and Cigna's -- is cut at the successor's first EDGAR filing
+-- instead, because SEC's file dates a handoff by when it dropped the
+-- old CIK (Google Inc stayed under GOOG until 2019-10, four years after
+-- Alphabet took the ticker): before its first filing the successor
+-- certainly did not hold the seat, after it the file's date stands.
+-- A successor with no filing in the index yet (Exxon Mobil's 2115436)
+-- is taken as born at the handoff. Unbroken index presence across the
+-- handoff is what makes this a succession rather than a recycled
+-- ticker: a recycled ticker changes company only after a removal, which
+-- ends the run. Chains (A -> B -> C) are cut once per handoff.
+history_keyed AS (
+    SELECT h.*, x.old_cik, x.cut
     FROM history h
     LEFT JOIN LATERAL (
-        SELECT c.old_cik, c.handoff_date
+        SELECT c.old_cik,
+               CASE WHEN c.handoff_date < COALESCE(h.valid_to, DATE '9999-12-31') THEN c.handoff_date
+                    ELSE COALESCE(b.first_edgar, c.handoff_date) END AS cut
         FROM sec_reference.cik_succession c
+        LEFT JOIN birth b ON b.cik = c.new_cik
         WHERE c.new_cik = h.cik AND c.ticker = h.ticker
           AND c.handoff_date > h.valid_from
-          AND c.handoff_date < COALESCE(h.valid_to, DATE '9999-12-31')
         ORDER BY c.handoff_date LIMIT 1
     ) x ON TRUE
+),
+history_split AS (
+    -- the part before the cut belongs to the old registrant
+    SELECT k.index_name, k.old_cik AS cik, k.ticker, k.gics_sector, k.gics_sub_industry,
+           k.valid_from,
+           CASE WHEN k.cut < COALESCE(k.valid_to, DATE '9999-12-31') THEN k.cut ELSE k.valid_to END AS valid_to,
+           k.source
+    FROM history_keyed k
+    WHERE k.old_cik IS NOT NULL AND k.cut > k.valid_from
     UNION ALL
-    -- the part after the handoff stays with the new registrant
-    SELECT h.index_name, h.cik, h.ticker, h.gics_sector, h.gics_sub_industry,
-           x.handoff_date, h.valid_to, h.source
-    FROM history h
-    JOIN LATERAL (
-        SELECT c.handoff_date
-        FROM sec_reference.cik_succession c
-        WHERE c.new_cik = h.cik AND c.ticker = h.ticker
-          AND c.handoff_date > h.valid_from
-          AND c.handoff_date < COALESCE(h.valid_to, DATE '9999-12-31')
-        ORDER BY c.handoff_date LIMIT 1
-    ) x ON TRUE
+    -- the part from the cut on, or the whole interval when nothing cuts it,
+    -- stays with the run's registrant
+    SELECT k.index_name, k.cik, k.ticker, k.gics_sector, k.gics_sub_industry,
+           CASE WHEN k.old_cik IS NOT NULL AND k.cut > k.valid_from THEN k.cut ELSE k.valid_from END AS valid_from,
+           k.valid_to, k.source
+    FROM history_keyed k
+    WHERE k.old_cik IS NULL OR k.cut <= k.valid_from
+       OR k.cut < COALESCE(k.valid_to, DATE '9999-12-31')
 ),
 snapshot AS (
     SELECT DISTINCT ON (u.index_name, ct.cik)

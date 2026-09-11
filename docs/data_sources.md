@@ -235,15 +235,26 @@ FDIC, not the SEC. Against 2026-09-04 (138 tickers, 953 sightings unresolved):
 Qwest's S&P 500 years, New York Community Bancorp's eleven in the S&P 400 —
 6 resolutions dropped — a page error, four ghost rows and a one-capture
 ambiguity — and no other run changed. The S&P 500's 2009-06-30 cross-section resolves 496 of its members
-(489 before); 840 companies have been in it since 2008 against 503 on today's
+(489 before); 841 companies have been in it since 2008 against 503 on today's
 page.
 
 **Granularity.** Membership starts at the page's own "date added" where it has
 one (Tesla: 2020-12-21), else the first monthly capture, and ends at the first
-capture that no longer lists the company. A mid-month replacement therefore
-overlaps by up to a month, so a cross-section can count a few more than 500
-(518 on 2015-06-30). The page's "changes" table has exact dates and is the
-obvious refinement.
+capture that no longer lists the company. The "date added" belongs to the seat
+and survives a ticker change at succession, so it never starts a registrant
+before its first EDGAR filing: Paramount Skydance (2041610, first filing
+2024-11-04) is a member from the 2025-08-29 capture that first showed PSKY,
+the capture where Paramount Global's run under PARA ends, not from CBS's
+1994-09-30 — and likewise Walgreens Boots Alliance (WBA, was 1979-12-31),
+Linde plc (LIN, 1992-07-01), Viatris (VTRS, 2004-04-23), Kraft Heinz (KHC,
+2012-10-02) and WestRock (WRK, 1957-03-04), each of which had been a second
+member of its seat for the years the predecessor's run already covered
+(2026-09-11). Where the split below re-keys the interval's earlier part to a
+predecessor, it is the predecessor's first filing that counts, so Bunge Ltd
+keeps its 2023-03-15, Avago its 2014-05-08 and Twenty-First Century Fox its
+2013-07-01. A mid-month replacement therefore overlaps by up to a month, so
+a cross-section can count a few more than 500 (518 on 2015-06-30). The
+page's "changes" table has exact dates and is the obvious refinement.
 
 **The other two indexes.** The S&P 400 page (153 monthly captures from
 2011-01, always 400 rows) has never carried a CIK column; the crosswalk
@@ -278,13 +289,40 @@ Apache 6769 before 2021) or one that had stopped filing (Cigna 701221 after
 2018): five S&P 500 constituents of 2020-06-30 had no filer behind them.
 `sec_reference.cik_succession` records the ticker handoffs in SEC's own file —
 a primary ticker whose interval for one CIK ends where a newer CIK's begins,
-211 pairs — and the spine splits a membership interval that straddles a
-handoff, re-keying the earlier part to the old registrant (32 intervals). What
-tells succession from a recycled ticker is unbroken index presence across the
-handoff; a recycled ticker changes company only after a removal, which ends
-the run. Not caught: a ticker change at succession (Paramount Global PARA →
-Paramount Skydance PSKY, 2025) and handoffs before the crosswalk's 2018-12
-start where neither registrant's ticker is back-extended.
+223 pairs as of 2026-09-11; a successor with no filing in DERA yet counts when
+the old registrant was filing up to the handoff (ExxonMobil Holdings 2115436
+took XOM on 2026-07-16 and first reports with 2026q3), while a ticker that
+resurfaces years after its holder went dark is a recycled ticker and does
+not. The spine cuts every interval of the successor that begins before the
+handoff and re-keys the earlier part to the old registrant. The cut is the
+handoff for an interval that straddles it (34 intervals). An interval that
+ends before the handoff — a GICS segment of the same run; the 2018
+reclassification made one of Alphabet's 2008 to 2018 and Cigna's — is cut at
+the successor's first EDGAR filing instead (27 intervals, whole or in part),
+because the file dates a handoff by when it dropped the old CIK: Google Inc
+stayed under GOOG until 2019-10, four years after Alphabet took the ticker,
+and Alphabet's first filing, 2015-10-02, is the day it did. Before that
+filing the successor certainly did not hold the seat; between it and the
+file's date the successor keeps the seat, as before, so Disney's new
+registrant holds it from its 2018-06-25 Form S-4 rather than the 2019-03-20
+close. Before 2026-09-11 Alphabet was the member from 2008 and Google Inc
+never; Exxon Mobil's whole history sat under 2115436, a CIK with no facts,
+from the day the crosswalk moved XOM, so Exxon was in no S&P 500 panel at
+all. What tells succession from a recycled ticker is unbroken index presence
+across the handoff; a recycled ticker changes company only after a removal,
+which ends the run. A ticker change at succession (Paramount Global PARA →
+Paramount Skydance PSKY, 2025) needs no handoff: the page swaps the ticker in
+one capture, the old registrant's run ends there and the new one's begins,
+once the seat's "date added" is kept from back-dating the successor
+(Granularity, above). Not caught: successions with no handoff in SEC's file
+because they predate its reach and neither registrant's ticker is
+back-extended (Mylan Inc → Mylan N.V. 2015, Medtronic Inc → plc 2015, Perrigo
+Co → plc 2013), a chain cut once (STERIS Corp → plc → plc again), and a
+recycled ticker the run resolution gave to its later holder (WMS Industries'
+S&P 400 seat to Advanced Drainage Systems): 22 intervals over 16 seats name a
+registrant before its first EDGAR filing (2026-09-11), all before 2017, and
+check 59 pins the count so it can only fall. A cross-section still counts
+those seats, under a CIK with no facts for the years.
 
 ## 4b. Issuer 10-K cover pages (share-class mapping)
 
