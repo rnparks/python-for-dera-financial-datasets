@@ -35,6 +35,9 @@ For the whole database — including `sec_reference`, which holds the survivorsh
 | [`as_of_latest_annual()`](#as_of_latest_annual) | function | — | Most recent annual value knowable on a date, formula fallback |
 | `as_of_latest_annual_by_ticker()` | function | — | Ticker wrapper; resolves the ticker as of the same date, raises if it cannot |
 | [`as_of_snapshot()`](#as_of_snapshot) | function | — | Every concept as of a date, keyed by CIK or by ticker |
+| [`as_of_quarterly()`](#as_of_quarterly) | function | — | Every fiscal quarter of every flow concept knowable on a date: the quarter, trailing twelve months, QoQ / YoY / trailing growth |
+| [`as_of_trailing()`](#as_of_trailing) | function | — | The newest quarter per concept from `as_of_quarterly()`, keyed by CIK or by ticker |
+| `quarterly()`, `trailing()` | function | — | The same as of today (latest restated vintage); not for a backtest |
 | [`peer_stats_asof()`](#peer_stats_asof) | function | — | Peer cross-section of an index as it was knowable on a date; computed on demand |
 | [`shares_outstanding_at()`](#shares_outstanding_at) | function | — | Single collapsed share count. NOT sufficient for multi-class market cap |
 | [`share_classes_at()`](#share_classes_at) | function | — | Every share class for a company as of a date, one row per class |
@@ -320,7 +323,7 @@ The resolution rules that turn a concept into an actual XBRL tag, walked in orde
 | instrument lines (19 concepts) | 1–4 | any | `SecuredDebt`, `UnsecuredDebt`, `SeniorNotes`, `LineOfCredit`, `NotesPayable`, `LoansPayable`, `ConvertibleNotesPayable`, `OtherLongTermDebt`, `SubordinatedDebt`, `JuniorSubordinatedDebentureOwedToUnconsolidatedSubsidiaryTrust`, `AdvancesFromFederalHomeLoanBanks`, `OtherBorrowings`, `ShortTermBorrowings`, `WarehouseAgreementBorrowings`, `SurplusNotes` and 22 sibling forms (37 rows) | One concept per balance-sheet line; within a concept the alternatives are ordered both-portions, then noncurrent, then a current-only form. Summed by `total_debt`'s second variant |
 | `operating_cash_flow` | 1–2 | any | `NetCashProvidedByUsedInOperatingActivities`, `NetCashProvidedByUsedInOperatingActivitiesContinuingOperations` | Near-universal; the continuing-operations subtotal is what 3,944 companies file instead of it (Apple FY2014–15) |
 
-Add coverage for a new tag with a plain `INSERT` — no function changes needed. `concept_tag_map` holds 112 rows (2026-09-11). To apply a mapping change to a built database, re-run `050_canonical_concepts.sql` and then `060`, `065`, `070`, `080` and `085` in that order, each with `psql -1`: `050` drops `peer_stats` through CASCADE and `080` recreates it, and `080` pins its planner settings with `SET LOCAL`, which psql silently ignores outside a transaction (the build then takes the nested-loop plan the file exists to avoid; 20 seconds inside a transaction, past ten minutes outside).
+Add coverage for a new tag with a plain `INSERT` — no function changes needed. `concept_tag_map` holds 112 rows (2026-09-11). To apply a mapping change to a built database, re-run `050_canonical_concepts.sql` and then `060`, `065`, `067`, `070`, `080` and `085` in that order, each with `psql -1`: `050` drops `peer_stats` through CASCADE and `080` recreates it, and `080` pins its planner settings with `SET LOCAL`, which psql silently ignores outside a transaction (the build then takes the nested-loop plan the file exists to avoid; 20 seconds inside a transaction, past ten minutes outside).
 
 #### Tag-name families
 
@@ -463,6 +466,51 @@ Every canonical concept as it was knowable on `p_asof`. The ticker form resolves
 SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2022-06-30');
 SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2015-06-30');   -- resolves: Apple has only ever been AAPL
 SELECT * FROM sec_gold.as_of_snapshot(1326801, DATE '2015-06-30'); -- Meta was FB then; the ticker form raises, the CIK form works
+```
+
+### `as_of_quarterly()`
+
+```sql
+sec_gold.as_of_quarterly(p_cik INTEGER, p_asof DATE, p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (concept TEXT, quarter_end DATE, fiscal_quarter INTEGER, tradable_from DATE,
+                 q_value NUMERIC, q_source TEXT,
+                 q_prior_end DATE, q_prior_value NUMERIC, qoq_growth NUMERIC,
+                 q_yoy_end DATE, q_yoy_value NUMERIC, yoy_growth NUMERIC,
+                 ttm_value NUMERIC, ttm_source TEXT, ttm_tradable_from DATE,
+                 ttm_prior_value NUMERIC, ttm_growth NUMERIC)
+```
+
+Every fiscal quarter of every **flow** concept (`revenue`, `net_income`, `eps_diluted`, `operating_cash_flow`, `operating_income`, `gross_profit`, `cost_of_revenue`, `capex`, `free_cash_flow`) for one company, as it was knowable on `p_asof`, computed from `fact_asof` on every call and **stored nowhere** — the database does not grow by a row for this (a choice made 2026-09-11: a slower answer over a bigger table). About 60 ms a company.
+
+**A quarter.** DERA has three-month income-statement figures at Q1, Q2 and Q3 (`qtrs = 1`) and year-to-date figures at Q2 and Q3 (`qtrs = 2, 3`); the 10-K carries the year (`qtrs = 4`) and never a fourth quarter; cash-flow statements come year-to-date only, so a three-month operating cash flow exists at Q1 alone (S&P 500, 2024 quarter-ends: 1,421 three-month `NetIncomeLoss` company-quarters, 521 for operating cash flow). `q_value` is the filed three-month figure where the filer printed one (`q_source = 'reported'`), else this period's year-to-date less the year-to-date one quarter shorter that ended a quarter earlier (`'ytd_difference'`): Apple's Q4 FY2024 revenue is 391.035 − 296.105 = 94.930B, its Q3 operating cash flow 91.443 − 62.585 = 28.858B. A filed figure beats the difference at the same date, as a filed value beats a reconstruction everywhere in gold. Each period's value is resolved by the same tag walk as the annual functions (industry rule, then priority) and `gross_profit` / `free_cash_flow` fall back to their formula from operands that share the period. `fiscal_quarter` is the longest period the company reported ending on that date.
+
+**Trailing twelve months.** The annual figure at a fiscal year-end (`ttm_source = 'annual'`); else the prior fiscal year plus the current year-to-date less the prior year's year-to-date to the same quarter, which the 10-Q carries as a comparative (`'annual_plus_ytd'`: Apple at 2024-06-30 is 383.285 + 296.105 − 293.787 = 385.603B); else the sum of four consecutive quarters (`'four_quarters'`). Diluted EPS follows the same arithmetic, the market convention for a trailing EPS, not a recomputation from trailing shares.
+
+**Growth.** `qoq_growth` against the quarter before, `yoy_growth` against the same quarter a year earlier, `ttm_growth` against the trailing twelve months a year earlier; a non-positive base is NULL, never a number, as in `concept_ratio`. Periods are matched by date windows rather than a fiscal calendar (the quarter before ends 70–110 days earlier, the year before 345–385 days), which tolerates 52/53-week years and DERA's month-end rounding; a change of fiscal year-end leaves NULLs rather than a wrong comparison.
+
+**Point in time.** Every figure is the vintage of each fact that was actionable on `p_asof` (`p_buffer_sessions` moves the knowledge date back, as everywhere), `tradable_from` is the latest of the quarter's components and `ttm_tradable_from` the latest of the trailing figure's. Apple's quarter to 2024-06-30 appears on 2024-08-02 and not on 2024-07-15, when the newest quarter is still the one to 2024-03-31 (check 64).
+
+**Coverage** (S&P 500 members of 2025-06-30, as knowable that day, 2026-09-11): a newest-quarter revenue for 500 of 500 (498 with a quarter ending in 2025), a trailing revenue for 495 and its growth for 490; net income 499 / 490 / 460; operating cash flow 500 / 497 / 483; diluted EPS 494 / 483 / 441; gross profit and operating income only where the filer tags them (339 and 391). The trailing figure comes from the annual-plus-year-to-date path for 477 of the 495 revenue rows, from four summed quarters for 2.
+
+```sql
+SELECT concept, quarter_end, q_value, ttm_value, ttm_growth
+FROM sec_gold.as_of_quarterly(320193, DATE '2024-08-15')
+WHERE concept = 'revenue' AND quarter_end >= DATE '2022-01-01';
+```
+
+### `as_of_trailing()`
+
+```sql
+sec_gold.as_of_trailing(p_cik    INTEGER, p_asof DATE, p_buffer_sessions INTEGER DEFAULT 0)
+sec_gold.as_of_trailing(p_ticker TEXT,    p_asof DATE, p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (… the same columns as as_of_quarterly …)
+```
+
+The newest quarter per concept from `as_of_quarterly()`: one row per flow concept with its quarter, trailing twelve months and the three growth rates. The ticker form resolves the ticker as of the same date through `sec_reference.cik_at_strict()` and raises if it cannot. `quarterly(p_cik)` and `trailing(p_cik)` are the same two functions as of today, which is the latest restated vintage of everything filed; they are for looking at a company, not for a backtest.
+
+```sql
+SELECT * FROM sec_gold.as_of_trailing('AAPL', DATE '2024-08-15');
+SELECT * FROM sec_gold.trailing(320193);
 ```
 
 ### `peer_stats_asof()`
@@ -642,6 +690,7 @@ Every mapping row carries `source` and `source_note`. Filing-sourced and vendor-
 | `056_share_class_shares.sql` | `share_class_shares`, `share_classes_at()` |
 | `060_canonical_function.sql` | `resolve_direct()`, `get_canonical()`, `get_canonical_by_ticker()` |
 | `065_asof_functions.sql` | the `as_of_*` functions, including both `as_of_snapshot` overloads and `as_of_canonical_at()` |
+| `067_trailing.sql` | `as_of_quarterly()`, `as_of_trailing()` (CIK and ticker forms), `quarterly()`, `trailing()`: quarterly flows and trailing twelve months, computed on demand |
 | `070_fiscal_year_views.sql` | `latest_annual()`, `latest_annual_by_ticker()`, `company_snapshot()` |
 | `080_peer_stats.sql` | `peer_stats` (resolves derived, ratio and growth concepts too) |
 | `085_peer_stats_asof.sql` | `peer_stats_asof()` |

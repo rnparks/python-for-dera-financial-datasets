@@ -8,7 +8,7 @@ A bronze/silver/gold medallion pipeline in Postgres. Python is responsible for d
 |---|---|---|---|
 | Bronze | `sec_raw` | `sub_raw`, `tag_raw`, `num_raw`, `pre_raw` — all `TEXT`, no constraints | `dera_pipeline.loader` via `COPY FROM STDIN` |
 | Silver | `sec_silver` | `sub_silver`, `tag_silver`, `num_silver`, `pre_silver` — typed, deduplicated and **bitemporal** (`pre_silver` is the statements' layout: every line with the label the filer printed); `financials(mode)` function | `sql/02_silver/*.sql` |
-| Gold | `sec_gold` | `fact_asof` (every vintage), `tradable_financials(_pit)`, `canonical_concepts` + `concept_tag_map` + `concept_formula` + `concept_ratio`, `peer_stats`, `share_class_shares`, the `as_of_*` accessor family and `peer_stats_asof()` | `sql/03_gold/*.sql` |
+| Gold | `sec_gold` | `fact_asof` (every vintage), `tradable_financials(_pit)`, `canonical_concepts` + `concept_tag_map` + `concept_formula` + `concept_ratio`, `peer_stats`, `share_class_shares`, the `as_of_*` accessor family, `peer_stats_asof()` and the quarterly/trailing functions (`as_of_quarterly()`, `as_of_trailing()`), all computed on demand | `sql/03_gold/*.sql` |
 | Spine | `sec_reference` | `company`, `company_ticker`, `security`, `listing`, `eligibility`, `delisting_event`, `trading_calendar`, `share_class` | `sql/00_reference`, `05_spine`, `06_security` + `dera_pipeline.{reference,filings}` |
 
 `sec_reference` sits deliberately **outside** the bronze→silver→gold chain.

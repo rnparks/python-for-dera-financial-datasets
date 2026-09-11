@@ -1346,3 +1346,50 @@ FROM (
            (SELECT COUNT(*) FROM sec_gold.debt_face) AS faces,
            (SELECT COUNT(*) FROM sec_gold.debt_face WHERE zero_by_face) AS zero_faces
 ) t;
+
+\echo '=== 64. Quarterly flows and trailing twelve months on demand: a filed quarter, a derived fourth quarter, the trailing sum, the knowledge date ==='
+-- as_of_quarterly / as_of_trailing (067) store nothing. Apple, as of
+-- 2024-08-15 (its Q3 FY2024 10-Q became actionable 2024-08-02): revenue
+-- for the quarter to 2024-06-30 is the filed three-month figure 85.777B,
+-- the quarter before 90.753B, trailing twelve months 383.285 + 296.105 -
+-- 293.787 = 385.603B (annual_plus_ytd); operating cash flow, which the
+-- 10-Q carries year-to-date only, is 91.443 - 62.585 = 28.858B
+-- (ytd_difference); diluted EPS 1.40 against 1.53. As of 2024-11-15 the
+-- fourth quarter is the year less nine months, 391.035 - 296.105 =
+-- 94.930B, and the trailing figure is the annual one. As of 2024-07-15
+-- the newest quarter is still the one to 2024-03-31. Walmart's quarter to
+-- 2025-01-31 is its fiscal fourth. JPMorgan's trailing operating cash
+-- flow grew from a negative base, so its growth is NULL, never a number.
+SELECT CASE WHEN aapl_q3_rev = 85777 AND aapl_q3_src = 'reported' AND aapl_q2_rev = 90753
+             AND aapl_ttm_rev = 385603 AND aapl_ttm_src = 'annual_plus_ytd'
+             AND aapl_q3_ocf = 28858 AND aapl_ocf_src = 'ytd_difference'
+             AND aapl_eps = 1.40 AND aapl_eps_prior = 1.53
+             AND aapl_q4_rev = 94930 AND aapl_q4_src = 'ytd_difference' AND aapl_fy_ttm = 391035 AND aapl_fy_src = 'annual'
+             AND aapl_july_qe = DATE '2024-03-31' AND aapl_q3_tf = DATE '2024-08-02'
+             AND wmt_fq = 4 AND jpm_ocf_growth IS NULL AND jpm_ocf_prior < 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       aapl_q3_rev AS apple_q3_fy2024_revenue_m, aapl_q3_src, aapl_q2_rev AS apple_q2_revenue_m, aapl_ttm_rev AS apple_ttm_revenue_m, aapl_ttm_src,
+       aapl_q3_ocf AS apple_q3_ocf_m, aapl_ocf_src, aapl_eps, aapl_eps_prior,
+       aapl_q4_rev AS apple_q4_revenue_m, aapl_q4_src, aapl_fy_ttm AS apple_ttm_at_fye_m, aapl_fy_src,
+       aapl_july_qe AS apple_newest_quarter_on_2024_07_15, aapl_q3_tf AS apple_q3_tradable_from,
+       wmt_fq AS walmart_fiscal_quarter_2025_01_31, jpm_ocf_prior AS jpm_prior_ttm_ocf, jpm_ocf_growth
+FROM (
+    SELECT (SELECT ROUND(q_value/1e6) FROM sec_gold.as_of_trailing(320193, DATE '2024-08-15') WHERE concept = 'revenue') AS aapl_q3_rev,
+           (SELECT q_source FROM sec_gold.as_of_trailing(320193, DATE '2024-08-15') WHERE concept = 'revenue') AS aapl_q3_src,
+           (SELECT ROUND(q_prior_value/1e6) FROM sec_gold.as_of_trailing(320193, DATE '2024-08-15') WHERE concept = 'revenue') AS aapl_q2_rev,
+           (SELECT ROUND(ttm_value/1e6) FROM sec_gold.as_of_trailing(320193, DATE '2024-08-15') WHERE concept = 'revenue') AS aapl_ttm_rev,
+           (SELECT ttm_source FROM sec_gold.as_of_trailing(320193, DATE '2024-08-15') WHERE concept = 'revenue') AS aapl_ttm_src,
+           (SELECT tradable_from FROM sec_gold.as_of_trailing(320193, DATE '2024-08-15') WHERE concept = 'revenue') AS aapl_q3_tf,
+           (SELECT ROUND(q_value/1e6) FROM sec_gold.as_of_trailing(320193, DATE '2024-08-15') WHERE concept = 'operating_cash_flow') AS aapl_q3_ocf,
+           (SELECT q_source FROM sec_gold.as_of_trailing(320193, DATE '2024-08-15') WHERE concept = 'operating_cash_flow') AS aapl_ocf_src,
+           (SELECT ROUND(q_value, 2) FROM sec_gold.as_of_trailing(320193, DATE '2024-08-15') WHERE concept = 'eps_diluted') AS aapl_eps,
+           (SELECT ROUND(q_prior_value, 2) FROM sec_gold.as_of_trailing(320193, DATE '2024-08-15') WHERE concept = 'eps_diluted') AS aapl_eps_prior,
+           (SELECT ROUND(q_value/1e6) FROM sec_gold.as_of_trailing(320193, DATE '2024-11-15') WHERE concept = 'revenue') AS aapl_q4_rev,
+           (SELECT q_source FROM sec_gold.as_of_trailing(320193, DATE '2024-11-15') WHERE concept = 'revenue') AS aapl_q4_src,
+           (SELECT ROUND(ttm_value/1e6) FROM sec_gold.as_of_trailing(320193, DATE '2024-11-15') WHERE concept = 'revenue') AS aapl_fy_ttm,
+           (SELECT ttm_source FROM sec_gold.as_of_trailing(320193, DATE '2024-11-15') WHERE concept = 'revenue') AS aapl_fy_src,
+           (SELECT quarter_end FROM sec_gold.as_of_trailing(320193, DATE '2024-07-15') WHERE concept = 'revenue') AS aapl_july_qe,
+           (SELECT fiscal_quarter FROM sec_gold.as_of_quarterly(104169, DATE '2025-09-01') WHERE concept = 'revenue' AND quarter_end = DATE '2025-01-31') AS wmt_fq,
+           (SELECT ROUND(ttm_prior_value/1e6) FROM sec_gold.as_of_trailing(19617, DATE '2025-09-01') WHERE concept = 'operating_cash_flow') AS jpm_ocf_prior,
+           (SELECT ttm_growth FROM sec_gold.as_of_trailing(19617, DATE '2025-09-01') WHERE concept = 'operating_cash_flow') AS jpm_ocf_growth
+) t;

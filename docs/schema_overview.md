@@ -200,7 +200,11 @@ full reference including every function signature.
 Plus roughly twenty functions — `get_canonical()`, `latest_annual()`,
 `company_snapshot()`, the `as_of_*` accessors (with `as_of_snapshot` keyed by
 CIK or by ticker), `peer_stats_asof()` (the peer cross-section as it was
-knowable on a date, computed on demand), `shares_outstanding_at()`,
+knowable on a date, computed on demand), `as_of_quarterly()` and
+`as_of_trailing()` (every fiscal quarter of every flow concept with its
+trailing twelve months and quarter-over-quarter, year-over-year and
+trailing growth, as knowable on a date; `quarterly()` and `trailing()` as of
+today; nothing stored), `shares_outstanding_at()`,
 `share_classes_at()`. All documented in `docs/gold_tables.md`.
 
 ---

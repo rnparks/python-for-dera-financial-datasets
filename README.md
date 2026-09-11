@@ -156,6 +156,12 @@ SELECT * FROM sec_gold.as_of_snapshot('AAPL', DATE '2015-06-30');
 -- than returning fifteen empty rows. Key on the CIK there.
 SELECT * FROM sec_gold.as_of_snapshot(1326801, DATE '2015-06-30');
 
+-- Quarterly flows and trailing twelve months, computed on demand from the
+-- same vintages: Apple's quarter to 2024-06-30 as it was knowable on
+-- 2024-08-15, with quarter-over-quarter, year-over-year and trailing growth.
+SELECT concept, quarter_end, q_value, qoq_growth, yoy_growth, ttm_value, ttm_growth
+FROM sec_gold.as_of_trailing('AAPL', DATE '2024-08-15');
+
 -- Who was actually investable then, delisted companies included
 SELECT * FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30');
 
