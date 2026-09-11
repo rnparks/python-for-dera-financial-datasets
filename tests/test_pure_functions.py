@@ -225,6 +225,61 @@ def test_empty_calendar_rejected(tmp_path):
 
 
 # ---------------------------------------------------------------------
+# reference: page tickers are cleaned, and an override row must be auditable
+# ---------------------------------------------------------------------
+
+def test_clean_ticker_drops_page_punctuation_and_keeps_class_dots():
+    assert reference._clean_ticker(" iiin} ") == "IIIN"     # the 2018-08-30 S&P 600 page
+    assert reference._clean_ticker("BRK.B") == "BRK.B"      # cik_at() maps the dot itself
+    assert reference._clean_ticker("BF-B") == "BF-B"
+    assert reference._clean_ticker(None) == ""
+
+
+def _write_overrides(path: Path, rows: list[list[str]]) -> Path:
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["index_name", "ticker", "first_seen", "cik", "source_note"])
+        w.writerows(rows)
+    return path
+
+
+def test_read_index_cik_overrides_round_trip(tmp_path):
+    path = _write_overrides(tmp_path / "o.csv", [
+        ["sp400", " jwa ", "2011-01-27", "107140", "John Wiley class A; see the JW-A run"],
+        ["SP600", "QSII", "2018-08-30", "708818", "Quality Systems, renamed NXGN"],
+    ])
+    rows = reference.read_index_cik_overrides(path)
+    assert rows == [
+        ("SP400", "JWA", dt.date(2011, 1, 27), 107140, "John Wiley class A; see the JW-A run"),
+        ("SP600", "QSII", dt.date(2018, 8, 30), 708818, "Quality Systems, renamed NXGN"),
+    ]
+
+
+@pytest.mark.parametrize("row, message", [
+    (["SP400", "JWA", "2011-01-27", "107140", ""], "source_note is empty"),
+    (["SP400", "JWA", "2011-01-27", "107140", "   "], "source_note is empty"),
+    (["SP1000", "JWA", "2011-01-27", "107140", "cited"], "index_name must be"),
+    (["SP400", "", "2011-01-27", "107140", "cited"], "ticker is empty"),
+    (["SP400", "JWA", "27/01/2011", "107140", "cited"], "line 2"),
+    (["SP400", "JWA", "2011-01-27", "0", "cited"], "cik must be positive"),
+    (["SP400", "JWA", "2011-01-27", "abc", "cited"], "line 2"),
+])
+def test_read_index_cik_overrides_rejects_an_unauditable_row(tmp_path, row, message):
+    path = _write_overrides(tmp_path / "o.csv", [row])
+    with pytest.raises(ValueError, match=message):
+        reference.read_index_cik_overrides(path)
+
+
+def test_read_index_cik_overrides_rejects_a_duplicate_run(tmp_path):
+    path = _write_overrides(tmp_path / "o.csv", [
+        ["SP400", "JWA", "2011-01-27", "107140", "cited"],
+        ["SP400", "jwa", "2011-01-27", "107140", "cited twice"],
+    ])
+    with pytest.raises(ValueError, match="duplicate run"):
+        reference.read_index_cik_overrides(path)
+
+
+# ---------------------------------------------------------------------
 # fetch_ticker_history: normalisation, file handling, no fabricated rows
 # ---------------------------------------------------------------------
 

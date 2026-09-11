@@ -22,13 +22,14 @@ one document. A confidently wrong doc is worse than no doc.
 | A SQL file's location or purpose | its own header, and `docs/gold_tables.md`'s source-files table |
 | The crosswalk, index history, spine or security derivation | `docs/data_sources.md` (capture quality, rules), then `dera rebuild-reference` |
 | A share-class mapping | `data/reference/share_class_map.csv` with a cited source_note; prefer `tools/fetch_cover_page_classes.py` |
+| An index constituent no rule resolves | `data/reference/index_cik_overrides.csv` with a cited source_note, then `dera rebuild-reference`; a redundant row fails check 61 |
 | A pure Python function | `tests/test_pure_functions.py` |
 
 ### Before committing
 
 ```bash
 uv run dera verify-docs    # object names (prose and SQL), paths, CLI commands, cross-links
-uv run dera verify         # 60 data-correctness checks
+uv run dera verify         # 61 data-correctness checks
 uv run pytest              # unit tests, no database
 uv run ruff check .        # what CI runs
 ```

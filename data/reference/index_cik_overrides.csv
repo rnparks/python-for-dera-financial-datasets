@@ -1,0 +1,9 @@
+index_name,ticker,first_seen,cik,source_note
+SP400,JWA,2011-01-27,107140,"John Wiley & Sons class A. EDGAR's conformed name was WILEY JOHN & SONS INC until 2019-07-25, so no name matches; the same company's JW-A run from 2015-05-21 resolves by name to 107140."
+SP400,JWA,2013-11-20,107140,"John Wiley & Sons class A, the same run after a gap in captures; see the 2011-01-27 row."
+SP400,WFSL,2011-01-27,936528,"Washington Federal Inc (EDGAR name WASHINGTON FEDERAL INC 1996-2023; the page abbreviates to 'Fed'). Ticker WFSL became WAFD in 2013 and the WAFD run resolves to 936528 by crosswalk."
+SP400,ESI,2011-01-27,922475,"ITT Educational Services Inc (the page abbreviates to 'Svcs'); one registrant, filed 1995-2016."
+SP400,NE,2016-12-31,1458891,"Noble Corp plc, the listed parent (Noble Corp / Switzerland until 2013). NOBLE CORP 1169055 is the Cayman subsidiary that also filed and bears the same normalised name; the page-resolved NE runs (S&P 500 2011-2015, S&P 600 2018-2019) are 1458891."
+SP400,AINV,2011-01-27,1278752,"Apollo Investment Corp, the BDC that held ticker AINV (EDGAR name APOLLO INVESTMENT CORP 2004-2022). The page's early captures mislabelled the row 'Apollo Group Inc-Cl A' (929887, ticker APOL, resolved separately by crosswalk) and later corrected it to Apollo Investment Corp."
+SP500,DYN,2008-09-30,1379895,"Dynegy Inc., the listed parent (EDGAR 2007-); Dynegy Holdings Inc 1105055 is its subsidiary and both normalise to 'dynegy'. The S&P 400 DYN run from 2011-01-27 resolves to 1379895 by crosswalk."
+SP600,QSII,2018-08-30,708818,"Quality Systems Inc, renamed NextGen Healthcare (ticker NXGN) in September 2018, so the ticker was never seen again. SEC's first crosswalk capture (2018-12-26) lists QSII for 708818 and the S&P 600 NXGN run resolves to 708818 from the page."

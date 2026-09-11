@@ -445,8 +445,9 @@ def cmd_rebuild_reference(args: argparse.Namespace) -> int:
 
     Four stages, each its own transaction:
 
-    0. reload the reference CSVs: crosswalk observations, S&P 500
-       history, share-class map, trading calendar, today's S&P 1500. The
+    0. reload the reference CSVs: crosswalk observations, the three
+       index histories, the index CIK overrides, share-class map,
+       trading calendar, today's S&P 1500. The
        fetch tools write files, never the database, and this stage used
        to be missing -- a freshly fetched crosswalk was "rebuilt" from
        the previous observations;
@@ -514,7 +515,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     `tools/verify_pit.sql` had 15 passing checks at the time and was
     invoked from nothing: no test runner, no CI, no CLI path. It now
-    holds 48. A correctness suite
+    holds 61. A correctness suite
     nobody runs is documentation, not a guard. This gives it a command.
 
     It shells out to psql rather than going through psycopg because the

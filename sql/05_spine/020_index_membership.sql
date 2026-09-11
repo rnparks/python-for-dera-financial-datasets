@@ -6,16 +6,18 @@
 --   1. index_capture       -- every capture with its size and a partial
 --                             flag (under 85% of the largest capture
 --                             within six either side).
---   2. CIK resolution      -- the page carries a CIK only from 2014.
---                             Earlier rows are resolved by CONTINUITY:
---                             a ticker present in every capture from the
---                             row's date up to the first capture where
---                             the page gave it a CIK is the same company,
---                             because a recycled ticker shows a removal
---                             and a later re-addition, not an unbroken
---                             run. Rows that cannot be resolved that way
---                             are kept in index_membership_unresolved,
---                             counted, and never guessed.
+--   2. CIK resolution      -- the page carries a CIK only from 2014
+--                             (S&P 500) or never (S&P 400). A run --
+--                             a ticker present in consecutive captures
+--                             -- is one company, resolved in order by
+--                             the page, SEC's dated crosswalk, a name
+--                             the company bore at the time, the cited
+--                             allowlist (index_cik_override) and, last,
+--                             the same ticker's neighbouring run when
+--                             only partial captures separate them.
+--                             Runs no rule resolves are kept in
+--                             index_membership_unresolved, counted, and
+--                             never guessed.
 --   3. index_membership    -- intervals per (cik, index, sector,
 --                             sub-industry), islands bridged across a
 --                             silence when the pair is seen again within
@@ -113,27 +115,80 @@ FROM (
 ) s;
 
 -- ---------------------------------------------------------------
--- 2. CIK resolution: the page, then continuity, then the name.
+-- 2. CIK resolution: the page, then continuity, then the name, then
+--    the allowlist, then the neighbour across a partial capture.
 -- ---------------------------------------------------------------
--- A run of presence that ended before the page carried CIKs (all
--- before April 2014) gets a third chance by NAME: the constituent's
--- name as the page wrote it, normalised, must equal exactly one
--- company's name in the spine -- any name the company has ever filed
--- under -- and that company must have been filing around the dates the
--- ticker was listed. One match resolves; zero or several stay
--- unresolved and are listed, never guessed. Measured 2026-09-04: 110 of
--- 157 such runs resolve this way; most of the rest left the index
--- before DERA coverage begins and have no facts to join to anyway.
+-- A run of presence that ended before the page carried CIKs (before
+-- April 2014 on the S&P 500; always on the S&P 400) gets a third
+-- chance by NAME. Every name the page wrote for the run, normalised,
+-- is looked up among the names the spine has known -- EDGAR's dated
+-- name history, the current name, and the name on each DERA filing --
+-- and the run resolves when the names agree on exactly one company
+-- that BORE such a name when the run began (200 days' slack either
+-- side; EDGAR's former-name dates are approximate) or, when no company
+-- did, that bore it at some point during the run (EDGAR's conformed
+-- names lag the world: John Wiley & Sons was "WILEY JOHN & SONS" until
+-- 2019). Zero candidates or several stay unresolved and are listed,
+-- never guessed. The dating is what decides the same-name pairs:
+-- "Kraft Foods Inc" in 2008 is Mondelez (1103982), not the 2012
+-- spin-off that took the name; "TCF Financial" in 2017 is the
+-- Minnesota bank (814184), not Chemical Financial, which took the name
+-- in August 2019; "Viacom Inc." in 2009 is 1339947, not CBS, which had
+-- been Viacom until 2006. Matching on the run's LAST name alone keyed
+-- a mangled S&P 400 row -- "AMB", named AMB Property Corp for twenty
+-- captures and AMC Networks on the last -- to AMC Networks for the
+-- whole run; the names now have to agree.
+--
+-- The filing window reads EDGAR, not DERA. company.first_filed is the
+-- first XBRL filing, mid-2010 for a phase-two filer, and it excluded
+-- Brown-Forman, Unisys and MGIC from their own 2008 runs. A candidate
+-- must have started filing by the run's end and not stopped before its
+-- start, 200 days' slack (the bridging horizon of section 3), so a
+-- page that kept listing Versum Materials, Sotheby's and International
+-- Speedway a year after they were gone creates nothing. DERA's dates
+-- stand in where the EDGAR archive has not been loaded yet.
+--
+-- Measured 2026-09-10 against the old rule: 23 runs newly resolved
+-- (Sunoco, Kraft, Viacom, Qwest, Washington Post, Brown-Forman, New
+-- York Community Bancorp's eleven S&P 400 years, ...), 7 resolutions
+-- dropped by the name rule alone -- a page error (AMB), ghost rows for
+-- companies that had left (Sotheby's, International Speedway, Federated,
+-- Hospitality Properties in the late-2020 S&P 400 captures) and two
+-- ambiguous pairs (Dynegy, now on the allowlist; Windstream, one
+-- capture) -- and no other run changed.
+--
+-- Two narrow sources follow the name. The ALLOWLIST,
+-- sec_reference.index_cik_override (data/reference/index_cik_overrides.csv,
+-- sql/00_reference/027_index_cik_override.sql): a run named by (index,
+-- ticker, first sighting) with a cited CIK, applied only where nothing
+-- else resolved it; check 61 fails on a row that has become redundant.
+-- Then the NEIGHBOUR: a run separated from another run of the same
+-- ticker only by partial captures takes that run's CIK when the runs
+-- either side agree. A partial capture's silence closes nothing in
+-- section 3; it should not split a ticker's run here either. The
+-- first S&P 600 capture (2018-08-30, no names at all) is followed by
+-- two partial ones, and 81 members seen there and again on 2018-11-20
+-- owed their first three months of history to this.
 CREATE OR REPLACE FUNCTION sec_reference.norm_company_name(t TEXT) RETURNS TEXT
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT regexp_replace(
              regexp_replace(
-               regexp_replace(lower(coalesce(t, '')),
-                 -- state-of-incorporation and edition suffixes the spine
-                 -- uses: "CLOROX CO /DE/", "Transocean Inc. (New)"
-                 '/[a-z]{2,3}/|\(new\)|\mnew\M$', ' ', 'g'),
-               -- share-class tails and corporate-form words on either side
-               '\m(cl\.? ?[ab]|class ?[ab]|the|inc|incorporated|corp|corporation|co|cos|company|companies|ltd|limited|plc|holdings?|hldgs?|group|grp|llc|lp|l\.p|sa|nv|ag|international|intl|int''l)\M|-[ab]$',
+               regexp_replace(
+                 regexp_replace(
+                   regexp_replace(lower(coalesce(t, '')),
+                     -- state-of-incorporation and edition tags: "CLOROX CO
+                     -- /DE/", "VALUECLICK INC/CA", "Transocean Inc. (New)",
+                     -- "TCF Financial Corp (MN)"
+                     '/[a-z]{2,3}(/|$)|\(new\)|\mnew\M$|\([a-z]{2,3}\)', ' ', 'g'),
+                   -- punctuation to spaces, so "Inc-A" and "Inc. 'A'" read
+                   -- as words
+                   '[^a-z0-9]+', ' ', 'g'),
+                 -- a corporate-form word followed by a bare share-class
+                 -- letter or a state code at the end: "Scientific Games
+                 -- Corp A", "Washington Post Co B", "RENT A CENTER INC DE"
+                 '\m(inc|incorporated|corp|corporation|co|cos|company|companies|ltd|limited|plc|llc|lp)\s+([ab]|de|md|nv|ca|ny|nj|pa|tx|va|ma|oh|mn|wi|fl|ga|wa|il|mi|ct|mo|ut|az|nc|tn|in|or)\s*$', ' ', 'g'),
+               -- corporate-form words and share-class tails anywhere
+               '\m(cl ?[ab]|class ?[ab]|the|inc|incorporated|corp|corporation|co|cos|company|companies|ltd|limited|plc|holdings?|hldgs?|group|grp|llc|lp|l p|sa|nv|ag|international|intl|int l|int)\M',
                ' ', 'g'),
              '[^a-z0-9]', '', 'g')
 $$;
@@ -187,7 +242,8 @@ runs AS (
 run_cik AS (
     SELECT index_name, ticker, run_key,
            MIN(observed_on) AS first_seen, MAX(observed_on) AS last_seen,
-           (ARRAY_AGG(name ORDER BY sn DESC))[1] AS last_name
+           MIN(sn) AS first_sn, MAX(sn) AS last_sn,
+           ARRAY_AGG(DISTINCT name) FILTER (WHERE name IS NOT NULL AND name <> '') AS names
     FROM runs GROUP BY index_name, ticker, run_key
 ),
 -- The CIK for a run. The page's CIK column is evidence, not authority:
@@ -228,35 +284,125 @@ run_resolved AS (
     FROM run_xw x
     LEFT JOIN run_page rp USING (index_name, ticker, run_key)
 ),
-spine_names AS (
-    SELECT cik, sec_reference.norm_company_name(name) AS n FROM sec_reference.company_name
-    UNION
-    SELECT cik, sec_reference.norm_company_name(name_latest) FROM sec_reference.company
-    UNION
-    SELECT DISTINCT cik, sec_reference.norm_company_name(name) FROM sec_silver.sub_silver
+-- When each company was filing, from EDGAR (every form since 1993, one
+-- FIRST_EDGAR_FILING row per CIK), not from DERA's XBRL start.
+edgar_span AS (
+    SELECT cik, MIN(event_date) AS first_edgar, MAX(event_date) AS last_edgar
+    FROM sec_reference.security_event_raw
+    GROUP BY cik
 ),
-name_cik AS (
-    SELECT rc.index_name, rc.ticker, rc.run_key,
-           CASE WHEN COUNT(DISTINCT sn.cik) = 1 THEN MIN(sn.cik) END AS name_cik
+former_end AS (
+    SELECT cik, MAX(valid_to) AS last_former_to
+    FROM sec_reference.company_name
+    WHERE valid_from > DATE '1900-01-01'
+    GROUP BY cik
+),
+-- Every name the spine has known, normalised and dated: EDGAR's former
+-- names carry their own intervals; the current name starts where the
+-- last former one ended (or at the first filing when there is none);
+-- a DERA filing's name runs from its first to its last use.
+spine_names AS (
+    SELECT cn.cik, sec_reference.norm_company_name(cn.name) AS n,
+           CASE WHEN cn.valid_from = DATE '1900-01-01'
+                THEN COALESCE(fe.last_former_to, es.first_edgar, co.first_filed, DATE '1900-01-01')
+                ELSE cn.valid_from END AS valid_from,
+           cn.valid_to
+    FROM sec_reference.company_name cn
+    LEFT JOIN former_end fe USING (cik)
+    LEFT JOIN edgar_span es USING (cik)
+    LEFT JOIN sec_reference.company co USING (cik)
+    UNION
+    SELECT co.cik, sec_reference.norm_company_name(co.name_latest),
+           COALESCE(fe.last_former_to, es.first_edgar, co.first_filed, DATE '1900-01-01'), NULL
+    FROM sec_reference.company co
+    LEFT JOIN former_end fe USING (cik)
+    LEFT JOIN edgar_span es USING (cik)
+    UNION
+    SELECT cik, sec_reference.norm_company_name(name), MIN(filed_date), MAX(filed_date)
+    FROM sec_silver.sub_silver
+    WHERE cik IS NOT NULL
+    GROUP BY cik, name
+),
+-- The companies each of the run's names could mean: bearing the name
+-- at some point during the run and filing around it, with a flag for
+-- bearing it when the run began.
+name_cand AS (
+    SELECT rc.index_name, rc.ticker, rc.run_key, sn.cik,
+           BOOL_OR(sn.valid_from - 200 <= rc.first_seen
+                   AND (sn.valid_to IS NULL OR sn.valid_to + 200 >= rc.first_seen)) AS at_start
     FROM run_cik rc
-    JOIN spine_names sn ON sn.n = sec_reference.norm_company_name(rc.last_name) AND sn.n <> ''
+    CROSS JOIN LATERAL unnest(rc.names) AS nm(name)
+    JOIN spine_names sn
+      ON sn.n = sec_reference.norm_company_name(nm.name) AND sn.n <> ''
+     AND sn.valid_from - 200 <= rc.last_seen
+     AND (sn.valid_to IS NULL OR sn.valid_to + 200 >= rc.first_seen)
     JOIN sec_reference.company co ON co.cik = sn.cik
+    LEFT JOIN edgar_span es ON es.cik = sn.cik
     WHERE NOT EXISTS (SELECT 1 FROM run_resolved rr
                        WHERE rr.index_name = rc.index_name AND rr.ticker = rc.ticker
                          AND rr.run_key = rc.run_key AND rr.cik IS NOT NULL)
-      AND co.first_filed <= rc.last_seen + 400
-      AND co.last_filed  >= rc.first_seen - 400
-    GROUP BY rc.index_name, rc.ticker, rc.run_key
+      AND COALESCE(es.first_edgar, co.first_filed) <= rc.last_seen + 200
+      AND COALESCE(es.last_edgar,  co.last_filed)  >= rc.first_seen - 200
+    GROUP BY rc.index_name, rc.ticker, rc.run_key, sn.cik
+),
+name_cik AS (
+    SELECT index_name, ticker, run_key,
+           CASE WHEN COUNT(*) FILTER (WHERE at_start) = 1 THEN MIN(cik) FILTER (WHERE at_start)
+                WHEN COUNT(*) FILTER (WHERE at_start) = 0 AND COUNT(*) = 1 THEN MIN(cik)
+           END AS name_cik
+    FROM name_cand
+    GROUP BY index_name, ticker, run_key
+),
+-- The allowlist, for the run it names, when the CIK has filed.
+override_cik AS (
+    SELECT rc.index_name, rc.ticker, rc.run_key, o.cik AS override_cik
+    FROM run_cik rc
+    JOIN sec_reference.index_cik_override o
+      ON o.index_name = rc.index_name AND o.ticker = rc.ticker AND o.first_seen = rc.first_seen
+    JOIN sec_reference.company co ON co.cik = o.cik
+),
+resolved AS (
+    SELECT rc.index_name, rc.ticker, rc.run_key, rc.first_sn, rc.last_sn,
+           COALESCE(rr.cik, nc.name_cik, oc.override_cik) AS cik,
+           CASE WHEN rr.cik IS NOT NULL THEN rr.cik_source
+                WHEN nc.name_cik IS NOT NULL THEN 'name'
+                WHEN oc.override_cik IS NOT NULL THEN 'override' END AS cik_source
+    FROM run_cik rc
+    LEFT JOIN run_resolved rr USING (index_name, ticker, run_key)
+    LEFT JOIN name_cik nc USING (index_name, ticker, run_key)
+    LEFT JOIN override_cik oc USING (index_name, ticker, run_key)
+),
+-- The neighbour: the adjacent run of the same ticker on either side,
+-- if only partial captures separate them; both must agree.
+bridged AS (
+    SELECT u.index_name, u.ticker, u.run_key,
+           CASE WHEN p.cik IS NOT NULL AND nx.cik IS NOT NULL AND p.cik <> nx.cik THEN NULL
+                ELSE COALESCE(p.cik, nx.cik) END AS cik
+    FROM resolved u
+    LEFT JOIN LATERAL (
+        SELECT p.cik FROM resolved p
+        WHERE p.index_name = u.index_name AND p.ticker = u.ticker AND p.last_sn < u.first_sn
+          AND NOT EXISTS (SELECT 1 FROM sec_reference.index_capture g
+                          WHERE g.index_name = u.index_name
+                            AND g.sn > p.last_sn AND g.sn < u.first_sn AND NOT g.is_partial)
+        ORDER BY p.last_sn DESC LIMIT 1) p ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT nx.cik FROM resolved nx
+        WHERE nx.index_name = u.index_name AND nx.ticker = u.ticker AND nx.first_sn > u.last_sn
+          AND NOT EXISTS (SELECT 1 FROM sec_reference.index_capture g
+                          WHERE g.index_name = u.index_name
+                            AND g.sn > u.last_sn AND g.sn < nx.first_sn AND NOT g.is_partial)
+        ORDER BY nx.first_sn LIMIT 1) nx ON TRUE
+    WHERE u.cik IS NULL
 )
 SELECT r.index_name, r.observed_on, r.revid, r.sn, r.ticker, r.name,
-       COALESCE(rr.cik, nc.name_cik) AS cik,
-       CASE WHEN rr.cik IS NOT NULL THEN rr.cik_source
-            WHEN nc.name_cik IS NOT NULL THEN 'name' END AS cik_source,
+       COALESCE(rs.cik, b.cik) AS cik,
+       CASE WHEN rs.cik IS NOT NULL THEN rs.cik_source
+            WHEN b.cik IS NOT NULL THEN 'bridged' END AS cik_source,
        r.gics_sector, r.gics_sub_industry, r.date_added
 FROM runs r
-JOIN run_cik rc USING (index_name, ticker, run_key)
-LEFT JOIN run_resolved rr USING (index_name, ticker, run_key)
-LEFT JOIN name_cik nc USING (index_name, ticker, run_key);
+JOIN resolved rs USING (index_name, ticker, run_key)
+LEFT JOIN bridged b USING (index_name, ticker, run_key);
 
 INSERT INTO sec_reference.index_membership_unresolved
 SELECT index_name, ticker, MIN(name) AS name, MIN(observed_on) AS first_seen, MAX(observed_on) AS last_seen,
@@ -266,9 +412,11 @@ WHERE cik IS NULL
 GROUP BY index_name, ticker;
 
 COMMENT ON TABLE sec_reference.index_membership_unresolved IS
-    'Constituent tickers that never received a CIK on the page and whose '
-    'run of presence ended before the page carried CIKs. Not guessed. '
-    'These are members the historical universe is MISSING.';
+    'Constituent tickers no rule resolved to a CIK: not the page, the '
+    'crosswalk, a dated name, the allowlist or a neighbouring run. Not '
+    'guessed. What remains (2026-09-10) is companies that never filed XBRL '
+    'and so are not in the spine, page errors, and ghost rows for members '
+    'that had left; data_sources.md lists them.';
 
 -- ---------------------------------------------------------------
 -- 3. Membership intervals, GICS as of.
@@ -606,5 +754,5 @@ $$;
 
 COMMENT ON FUNCTION sec_reference.index_members(TEXT, DATE) IS
     'Constituents of an index on a date, with GICS as of that date. '
-    'p_asof has no default. For SP400 and SP600 this is today''s list '
-    'at every date until their history is replayed (source says so).';
+    'p_asof has no default. All three indexes are replayed history '
+    '(source = wikipedia_history on every row).';

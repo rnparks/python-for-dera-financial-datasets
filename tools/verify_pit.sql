@@ -1151,3 +1151,39 @@ FROM (
            (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2024-12-31') m
              WHERE EXISTS (SELECT 1 FROM sec_gold.peer_stats p WHERE p.cik = m.cik AND p.fiscal_year = 2024 AND p.concept = 'operating_cash_flow')) AS sp500_ocf
 ) t;
+
+\echo '=== 61. Constituent runs resolve by dated name, allowlist or neighbour; every override is cited, applied and still needed ==='
+-- The name path dates the match (Kraft Foods in 2008 is Mondelez, TCF
+-- Financial in 2017 the Minnesota bank, Viacom in 2009 not CBS) and reads
+-- the EDGAR filing span rather than DERA's XBRL start; the allowlist
+-- (index_cik_override) fills what it cannot; a run split from its
+-- neighbour only by partial captures takes the neighbour's CIK (the first
+-- S&P 600 capture). Every override row must name a filer and be the
+-- source of the run it names -- a row another rule now resolves is stale
+-- and must go. The AMB row of the S&P 400 page, AMB Property Corp for
+-- twenty captures and AMC Networks on the last, must not put AMC Networks
+-- in the index in 2012.
+SELECT CASE WHEN unknown_cik = 0 AND unapplied = 0 AND unresolved <= 40 AND bridged >= 75
+             AND nycb_2020 AND sunoco_2011 AND kraft_2010 AND tcf_2018 AND wiley_2012 AND NOT amc_2012
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       unknown_cik AS overrides_naming_a_non_filer, unapplied AS overrides_not_applied,
+       unresolved AS unresolved_tickers, bridged AS sp600_sightings_bridged,
+       nycb_2020, sunoco_2011, kraft_2010, tcf_2018, wiley_2012, amc_2012 AS amc_networks_in_sp400_2012
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_reference.index_cik_override o
+             WHERE NOT EXISTS (SELECT 1 FROM sec_reference.company c WHERE c.cik = o.cik)) AS unknown_cik,
+           (SELECT COUNT(*) FROM sec_reference.index_cik_override o
+             WHERE NOT EXISTS (SELECT 1 FROM sec_reference.index_observation_resolved r
+                               WHERE r.index_name = o.index_name AND r.ticker = o.ticker
+                                 AND r.observed_on = o.first_seen AND r.cik = o.cik
+                                 AND r.cik_source = 'override')) AS unapplied,
+           (SELECT COUNT(*) FROM sec_reference.index_membership_unresolved) AS unresolved,
+           (SELECT COUNT(*) FROM sec_reference.index_observation_resolved
+             WHERE index_name = 'SP600' AND cik_source = 'bridged') AS bridged,
+           EXISTS (SELECT 1 FROM sec_reference.index_members('SP400', DATE '2020-06-30') WHERE cik = 910073)  AS nycb_2020,
+           EXISTS (SELECT 1 FROM sec_reference.index_members('SP500', DATE '2011-06-30') WHERE cik = 95304)   AS sunoco_2011,
+           EXISTS (SELECT 1 FROM sec_reference.index_members('SP500', DATE '2010-06-30') WHERE cik = 1103982) AS kraft_2010,
+           EXISTS (SELECT 1 FROM sec_reference.index_members('SP400', DATE '2018-06-30') WHERE cik = 814184)  AS tcf_2018,
+           EXISTS (SELECT 1 FROM sec_reference.index_members('SP400', DATE '2012-06-30') WHERE cik = 107140)  AS wiley_2012,
+           EXISTS (SELECT 1 FROM sec_reference.index_members('SP400', DATE '2012-06-30') WHERE cik = 1514991) AS amc_2012
+) t;

@@ -167,7 +167,8 @@ reads before and after: a crosswalk change refreshes the two
 `tradable_financials` views, `share_class_shares` and `peer_stats` and leaves
 the 33 GB `fact_asof` alone (measured 2026-09-04: 2:13, 2:11, 0:22 and 0:23,
 about 6 minutes with the reload, spine and security stages); a membership
-change is the reverse; a mapping change touches one; nothing changed is 52
+change is the reverse (measured 2026-09-11: 25:31, of which `fact_asof` is
+18:37); a mapping change touches one; nothing changed is 52
 seconds. Until 2026-09-04 the spine was dropped with CASCADE, every gold
 matview went with it, and each crosswalk change cost a 32-minute gold rebuild.
 

@@ -13,11 +13,12 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import gzip
+import re
 from pathlib import Path
 
 import psycopg
 
-from . import config
+from . import config, db
 
 # A calendar that ends too soon is a silent failure, not a loud one:
 # `sub_silver` LEFT JOINs the calendar to resolve `tradable_from`, so a
@@ -205,12 +206,18 @@ def load_index_history(conn: psycopg.Connection, csv_path: Path,
     seen: set[tuple[str, str]] = set()
     with _open_text(csv_path) as f:
         for row in csv.DictReader(f):
-            ticker = (row.get("ticker") or "").strip().upper()
+            ticker = _clean_ticker(row.get("ticker"))
             day = row.get("observed_on") or ""
             if not ticker or not day or (day, ticker) in seen:
                 continue
             seen.add((day, ticker))
             cik = (row.get("cik") or "").strip()
+            # The fetch tool writes a blank cell as the string "nan"
+            # (the first S&P 600 capture has no name column at all); a
+            # missing name is NULL, not a name.
+            name = (row.get("name") or "").strip()
+            if name.lower() == "nan":
+                name = ""
             # The page's "date added" is free text and has carried
             # vandalism ("1978-21-31"); anything that is not a real date
             # is NULL, never an error.
@@ -220,7 +227,7 @@ def load_index_history(conn: psycopg.Connection, csv_path: Path,
                 added = None
             rows.append((
                 index_name, day, int(row["revid"]), ticker,
-                (row.get("name") or None),
+                name or None,
                 int(cik) if cik.isdigit() else None,
                 (row.get("gics_sector") or None),
                 (row.get("gics_sub_industry") or None),
@@ -239,6 +246,73 @@ def load_index_history(conn: psycopg.Connection, csv_path: Path,
         ) as cp:
             for r in rows:
                 cp.write_row(r)
+    return len(rows)
+
+
+def _clean_ticker(raw: str | None) -> str:
+    """A page ticker as a key: upper-case, whitespace gone, and any
+    character that is not part of a ticker dropped. The first S&P 600
+    capture wrote Insteel as "IIIN}", which no other capture and no
+    crosswalk row could ever match. Dots are kept: cik_at() maps them
+    to hyphens itself."""
+    return re.sub(r"[^A-Z0-9.\-]", "", (raw or "").strip().upper())
+
+
+INDEX_NAMES = ("SP500", "SP400", "SP600")
+
+
+def read_index_cik_overrides(csv_path: Path) -> list[tuple[str, str, dt.date, int, str]]:
+    """Parse data/reference/index_cik_overrides.csv, refusing a row that
+    could not be audited: every row needs a known index, a ticker, an ISO
+    first-sighting date, a positive CIK and a non-empty source_note, and
+    no two rows may name the same run. Pure; the loader below writes."""
+    rows: list[tuple[str, str, dt.date, int, str]] = []
+    keys: set[tuple[str, str, dt.date]] = set()
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        for n, r in enumerate(csv.DictReader(f), 2):
+            index_name = (r.get("index_name") or "").strip().upper()
+            ticker = _clean_ticker(r.get("ticker"))
+            note = (r.get("source_note") or "").strip()
+            try:
+                first_seen = dt.date.fromisoformat((r.get("first_seen") or "").strip())
+                cik = int((r.get("cik") or "").strip())
+            except ValueError as exc:
+                raise ValueError(f"{csv_path.name} line {n}: {exc}") from None
+            if index_name not in INDEX_NAMES:
+                raise ValueError(f"{csv_path.name} line {n}: index_name must be one of {INDEX_NAMES}")
+            if not ticker:
+                raise ValueError(f"{csv_path.name} line {n}: ticker is empty")
+            if cik <= 0:
+                raise ValueError(f"{csv_path.name} line {n}: cik must be positive")
+            if not note:
+                raise ValueError(f"{csv_path.name} line {n}: source_note is empty; an override "
+                                 "without its evidence is a guess")
+            key = (index_name, ticker, first_seen)
+            if key in keys:
+                raise ValueError(f"{csv_path.name} line {n}: duplicate run {key}")
+            keys.add(key)
+            rows.append((index_name, ticker, first_seen, cik, note))
+    return rows
+
+
+def load_index_cik_overrides(conn: psycopg.Connection, csv_path: Path | None) -> int:
+    """Load data/reference/index_cik_overrides.csv -> sec_reference.index_cik_override.
+
+    The table is declared in sql/00_reference/027_index_cik_override.sql,
+    run here first so a database built before it existed gains it on the
+    next `dera rebuild-reference`. With no file the table is left empty:
+    the membership derivation joins it and must find it.
+    """
+    db.run_sql_file(conn, config.SQL_DIR / "00_reference" / "027_index_cik_override.sql")
+    rows = read_index_cik_overrides(csv_path) if csv_path is not None else []
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE TABLE sec_reference.index_cik_override")
+        with cur.copy(
+            "COPY sec_reference.index_cik_override "
+            "(index_name, ticker, first_seen, cik, source_note) FROM STDIN"
+        ) as cp:
+            for row in rows:
+                cp.write_row(row)
     return len(rows)
 
 
@@ -362,6 +436,16 @@ def load_calendar_only(conn: psycopg.Connection) -> int:
             print(f"  {stem}.csv.gz absent — {label} membership will be "
                   "today's snapshot only. Build it with "
                   f"`uv run python tools/fetch_sp500_history.py --index {index_name} --batch 0`.")
+
+    # The allowlist for constituent runs the page, the crosswalk and the
+    # name cannot resolve (05_spine/020, section 2). The table is created
+    # even when the file is absent, because the derivation joins it.
+    ov = config.REFERENCE_DIR / "index_cik_overrides.csv"
+    k = load_index_cik_overrides(conn, ov if ov.exists() else None)
+    if ov.exists():
+        print(f"  index_cik_override → {k:>6,} hand-resolved constituent runs")
+    else:
+        print("  index_cik_overrides.csv absent — no hand-resolved constituent runs")
     return n
 
 

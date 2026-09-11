@@ -176,22 +176,67 @@ Because the page carried GICS sector on every revision and sub-industry from
 2016, the classification is **as of** for the first time.
 
 **CIK resolution, per run.** A ticker present in consecutive captures is one
-company for that whole run, and the run gets one CIK from three sources, in
+company for that whole run, and the run gets one CIK from five sources, in
 order, recorded in `cik_source`. The **page**'s CIK column — where it exists
 (S&P 500 from 2014, S&P 600 from 2018-10, S&P 400 never) and only if the value
 is a CIK that has ever filed, since the S&P 1000-era S&P 600 page carried most
 CIKs with an extra trailing zero (73320 for Southwestern Energy's 7332) and AAR
 Corp as 17500 in 13 captures. Then SEC's own dated **crosswalk**,
 `cik_at(ticker, last sighting)`, which outranks a page CIK it disagrees with and
-resolves the S&P 400 almost entirely (56,086 of its 61,201 sightings; Sonoco,
-First American, Rayonier, Crane, AGCO all failed a name match). Then the
-**name**, normalised, matching exactly one company the spine has ever known
-under any name and that was filing at the time. Measured 2026-09-04 across the
-three indexes: 150,851 sightings from the page, 59,100 by crosswalk, 3,539 by
-name; **138 tickers unresolved** (953 sightings: S&P 500 38, S&P 400 14, S&P 600
-86), listed in `sec_reference.index_membership_unresolved` and never guessed.
-The S&P 500's 2009-06-30 cross-section resolves 497 of its members; 822
-companies have been in it since 2008 against 503 on today's page.
+resolves the S&P 400 almost entirely (56,086 of its 61,201 sightings). Then the
+**name**: every name the page wrote for the run, normalised (corporate-form
+words, share-class tails, state tags and edition marks removed), must agree on
+exactly one company that bore such a name **when the run began** — EDGAR's
+dated former names, the current name from where the last former one ended, the
+name on each DERA filing, 200 days' slack — or, when no company did, at some
+point during the run (EDGAR's conformed names lag the world: John Wiley & Sons
+was "WILEY JOHN & SONS" until 2019); and that company must have been filing
+with EDGAR around the run (first filing by the run's end, last filing not
+before its start, 200 days' slack). The dating is what separates the same-name
+pairs: "Kraft Foods Inc" in 2008 is Mondelez (1103982), not the 2012 spin-off
+that took the name; "TCF Financial" in 2017 is the Minnesota bank (814184), not
+Chemical Financial, which took the name in August 2019; "Viacom Inc." in 2009
+is 1339947, not CBS, which had been Viacom until 2006. Until 2026-09-10 the
+match used the run's last name alone, any name the company ever had, and
+DERA's first XBRL filing as the window — mid-2010 for a phase-two filer, so
+Brown-Forman, Unisys and MGIC were excluded from their own 2008 runs — and the
+last-name rule keyed a mangled S&P 400 row (AMB Property Corp for twenty
+captures, AMC Networks on the last) to AMC Networks for the whole run. Then the
+**allowlist**, `sec_reference.index_cik_override` from
+`data/reference/index_cik_overrides.csv`: a run named by (index, ticker, first
+sighting) with a cited CIK, applied only where nothing else resolved it — 8
+rows: John Wiley's class A, whose EDGAR name order defeats the match;
+Washington Federal and ITT Educational, abbreviated on the page; Noble, Apollo
+Investment and Dynegy, where two registrants share a normalised name; Quality
+Systems, renamed before the crosswalk begins. Check 61 fails on a row that has
+become redundant or names a CIK that never filed. Last, the **neighbour**: a
+run separated from another run of the same ticker only by partial captures
+takes that run's CIK when the runs either side agree, because a partial
+capture's silence closes nothing — the first S&P 600 capture (2018-08-30, no
+names at all) is followed by two partial ones, and 81 members seen there and
+again on 2018-11-20 had lost their first three months to the split (the S&P
+600 of 2018-09-15: 507 members before, 589 after).
+
+Measured 2026-09-11 across the three indexes: 150,851 sightings from the
+page, 59,101 by crosswalk, 4,043 by name, 125 from the allowlist, 81 from the
+neighbour; **36 tickers unresolved** (242 sightings: S&P 500 25, S&P 400 8,
+S&P 600 3), listed in `sec_reference.index_membership_unresolved` and never
+guessed, and none of them a company with facts in DERA: 25 pre-2010 S&P 500
+names that never filed XBRL and so are not in the spine (Millipore, Sun
+Microsystems, Black & Decker, Centex, Wachovia, National City, Anheuser-Busch,
+Wrigley, ... and a one-capture when-issued Kraft Foods Group row); on the S&P
+400 the AMB row above, a sector heading parsed as a ticker, a one-capture
+Windstream row that two registrants could be, and five ghost rows — Sotheby's,
+International Speedway, Versum, Federated Investors and Hospitality Properties,
+listed in the October–December 2020 captures a year after they had left or
+been renamed; on the S&P 600 two typos and Opus Bank, which filed with the
+FDIC, not the SEC. Against 2026-09-04 (138 tickers, 953 sightings unresolved):
+23 runs resolved that the old rule could not — Sunoco's, Kraft's, Viacom's and
+Qwest's S&P 500 years, New York Community Bancorp's eleven in the S&P 400 —
+6 resolutions dropped — a page error, four ghost rows and a one-capture
+ambiguity — and no other run changed. The S&P 500's 2009-06-30 cross-section resolves 496 of its members
+(489 before); 840 companies have been in it since 2008 against 503 on today's
+page.
 
 **Granularity.** Membership starts at the page's own "date added" where it has
 one (Tesla: 2020-12-21), else the first monthly capture, and ends at the first
@@ -222,9 +267,9 @@ changes table, so only the constituents table is read.
 
 | Index | Captures | Page CIK column | Resolved by | Coverage |
 |---|---|---|---|---|
-| S&P 500 | 214, 2008-09 → | 2014 → | page; crosswalk and name before | 500–505 members on every mid-year date |
-| S&P 400 | 153, 2011-01 → | never | crosswalk (92%), page, name | 390–400 |
-| S&P 600 | 92, 2018-08 → | 2018-10 → (unreliable to 2021-02) | page, crosswalk | 596–600, except 444 through the 2020 gap |
+| S&P 500 | 214, 2008-09 → | 2014 → | page; crosswalk, dated name and allowlist before | 496–505 members on every mid-year date |
+| S&P 400 | 153, 2011-01 → | never | crosswalk (92%), page, dated name, allowlist | 390–400 |
+| S&P 600 | 92, 2018-08 → | 2018-10 → (unreliable to 2021-02) | page, crosswalk, neighbour across the two partial 2018 captures | 589–600, except 444 through the 2020 gap |
 
 **CIK succession.** A holding-company reorganisation gives a company a new
 CIK, and the index pages know only one CIK per ticker, so a run resolved to
@@ -296,6 +341,7 @@ filing, because a filing accepted after the last session would get a NULL
 | File | Rows | What it is |
 |---|---|---|
 | `share_class_map.csv` | 99 across 66 CIKs | Share class → ticker allowlist: 27 hand-mapped rows citing filings, 72 derived from 10-K cover pages by `tools/fetch_cover_page_classes.py` |
+| `index_cik_overrides.csv` | 8 | Constituent runs no rule resolves, (index, ticker, first sighting) → CIK, each row citing its evidence; loads `sec_reference.index_cik_override`, applied only where the page, the crosswalk and the name failed (check 61 fails a redundant row) |
 | `tickers.csv` | 10,221 | Legacy CIK ↔ ticker crosswalk (December 2025). Loads `sec_silver.ticker_map` only; no longer a fallback for anything |
 | `wayback_stamps.json` | — | The archive captures the last crosswalk run resolved to, keyed by the probe set that produced them |
 | `GAAP Taxonomy 2024.xlsx` | — | Reference taxonomy, not loaded by the pipeline |
