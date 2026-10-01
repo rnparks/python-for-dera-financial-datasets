@@ -39,8 +39,9 @@ import polars as pl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from dera_pipeline import compustat, config  # noqa: E402
 from export_compustat import OUT, PER_SHARE, copy_out, fyear  # noqa: E402
+
+from dera_pipeline import compustat  # noqa: E402
 
 FACTS_SQL = """
 COPY (
