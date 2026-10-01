@@ -219,10 +219,12 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
 -- Measured that day on non-financial annual periods (2011-2025, pit) that
 -- file both cost tags and a GrossProfit: revenue - CostOfRevenue reproduces
 -- the filed gross profit within 1% in 85.3% of 1,363 periods, revenue -
--- CostOfGoodsAndServicesSold in 1.7%; across all 31,480 periods with a
--- filed gross profit and a formula, agreement went from 95.28% to 96.11%.
+-- CostOfGoodsAndServicesSold in 66.0% (70.4% against 25.4% in the 582
+-- where the two differ); across all periods with a filed gross profit and
+-- a formula, agreement went from 95.3% to 96.1%. Every figure here comes
+-- from tools/audit_gross_profit.py (docs/audits/gross_profit.md).
 -- CostOfMerchandiseSalesBuyingAndOccupancyCosts is a retailer's whole cost
--- of sales (buying and occupancy included); 19 periods file only it.
+-- of sales (buying and occupancy included); 120 periods file only it.
 -- The *ExcludingDepreciationDepletionAndAmortization elements are left out
 -- on purpose: they are the cost before D&A (a different definition, the
 -- one Compustat standardizes to), and reproduce a filed gross profit in

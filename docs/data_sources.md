@@ -496,6 +496,7 @@ uv run python tools/fetch_sp500_history.py --batch 0    # S&P 500 revisions (res
 uv run python tools/fetch_sp1500.py              # today's S&P 1500
 uv run python tools/fetch_cover_page_classes.py --sp500 --write-map   # dual-class mappings
 uv run python tools/fetch_usgaap_cost_elements.py   # taxonomy element years and calc arcs (evidence only)
+uv run python tools/audit_gross_profit.py          # regenerates docs/audits/gross_profit.md (read-only)
 uv run dera rebuild-reference                    # CSVs -> spine (in place) -> security model -> refresh what changed
 ```
 
