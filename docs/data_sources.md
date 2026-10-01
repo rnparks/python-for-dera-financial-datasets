@@ -13,7 +13,7 @@ know what is flowing into them.
 ## The short version
 
 Everything here is **free and public**. There is no vendor feed and no licensed
-data. Six acquisition paths, in rough order of how much they matter:
+data. Seven acquisition paths, in rough order of how much they matter:
 
 | # | Source | Lands in | On disk | Refresh |
 |---|---|---|---|---|
@@ -23,6 +23,7 @@ data. Six acquisition paths, in rough order of how much they matter:
 | 4 | Wikipedia S&P index pages, today and (S&P 500) every month since 2008 | `data/reference/sp1500_universe.csv`, `sp500_history.csv.gz` | 102 KB, 0.7 MB | `tools/fetch_sp1500.py`, `tools/fetch_sp500_history.py` |
 | 4b | Issuer 10-K cover pages (inline XBRL) | `data/reference/share_class_map.csv`, `cover_page_classes.csv` | small | `tools/fetch_cover_page_classes.py` |
 | 5 | NYSE trading calendar | `data/reference/trading_calendar.csv` | 256 KB | `tools/build_calendar.py` |
+| 7 | SEC DERA Financial Statement **and Notes** Data Sets (footnotes, with dimensions) | `data/raw_notes/<name>.zip` → `data/exports/notes/notes_facts.parquet` | **27.6 GB** (80 archives, not tracked) | `tools/fetch_notes_datasets.py`, `tools/extract_notes_facts.py` |
 | 6 | FASB US-GAAP taxonomy archives, 2011–2026 | `data/reference/usgaap_cost_elements.csv`, `usgaap_cost_calc_arcs.csv`, `usgaap_element_docs.csv` | small (archives cached in `data/taxonomy/`, not tracked) | `tools/fetch_usgaap_cost_elements.py`, `tools/fetch_usgaap_element_docs.py` |
 
 Plus a small set of hand-maintained files described under [Manual inputs](#manual-inputs).
@@ -414,6 +415,34 @@ calculation levels of the statement totals, so mapping candidates come from the
 taxonomy's structure. Cover-page `dei` elements such as
 `EntityCommonStockSharesOutstanding` are a separate taxonomy and not described.
 
+## 7. SEC Financial Statement and Notes Data Sets (footnotes)
+
+- **Source**: the archive list on
+  `https://www.sec.gov/data-research/sec-markets-data/financial-statement-notes-data-sets`;
+  each archive is
+  `https://www.sec.gov/files/dera/data/financial-statement-notes-data-sets/<name>.zip`
+  (quarterly `2009q1`–`2025q2`, monthly from `2025_07`; 80 archives, 27.6 GB, as of 2026-10-01)
+- **Tool**: `tools/fetch_notes_datasets.py` (cached in `data/raw_notes/`, not
+  tracked; a zip already present at the server's size is not re-downloaded), then
+  `tools/extract_notes_facts.py`
+- **Becomes**: `data/exports/notes/notes_facts.parquet`: every pension,
+  business-segment revenue and major-customer fact, with its dimension string
+  (`dim.tsv` `segments`) and its filing (`sub.tsv`: form, period, accepted).
+  Not loaded into the database.
+
+Why a second SEC source: the Financial Statement data sets (source 1) carry the
+primary statements only, so a footnote figure such as a pension plan's projected
+benefit obligation is absent from `sec_data` for all but a handful of filers that
+also show it on the face of a statement. The Notes data sets publish the same
+filings' footnote facts with their XBRL dimensions. In `dim.tsv`, axes and members
+appear by local name without the `Axis`/`Member` suffix
+(`StatementBusinessSegmentsAxis` is written `BusinessSegments=`).
+
+`tools/export_notes_items.py` turns these facts into Compustat-style pension,
+segment and customer files (`data/exports/compustat/pensions.parquet`,
+`segments.parquet`, `customers.parquet`), by the rules in
+`docs/compustat_items.md` ("Footnote items").
+
 ## Manual inputs
 
 | File | Rows | What it is |
@@ -480,6 +509,8 @@ Honest gaps, all at the acquisition boundary:
   would not be detected (it can at least be replaced: `dera load --quarter Q
   --force`).
 - **The xlsx reference files have no recorded origin or date.**
+- **`data/raw_notes/` archives are not checksummed** either; each extracted fact
+  records the archive it came from (`archive`) and its accession number (`adsh`).
 
 None of these are hard to fix and none are fixed yet. The pattern to follow is
 `wayback_stamps.json`, which does exactly the right thing for source 3: it records

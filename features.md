@@ -64,6 +64,7 @@ Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 - Factor library — requires prices.
 - Form 13F / Form 4, research SDK, parquet exports.
 - Long-tail XBRL tag coverage for company-extension namespaces.
+- **Footnote items outside `sec_data`.** The Notes data sets (27.6 GB, 80 archives) supply what the statement-only database lacks: defined-benefit pension assets and obligations, business-segment revenue and major customers, as Compustat-style files under `data/exports/compustat/` (`docs/compustat_items.md`, "Footnote items"). Not loaded into the database.
 
 ---
 
@@ -71,7 +72,8 @@ Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 
 In reverse chronological order. The 2026-09-04 review landed as six commits; the S&P 500 membership, share-class and ticker back-extension work followed the same day.
 
-- (this commit) — feat(compustat): quarterly export (`tools/export_compustat_quarterly.py`): fiscal quarter, Q4 as year less nine months, year-to-date items, rdq from tradable_from
+- (this commit) — feat(notes): footnote facts from the SEC Financial Statement and Notes data sets (`tools/fetch_notes_datasets.py`, `tools/extract_notes_facts.py`) and Compustat-style pension, segment and customer files (`tools/export_notes_items.py`, `dera_pipeline/notes_items.py`): pension totals by an allowlist of plan-type members, OPEB excluded, audited by the funded-status identity
+- `f9ff128` — feat(compustat): quarterly export (`tools/export_compustat_quarterly.py`): fiscal quarter, Q4 as year less nine months, year-to-date items, rdq from tradable_from
 - `3240acf` — feat(compustat): S&P balancing-identity audit (`tools/audit_compustat_items.py`); "other" items as S&P remainders; liability and equity fallbacks; the export's fact cache keyed to its tag list; `load_map` refuses a row with an unquoted comma
 - `3d3133f` — feat(compustat): point-in-time annual export (`tools/export_compustat.py`): one row per fiscal year and availability date, Compustat units; adds `polars` and `pyarrow`
 - `b22753d` — feat(compustat): Compustat-style items from XBRL by a cited map (`dera_pipeline/compustat.py`, `data/reference/compustat_item_map.csv`, 85 items); validated against the FASB taxonomy, rules unit-tested

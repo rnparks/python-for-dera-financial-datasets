@@ -557,3 +557,59 @@ def test_the_shipped_map_is_sound():
     assert compustat.validate(items, compustat.load_element_docs()) == []
     q = {r["base_item"] for r in compustat.load_quarterly()}
     assert q <= set(items)
+
+
+# ---------------------------------------------------------------------------- footnote items
+from dera_pipeline import notes_items as ni  # noqa: E402
+
+
+@pytest.mark.parametrize("segments,scope", [
+    ("", "none"),
+    ("RetirementPlanType=PensionPlansDefinedBenefit;", "total"),
+    ("DefinedBenefitPlansDisclosuresDefinedBenefitPlans=PensionPlansDefinedBenefit;", "total"),
+    ("RetirementPlanSponsorLocation=Foreign;RetirementPlanType=PensionPlansDefinedBenefit;", "foreign"),
+    ("RetirementPlanSponsorLocation=US;RetirementPlanType=PensionPlan;", "domestic"),
+    ("DefinedBenefitPlansDisclosuresDefinedBenefitPlans=UnitedStatesPensionPlansOfUSEntityDefinedBenefit;", "domestic"),
+    ("RetirementPlanType=OtherPostretirementBenefitPlansDefinedBenefit;", "opeb"),
+    ("RetirementPlanType=SomeCustomPlan;", "plan_other"),
+    ("RetirementPlanSponsorLocation=US;", "detail"),        # location alone: plan type unknown
+    ("DefinedBenefitPlanByPlanAssetCategories=EquitySecurities;RetirementPlanType=PensionPlansDefinedBenefit;",
+     "detail"),
+])
+def test_pension_scope(segments, scope):
+    assert ni.pension_scope(segments) == scope
+
+
+def test_select_pension_priority():
+    assert ni.select_pension({"total": 10.0, "domestic": 6.0, "foreign": 4.0, "none": 12.0}, True) == (10.0, "pension_total")
+    assert ni.select_pension({"domestic": 6.0, "foreign": 4.0}, True) == (10.0, "dom_plus_for")
+    assert ni.select_pension({"foreign": 4.0}, True) == (4.0, "one_location")
+    assert ni.select_pension({"none": 12.0}, False) == (12.0, "undimensioned")
+    # an undimensioned figure beside OPEB members may include OPEB: nothing, not a guess
+    assert ni.select_pension({"none": 12.0}, True) == (None, "")
+
+
+@pytest.mark.parametrize("member,words", [
+    ("WalMartStoresInc", "Wal Mart Stores Inc"), ("ATTInc", "ATT Inc"), ("CustomerA", "Customer A"),
+    ("RJRTobacco", "RJR Tobacco"), ("", ""),
+])
+def test_camel_words(member, words):
+    assert ni.camel_words(member) == words
+
+
+def test_sin_codes():
+    assert ni.sin_codes("Smokeless Products") == (2111, None)
+    assert ni.sin_codes("Beer") == (2082, None)
+    assert ni.sin_codes("Wine And Spirits") == (2084, None)
+    assert ni.sin_codes("Las Vegas Casinos") == (None, 713210)
+    assert ni.sin_codes("Gaming") == (None, None)            # AMD's video-game segment is not gambling
+    assert ni.sin_codes("Data Center") == (None, None)
+
+
+@pytest.mark.parametrize("name,ctype", [
+    ("Walmart Inc", "COMPANY"), ("Customer A", "UNKNOWN"), ("Top Ten Customers", "UNKNOWN"),
+    ("Second Largest Customer", "UNKNOWN"), ("Medicare", "GOVERNMENT"), ("United States Government", "GOVERNMENT"),
+    ("Home Depot Inc", "COMPANY"), ("", "UNKNOWN"),
+])
+def test_customer_type(name, ctype):
+    assert ni.customer_type(name) == ctype

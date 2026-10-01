@@ -26,6 +26,7 @@ build/
 
 # SEC raw quarterly dumps — too large for git; regenerate with `uv run dera download`
 data/raw/
+data/raw_notes/
 
 # Legacy raw-data location (pre-refactor)
 examples/data/

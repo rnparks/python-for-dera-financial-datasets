@@ -77,6 +77,61 @@ runs `validate()` on the shipped map.
 - **FASB's definitions**: `data/reference/usgaap_element_docs.csv`
   (`tools/fetch_usgaap_element_docs.py`), which describes every tag the map uses.
 
+## Footnote items
+
+Three Compustat files come from footnotes, which `sec_data` does not hold (it
+loads the primary statements only). `tools/export_notes_items.py` builds them from
+the SEC Financial Statement and Notes data sets (`docs/data_sources.md`, source
+7) with the pure functions in `dera_pipeline/notes_items.py`. Only annual reports
+count, only facts dated at the report's own fiscal period end, and the first
+accepted report per company and period end wins (first reported). Amounts in
+millions.
+
+**Pensions** (`pensions.parquet`; Compustat `aco_pnfnda`). S&P (User's Guide
+8/2003, ch. 5): since SFAS 132 Compustat no longer splits over- and underfunded
+plans, so `pplao` (Pension Plan Assets) is the fair value of all defined-benefit
+pension plan assets and `pbpro` (Pension – Projected Benefit Obligation) the PBO of
+all defined-benefit pension plans, foreign plans included (footnote IK); OPEB plans
+are excluded. Elements: `DefinedBenefitPlanFairValueOfPlanAssets`,
+`DefinedBenefitPlanBenefitObligation`. The filing's pension total is taken from an
+allowlist of members of the plan-type axis (`RetirementPlanTypeAxis`, before it
+`DefinedBenefitPlansDisclosuresDefinedBenefitPlansAxis`), in order:
+
+| Rule | Facts used |
+|---|---|
+| `pension_total` | the plan-type axis alone, on `PensionPlansDefinedBenefit` / `PensionPlan` / `DefinedBenefitPensionPlan` |
+| `dom_plus_for` | domestic + foreign pension members (`UnitedStatesPensionPlansOfUSEntityDefinedBenefit` + `ForeignPensionPlansDefinedBenefit`, or the pension member with `RetirementPlanSponsorLocationAxis` domestic and foreign) |
+| `one_location` | only one of those two present |
+| `undimensioned` | the undimensioned fact, only when the filing tags no plan-type member on that element |
+
+The undimensioned fact is refused whenever plan-type members are present: in filings
+that carry the undimensioned figure, a pension member and a non-zero OPEB member,
+the undimensioned PBO equalled the pension plan in 9 of 20 and pension plus OPEB in
+3 (2009–2012 archives), so it is not reliably either. `paddml`, `pcupsu`, `pbnaa`,
+`pbnvv`, `pbpru` and `pplau` are null by S&P's own definitions: `pcupsu` is Not
+Available for SFAS 87 adopters, the additional minimum liability ended with SFAS
+158 (2006), and the over/underfunded splits with SFAS 132. Audit: the plan's own
+`DefinedBenefitPlanFundedStatusOfPlan`, chosen by the same rule, must equal plan
+assets minus PBO; `tools/export_notes_items.py` prints the share that does.
+
+**Segments** (`segments.parquet`; Compustat segment file, `stype` BUSSEG). One row
+per annual report and member of `StatementBusinessSegmentsAxis`, from a revenue
+fact on that axis alone (or with `ConsolidationItems=OperatingSegments`). `sales` is
+the first present of: revenue from external customers, then total revenue elements
+(`SALES_PRIORITY`). `snms` is the member name split into words. Compustat assigns
+each segment a SIC (`sics1`) and NAICS (`naicsh`); XBRL members carry only a name,
+so the only codes assigned are the sin-industry codes OSAP's `sinAlgo` tests,
+from the name (`SIN_SEGMENTS`: tobacco 2111, beer 2082, wine 2084, spirits 2085,
+gambling NAICS 713210; bare "gaming" excluded because it names video-game
+segments). Every other segment's codes are null, so predictors that need a SIC
+for every segment (OSAP's `retConglomerate`) cannot use this file.
+
+**Customers** (`customers.parquet`; Compustat customer segment file). One row per
+annual report and member of `MajorCustomersAxis`; `cnms` is the member name split
+into words, `ctype` is GOVERNMENT for government payers, UNKNOWN for anonymous
+members ("Customer A", "Top Ten Customers": most of them), else COMPANY; `salecs`
+the largest revenue fact on that member, when one is tagged.
+
 ## Not mapped
 
 `spi` (special items: no single element), `emp` (employees: a cover-page

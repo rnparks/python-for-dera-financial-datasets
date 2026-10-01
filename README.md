@@ -210,7 +210,14 @@ XSGA, ...) by a cited map, for replicating published predictors; see
 uv run python tools/export_compustat.py    # data/exports/compustat/annual.parquet, point in time
 uv run python tools/audit_compustat_items.py   # S&P balancing identities -> docs/audits/compustat_items.md
 uv run python tools/export_compustat_quarterly.py   # data/exports/compustat/quarterly.parquet
+uv run python tools/fetch_notes_datasets.py   # SEC Financial Statement and Notes archives -> data/raw_notes/ (27.6 GB)
+uv run python tools/extract_notes_facts.py    # pension, segment, customer footnote facts -> data/exports/notes/
+uv run python tools/export_notes_items.py     # pensions, segments, customers .parquet in data/exports/compustat/
 ```
+
+Footnote items (pension plans, segments, major customers) are not in `sec_data`,
+which loads the primary statements only; they come from the Notes data sets
+(`docs/data_sources.md`, source 7).
 
 ## Reference data
 
