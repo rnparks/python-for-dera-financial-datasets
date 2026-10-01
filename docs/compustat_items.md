@@ -20,6 +20,16 @@ own documentation (as of 2026-10-01):
 | `dltt` | long-term debt including capitalized leases | `LongTermDebtAndCapitalLeaseObligations` before `LongTermDebtNoncurrent` |
 | `dvc` | common dividends declared, from the equity statement | `DividendsCommonStock` before cash paid |
 
+## Export
+
+`uv run python tools/export_compustat.py` writes `data/exports/compustat/annual.parquet`
+(not tracked; read-only against the database): one row per (cik, fiscal year end,
+availability date), with every exported item. A fiscal year gets a new row each
+time a filing changes what was knowable about it, so an as-of join on `avail`
+returns the vintage an investor had. Units are Compustat's: dollars and shares in
+millions, per-share items in dollars. As of 2026-10-01: 116,099 firm-years for
+13,808 companies, 298,185 rows.
+
 ## Rules
 
 A tag ladder resolves first; then formula variants in order, each needing its

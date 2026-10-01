@@ -206,6 +206,10 @@ of its day too.
 XSGA, ...) by a cited map, for replicating published predictors; see
 [`docs/compustat_items.md`](docs/compustat_items.md).
 
+```bash
+uv run python tools/export_compustat.py    # data/exports/compustat/annual.parquet, point in time
+```
+
 ## Reference data
 
 Tracked files under `data/reference/`, all regenerable — see

@@ -11,6 +11,8 @@ dependencies = [
     "lxml>=6.0",
     "psycopg[binary]>=3.2",
     "pandas-market-calendars>=5.4.0",
+    "polars>=1.44.2",
+    "pyarrow>=25.0.1",
 ]
 
 [project.scripts]
