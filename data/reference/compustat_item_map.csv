@@ -15,8 +15,6 @@ rect,instant,tag,,2,AccountsReceivableNetCurrent,1,,Trade only; used when no tot
 invt,instant,tag,,1,InventoryNet,1,,S&P INVT inventories total.
 xpp,instant,tag,,1,PrepaidExpenseCurrent,1,,S&P XPP prepaid expenses.
 _acox,instant,tag,,1,OtherAssetsCurrent,1,,Helper: S&P ACOX current assets other (sundry).
-aco,instant,formula,1,,item:xpp,1,FALSE,S&P ACO = XPP + ACOX; both optional, at least one present.
-aco,instant,formula,1,,item:_acox,1,FALSE,
 ppent,instant,tag,,1,PropertyPlantAndEquipmentNet,1,,S&P PPENT = PPEGT - accumulated DD&A.
 ppegt,instant,tag,,1,PropertyPlantAndEquipmentGross,1,,S&P PPEGT gross PP&E.
 ivao,instant,tag,,1,OtherLongTermInvestments,1,,S&P IVAO: other investments and advances; equity-method investments are a separate item (IVAEQ). FASB LongTermInvestments includes equity-method investments so it ranks second.
@@ -26,7 +24,6 @@ _intano,instant,tag,,1,IntangibleAssetsNetExcludingGoodwill,1,,Helper: S&P INTAN
 intan,instant,tag,,1,IntangibleAssetsNetIncludingGoodwill,1,,S&P INTAN total intangibles incl. goodwill; FASB element = Goodwill + IntangibleAssetsNetExcludingGoodwill.
 intan,instant,formula,1,,item:gdwl,1,FALSE,
 intan,instant,formula,1,,item:_intano,1,FALSE,
-ao,instant,tag,,1,OtherAssetsNoncurrent,1,,S&P AO assets other.
 lct,instant,tag,,1,LiabilitiesCurrent,1,,S&P LCT = AP + LCO + DLC + TXP.
 _dd1,instant,tag,,1,LongTermDebtAndCapitalLeaseObligationsCurrent,1,,Helper: S&P DD1 long-term debt due in one year (incl. capital leases).
 _dd1,instant,tag,,2,LongTermDebtCurrent,1,,Excludes lease obligations.
@@ -40,14 +37,11 @@ txp,instant,tag,,1,AccruedIncomeTaxesCurrent,1,,S&P TXP: accrued income tax due 
 txp,instant,tag,,2,TaxesPayableCurrent,1,,Includes non-income taxes (FASB); S&P accepts a combined figure.
 xacc,instant,tag,,1,AccruedLiabilitiesCurrent,1,,S&P XACC accrued expenses.
 _lcox,instant,tag,,1,OtherLiabilitiesCurrent,1,,Helper: S&P LCOX.
-lco,instant,formula,1,,item:xacc,1,FALSE,S&P LCO = XACC + LCOX.
-lco,instant,formula,1,,item:_lcox,1,FALSE,
 dltt,instant,tag,,1,LongTermDebtAndCapitalLeaseObligations,1,,S&P DLTT: debt due after one year incl. capitalized lease obligations (guide item 9).
 dltt,instant,tag,,2,LongTermDebtNoncurrent,1,,Excludes lease obligations.
 dltt,instant,tag,,3,LongTermNotesPayable,1,,
 txditc,instant,tag,,1,DeferredTaxLiabilitiesNoncurrent,1,,S&P TXDITC = TXDB + ITCB; excludes current deferred taxes. FASB element retired after 2024.
 txditc,instant,tag,,2,DeferredIncomeTaxLiabilitiesNet,1,,Net DTL after ASU 2015-17 noncurrent classification.
-lo,instant,tag,,1,OtherLiabilitiesNoncurrent,1,,S&P LO: noncurrent liabilities not debt or deferred taxes.
 mib,instant,tag,,1,MinorityInterest,1,,S&P MIB noncontrolling interest.
 lt,instant,tag,,1,Liabilities,1,,S&P Xpressfeed LT = LCT + DLTT + TXDITC + LO (noncontrolling interest outside; the 2003 guide included minority interest before SFAS 160).
 pstk,instant,tag,,1,PreferredStockValue,1,,S&P PSTK carrying value: nonredeemable preferred (2003 guide item 130). FASB PreferredStockValue is nonredeemable preferred.
@@ -114,12 +108,12 @@ pi,duration,tag,,1,IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordin
 pi,duration,tag,,2,IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments,1,,
 ni,duration,tag,,1,NetIncomeLoss,1,,S&P NI: income after discontinued operations and extraordinary items.
 ni,duration,tag,,2,NetIncomeLossAvailableToCommonStockholdersBasic,1,,
-ib,duration,tag,,1,IncomeLossFromContinuingOperations,1,,S&P IB: after taxes and minority interest, before discontinued operations and extraordinary items (guide item 18). FASB element is continuing operations attributable to parent.
+ib,duration,tag,,1,IncomeLossFromContinuingOperations,1,,"S&P IB: after taxes and minority interest, before discontinued operations and extraordinary items (guide item 18). FASB element is continuing operations attributable to parent."
 ib,duration,formula,1,,item:ni,1,TRUE,Net income less discontinued operations attributable to parent.
 ib,duration,formula,1,,tag:IncomeLossFromDiscontinuedOperationsNetOfTaxAttributableToReportingEntity,-1,FALSE,
 nopi,duration,tag,,1,NonoperatingIncomeExpense,1,,S&P NOPI.
 nopi,duration,tag,,2,OtherNonoperatingIncomeExpense,1,,
-oiadp,duration,tag,,1,OperatingIncomeLoss,1,,S&P OIADP: after COGS, SG&A and DD&A. XBRL operating income also includes items S&P moves to special items.
+oiadp,duration,tag,,1,OperatingIncomeLoss,1,,"S&P OIADP: after COGS, SG&A and DD&A. XBRL operating income also includes items S&P moves to special items."
 oibdp,duration,formula,1,,item:oiadp,1,TRUE,S&P OIBDP = OIADP + DP.
 oibdp,duration,formula,1,,item:dp,1,TRUE,
 ebitda,duration,formula,1,,item:oiadp,1,TRUE,Xpressfeed EBITDA; taken as OIBDP.
@@ -159,3 +153,39 @@ dltis,duration,tag,,1,ProceedsFromIssuanceOfLongTermDebt,1,,S&P DLTIS.
 dltr,duration,tag,,1,RepaymentsOfLongTermDebt,1,,S&P DLTR.
 dlcch,duration,tag,,1,ProceedsFromRepaymentsOfShortTermDebt,1,,S&P DLCCH changes in current debt.
 _cshpr,duration,tag,,1,WeightedAverageNumberOfSharesOutstandingBasic,1,,Helper: S&P CSHPR shares used to calculate basic EPS (shares; exported in millions).
+aco,instant,formula,1,,item:act,1,TRUE,"S&P ACO: current assets other than cash and short-term investments, receivables and inventories (guide: Current Assets - Other), i.e. the remainder of ACT; it includes prepaid expenses (XPP + ACOX)."
+aco,instant,formula,1,,item:che,-1,FALSE,
+aco,instant,formula,1,,item:rect,-1,FALSE,
+aco,instant,formula,1,,item:invt,-1,FALSE,
+aco,instant,formula,2,,item:xpp,1,FALSE,No current-asset total filed: prepaid + other current assets lines.
+aco,instant,formula,2,,item:_acox,1,FALSE,
+lco,instant,formula,1,,item:lct,1,TRUE,"S&P LCO: accrued expenses and residual current liabilities not debt, trade payables or income taxes (guide: Current Liabilities - Other), i.e. the remainder of LCT."
+lco,instant,formula,1,,item:ap,-1,FALSE,
+lco,instant,formula,1,,item:dlc,-1,FALSE,
+lco,instant,formula,1,,item:txp,-1,FALSE,
+lco,instant,formula,2,,item:xacc,1,FALSE,No current-liability total filed: accrued + other current liabilities lines.
+lco,instant,formula,2,,item:_lcox,1,FALSE,
+lo,instant,formula,1,,item:lt,1,TRUE,"S&P LO: noncurrent liabilities not debt, deferred taxes or minority interest (guide: Liabilities - Other), i.e. the remainder of LT = LCT + DLTT + TXDITC + LO."
+lo,instant,formula,1,,item:lct,-1,TRUE,
+lo,instant,formula,1,,item:dltt,-1,FALSE,
+lo,instant,formula,1,,item:txditc,-1,FALSE,
+lo,instant,formula,2,,tag:OtherLiabilitiesNoncurrent,1,TRUE,No liability totals filed: the other noncurrent liabilities line.
+_ivaeq,instant,tag,,1,EquityMethodInvestments,1,,"Helper: S&P IVAEQ investments and advances, equity method."
+ao,instant,formula,1,,item:at,1,TRUE,"S&P AO: long-term assets not PP&E, investments and advances or intangibles (guide: Assets - Other), i.e. the remainder of AT = ACT + PPENT + IVAEQ + IVAO + INTAN + AO."
+ao,instant,formula,1,,item:act,-1,TRUE,
+ao,instant,formula,1,,item:ppent,-1,FALSE,
+ao,instant,formula,1,,item:_ivaeq,-1,FALSE,
+ao,instant,formula,1,,item:ivao,-1,FALSE,
+ao,instant,formula,1,,item:intan,-1,FALSE,
+ao,instant,formula,2,,tag:OtherAssetsNoncurrent,1,TRUE,No current-asset total filed: the other noncurrent assets line.
+_tempeq,instant,tag,,1,TemporaryEquityCarryingAmountIncludingPortionAttributableToNoncontrollingInterests,1,,"Helper: temporary (mezzanine) equity, outside both liabilities and equity."
+_tempeq,instant,tag,,2,TemporaryEquityCarryingAmountAttributableToParent,1,,
+lt,instant,formula,1,,tag:LiabilitiesAndStockholdersEquity,1,TRUE,No Liabilities total filed: liabilities and equity less total equity (incl. noncontrolling interest) less temporary equity.
+lt,instant,formula,1,,tag:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest,-1,TRUE,
+lt,instant,formula,1,,item:_tempeq,-1,FALSE,
+lt,instant,formula,2,,tag:LiabilitiesAndStockholdersEquity,1,TRUE,As variant 1 when equity is filed only as parent equity plus noncontrolling interest.
+lt,instant,formula,2,,item:seq,-1,TRUE,
+lt,instant,formula,2,,item:mib,-1,FALSE,
+lt,instant,formula,2,,item:_tempeq,-1,FALSE,
+seq,instant,formula,1,,tag:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest,1,TRUE,No parent-equity total filed: total equity including noncontrolling interest less the noncontrolling interest (FASB: StockholdersEquity is the parent portion of this element).
+seq,instant,formula,1,,item:mib,-1,FALSE,

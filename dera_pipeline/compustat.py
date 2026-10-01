@@ -57,6 +57,8 @@ def load_map(path: Path = MAP_PATH) -> dict[str, Item]:
     items: dict[str, Item] = {}
     with Path(path).open() as f:
         for r in csv.DictReader(f):
+            if None in r:  # an unquoted comma in a note shifts every field after it
+                raise ValueError(f"{path}: row for {r['item']} has more fields than the header")
             it = items.setdefault(r["item"], Item(r["item"], r["period"]))
             if it.period != r["period"]:
                 raise ValueError(f"{r['item']}: rows disagree on period type")

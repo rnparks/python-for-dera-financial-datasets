@@ -9,7 +9,8 @@ WHAT IT WRITES. data/exports/compustat/annual.parquet (not tracked), one row per
 (cik, datadate, avail):
     cik, datadate (fiscal year end), fyear, avail (the first NYSE session the
     row's facts were all actionable), sic (the company's latest), and every
-    exported item from data/reference/compustat_item_map.csv.
+    exported item from data/reference/compustat_item_map.csv, then the helper items
+    (columns starting with "_", e.g. _tempeq) for audits.
 A fiscal year gets a new row whenever a filing changes what was knowable about
 it -- the original 10-K, then each later 10-K that restates it as a comparative
 or a 10-K/A -- so an as-of join on avail returns exactly the vintage an
@@ -91,11 +92,14 @@ def main(argv: list[str] | None = None) -> int:
     tags = sorted(set().union(*(i.tags_used() for i in items.values())))
 
     OUT.mkdir(parents=True, exist_ok=True)
-    facts_csv, sic_csv = OUT / "facts_annual.csv", OUT / "sic.csv"
-    if args.refresh or not facts_csv.exists():
+    facts_csv, sic_csv, tags_txt = OUT / "facts_annual.csv", OUT / "sic.csv", OUT / "facts_annual.tags"
+    # the cached facts are only valid for the tag list they were read with
+    stale = not tags_txt.exists() or tags_txt.read_text().split() != tags
+    if args.refresh or not facts_csv.exists() or stale:
         print(f"reading {len(tags)} tags from sec_gold.fact_asof ...", flush=True)
         copy_out(FACTS_SQL, facts_csv, (tags,))
         copy_out(SIC_SQL, sic_csv)
+        tags_txt.write_text("\n".join(tags))
     facts = pl.read_csv(facts_csv, try_parse_dates=True,
                         schema_overrides={"value": pl.Float64, "is_10k": pl.String})
     facts = facts.with_columns(is_10k=pl.col("is_10k") == "t")  # Postgres writes booleans as t/f
@@ -107,17 +111,18 @@ def main(argv: list[str] | None = None) -> int:
     pdf = wide.to_pandas()
     res = compustat.resolve_frame(pdf.drop(columns=["cik", "value_date", "avail"]), items)
     out_items = compustat.exported(items)
-    for c in out_items:
+    helpers = sorted(n for n in items if n.startswith("_"))
+    for c in out_items + helpers:
         if c not in PER_SHARE:
             res[c] = res[c] / 1e6
-    panel = pl.from_pandas(pdf[["cik", "value_date", "avail"]].join(res[out_items])).rename({"value_date": "datadate"})
+    panel = pl.from_pandas(pdf[["cik", "value_date", "avail"]].join(res[out_items + helpers])).rename({"value_date": "datadate"})
     # drop states that change nothing relative to the previous state of the same fiscal year
     changed = pl.any_horizontal([pl.col(c).ne_missing(pl.col(c).shift(1).over(["cik", "datadate"])) for c in out_items])
     panel = panel.filter(changed | (pl.col("avail") == pl.col("avail").min().over(["cik", "datadate"])))
     sic = pl.read_csv(sic_csv)
     panel = (panel.with_columns(fyear=fyear(pl.col("datadate")))
              .join(sic, on="cik", how="left")
-             .select(["cik", "datadate", "fyear", "avail", "sic"] + out_items))
+             .select(["cik", "datadate", "fyear", "avail", "sic"] + out_items + helpers))
     panel.write_parquet(OUT / "annual.parquet")
     cov = panel.sort("avail").unique(["cik", "datadate"], keep="first")
     print(f"wrote {OUT.relative_to(config.PROJECT_ROOT)}/annual.parquet: {panel.height:,} rows, "

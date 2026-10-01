@@ -544,6 +544,14 @@ def test_period_type_must_match_the_taxonomy(tmp_path):
     assert probs and "duration" in probs[0]
 
 
+def test_a_row_with_an_unquoted_comma_is_refused(tmp_path):
+    p = tmp_path / "map.csv"
+    p.write_text("item,period,rule,variant,priority,term,coefficient,required,notes\n"
+                 "x,instant,tag,,1,A,1,,a note, with a comma\n")
+    with pytest.raises(ValueError, match="more fields"):
+        compustat.load_map(p)
+
+
 def test_the_shipped_map_is_sound():
     items = compustat.load_map()
     assert compustat.validate(items, compustat.load_element_docs()) == []

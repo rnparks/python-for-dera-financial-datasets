@@ -30,6 +30,19 @@ returns the vintage an investor had. Units are Compustat's: dollars and shares i
 millions, per-share items in dollars. As of 2026-10-01: 116,099 firm-years for
 13,808 companies, 298,185 rows.
 
+## Audit
+
+`uv run python tools/audit_compustat_items.py` (after the export) checks the items
+against S&P's own balancing model and writes `docs/audits/compustat_items.md`.
+S&P's "other" items are remainders by definition (Current Assets – Other is what
+is not cash, receivables or inventory), so `aco`, `lco`, `lo` and `ao` are the
+remainder of their totals, falling back to the single XBRL "other" line only when
+the total is not filed; the test for them is that they are not negative. As of
+2026-10-01, operating companies (SIC not 6xxx, assets over $10M, positive sales),
+43,781 firm-years: AT = LT + SEQ + MIB + temporary equity within 1% of assets in
+95.0% (96.4% with every component filed; 67% before the remainder and liability
+fallbacks); the four remainders are non-negative in 99.9–100.0%.
+
 ## Rules
 
 A tag ladder resolves first; then formula variants in order, each needing its
