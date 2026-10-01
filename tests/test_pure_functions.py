@@ -25,6 +25,7 @@ from dera_pipeline import config, downloader, filings, loader, reference
 sys.path.insert(0, str(config.PROJECT_ROOT / "tools"))
 import check_docs
 import fetch_ticker_history as fth
+import fetch_usgaap_cost_elements as fuce
 
 # ---------------------------------------------------------------------
 # filings.classify: anchored, not prefix-matched
@@ -411,3 +412,42 @@ def test_every_gold_matview_declares_its_inputs():
     for inputs in cli.GOLD_INPUTS.values():
         for name in inputs:
             assert name in cli.SPINE_TABLES or name in cli.GOLD_MATVIEWS
+
+
+# ---------------------------------------------------------------------
+# fetch_usgaap_cost_elements: the taxonomy parsers
+# ---------------------------------------------------------------------
+
+def test_taxonomy_url_naming_changes_in_2022():
+    assert fuce.taxonomy_url(2021).endswith("/2021/us-gaap-2021-01-31.zip")
+    assert fuce.taxonomy_url(2022).endswith("/2022/us-gaap-2022.zip")
+
+
+def test_parse_elements_reads_both_quote_styles_and_prefixes():
+    xsd = ('<xs:element name="GrossProfit" type="x"/>'
+           "<element id='a' name='CostOfRevenue'/>"
+           '<xsd:element name="CostOfGoodsSold" />')
+    assert fuce.parse_elements(xsd) == {"GrossProfit", "CostOfRevenue", "CostOfGoodsSold"}
+
+
+def test_parse_calc_arcs_resolves_locator_labels():
+    cal = (
+        "<link:loc xlink:href='../elts/us-gaap-2024.xsd#us-gaap_GrossProfit' xlink:label='loc_GP' xlink:type='locator'/>"
+        "<link:loc xlink:type='locator' xlink:label='loc_COR' xlink:href='x.xsd#us-gaap_CostOfRevenue'/>"
+        "<link:calculationArc order='1' weight='-1.0' xlink:from='loc_GP' xlink:to='loc_COR' xlink:type='arc'/>"
+        "<link:calculationArc weight='1.0' xlink:from='loc_GP' xlink:to='loc_missing'/>"
+    )
+    assert fuce.parse_calc_arcs(cal) == [("GrossProfit", "CostOfRevenue", -1.0)]
+
+
+def test_year_span_and_parse_years():
+    assert fuce.year_span({2013, 2011, 2012}) == (2011, 2013, "2011 2012 2013")
+    assert fuce.parse_years("2011-2013") == [2011, 2012, 2013]
+    assert fuce.parse_years("2020") == [2020]
+
+
+def test_family_pattern_keeps_cost_elements_and_drops_others():
+    for e in ["GrossProfit", "CostOfRevenue", "CostOfGoodsSoldDirectLabor", "CostsAndExpenses", "Revenues"]:
+        assert fuce.FAMILY.match(e)
+    for e in ["NetIncomeLoss", "OperatingExpenses", "Assets"]:
+        assert not fuce.FAMILY.match(e)

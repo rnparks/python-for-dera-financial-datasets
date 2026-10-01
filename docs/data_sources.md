@@ -13,7 +13,7 @@ know what is flowing into them.
 ## The short version
 
 Everything here is **free and public**. There is no vendor feed and no licensed
-data. Five acquisition paths, in rough order of how much they matter:
+data. Six acquisition paths, in rough order of how much they matter:
 
 | # | Source | Lands in | On disk | Refresh |
 |---|---|---|---|---|
@@ -23,6 +23,7 @@ data. Five acquisition paths, in rough order of how much they matter:
 | 4 | Wikipedia S&P index pages, today and (S&P 500) every month since 2008 | `data/reference/sp1500_universe.csv`, `sp500_history.csv.gz` | 102 KB, 0.7 MB | `tools/fetch_sp1500.py`, `tools/fetch_sp500_history.py` |
 | 4b | Issuer 10-K cover pages (inline XBRL) | `data/reference/share_class_map.csv`, `cover_page_classes.csv` | small | `tools/fetch_cover_page_classes.py` |
 | 5 | NYSE trading calendar | `data/reference/trading_calendar.csv` | 256 KB | `tools/build_calendar.py` |
+| 6 | FASB US-GAAP taxonomy archives, 2011–2026 | `data/reference/usgaap_cost_elements.csv`, `usgaap_cost_calc_arcs.csv` | small (archives cached in `data/taxonomy/`, not tracked) | `tools/fetch_usgaap_cost_elements.py` |
 
 Plus a small set of hand-maintained files described under [Manual inputs](#manual-inputs).
 
@@ -374,6 +375,35 @@ check 38 asserts the loaded one reaches at least 180 days past the newest
 filing, because a filing accepted after the last session would get a NULL
 `tradable_from` and vanish from every as-of query without a message.
 
+## 6. FASB US-GAAP taxonomy (the gross-profit element tree)
+
+- **Source**: one archive per taxonomy year from `https://xbrl.fasb.org/us-gaap/<year>/`
+  (`us-gaap-<year>-01-31.zip` through 2021, `us-gaap-<year>.zip` from 2022)
+- **Tool**: `tools/fetch_usgaap_cost_elements.py`
+- **Becomes**: `data/reference/usgaap_cost_elements.csv` (which years each
+  gross-profit, cost-of-revenue and revenue element was declared) and
+  `data/reference/usgaap_cost_calc_arcs.csv` (every statement-of-income
+  calculation arc touching one, with its weight and years). Evidence for the
+  order of the `cost_of_revenue` rows in `sec_gold.concept_tag_map`; not loaded
+  into the database.
+
+What the calculation linkbase says, as of 2026-10-01:
+
+| Relationship | Years published |
+|---|---|
+| `GrossProfit` = `Revenues` − `CostOfRevenue` | 2011–2026 |
+| `CostOfRevenue` ⊇ `CostOfGoodsAndServicesSold`, `OtherCostOfOperatingRevenue`, and financial-services costs (policyholder benefits, loan-loss provisions, VOBA amortization) | 2011–2026 |
+| `CostOfGoodsAndServicesSold` ⊇ `CostOfGoodsSold` + `CostOfServices` (+ excise taxes, related-party costs, …) | 2011–2017 |
+| `CostOfGoodsAndServicesSold` = `CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization` + `CostDepreciationAmortizationAndDepletion` | 2019–2026 |
+
+`CostOfGoodsSold` and `CostOfServices` are declared through the 2020 taxonomy
+and then retired, so they are components that filers used until then, never a
+total. The "excluding depreciation" elements are a different definition of cost
+(the one Compustat standardizes to), not a substitute for the total.
+
+Gap: the 2009 and 2010 archives are not on `xbrl.fasb.org` (HTTP 404), so
+element lifespans start at 2011 even where an element is older.
+
 ## Manual inputs
 
 | File | Rows | What it is |
@@ -465,6 +495,7 @@ uv run python tools/fetch_ticker_history.py --batch 0   # all captures + live fi
 uv run python tools/fetch_sp500_history.py --batch 0    # S&P 500 revisions (resumes)
 uv run python tools/fetch_sp1500.py              # today's S&P 1500
 uv run python tools/fetch_cover_page_classes.py --sp500 --write-map   # dual-class mappings
+uv run python tools/fetch_usgaap_cost_elements.py   # taxonomy element years and calc arcs (evidence only)
 uv run dera rebuild-reference                    # CSVs -> spine (in place) -> security model -> refresh what changed
 ```
 

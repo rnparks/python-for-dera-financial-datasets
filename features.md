@@ -70,7 +70,8 @@ Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 
 In reverse chronological order. The 2026-09-04 review landed as six commits; the S&P 500 membership, share-class and ticker back-extension work followed the same day.
 
-- (this commit) — feat(gold): quarterly flows and trailing twelve months on demand: `as_of_quarterly`, `as_of_trailing`, `quarterly`, `trailing`; nothing stored
+- (this commit) — feat(tools): the FASB US-GAAP taxonomy's gross-profit element tree, 2011–2026, as evidence for the `cost_of_revenue` tag order (`tools/fetch_usgaap_cost_elements.py`)
+- `dc5c451` — feat(gold): quarterly flows and trailing twelve months on demand: `as_of_quarterly`, `as_of_trailing`, `quarterly`, `trailing`; nothing stored
 - `e007c17` — fix(reference): a membership interval never names a registrant before its first EDGAR filing: the seat's "date added" no longer back-dates a successor (Paramount Skydance), a successor's pre-handoff interval is cut at its first filing (Alphabet), and a successor not yet in DERA is a succession (Exxon Mobil)
 - `acca99e` — feat(gold): a zero total_debt from a debt-free balance-sheet face; pre_silver keeps the statements' layout
 - `b617e45` — fix(gold): the instrument-sum guard no longer exempts a custom debt line named after its premium or discount; the no-debt-line members verified against two sources

@@ -1,0 +1,293 @@
+parent,child,weight,first_year,last_year,years
+ConstructionAndDevelopmentCosts,CostOfUtilities,1,2011,2013,2011 2012 2013
+CostDepreciationAmortizationAndDepletion,CostOfGoodsAndServicesSoldDepreciationAndAmortization,1,2018,2026,2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,AffiliateCosts,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,CostDirectLabor,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,CostDirectMaterial,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,CostMaintenance,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,CostOfGoodsAndServicesSoldOverhead,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,CostOfGoodsSoldDirectFinancingLease,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,CostOfGoodsSoldSalesTypeLease,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,CostOfOtherPropertyOperatingExpense,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,CostOfPropertyRepairsAndMaintenance,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,CostOfTrustAssetsSoldToPayExpenses,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,DirectCostsOfLeasedAndRentedPropertyOrEquipment,1,2020,2026,2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,DirectOperatingCosts,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,DirectTaxesAndLicensesCosts,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,ExciseAndSalesTaxes,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,InventoryFirmPurchaseCommitmentLoss,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,LossOnContracts,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,ProductionRelatedImpairmentsOrCharges,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,RelatedPartyCosts,1,2019,2022,2019 2020 2021 2022
+CostOfGoodsAndServicesSold,AdvertisingRevenueCost,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,AffiliateCosts,1,2011,2018,2011 2012 2013 2014 2015 2016 2017 2018
+CostOfGoodsAndServicesSold,AssetManagementCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,ContractRevenueCost,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,CostDepreciationAmortizationAndDepletion,1,2018,2026,2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServicesSold,CostDirectLabor,1,2018,2018,2018
+CostOfGoodsAndServicesSold,CostDirectMaterial,1,2018,2018,2018
+CostOfGoodsAndServicesSold,CostMaintenance,1,2018,2018,2018
+CostOfGoodsAndServicesSold,CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServicesSold,CostOfGoodsAndServicesEnergyCommoditiesAndServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,CostOfGoodsAndServicesSoldOverhead,1,2018,2018,2018
+CostOfGoodsAndServicesSold,CostOfGoodsSold,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,CostOfGoodsSoldSubscription,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,CostOfOtherPropertyOperatingExpense,1,2011,2018,2011 2012 2013 2014 2015 2016 2017 2018
+CostOfGoodsAndServicesSold,CostOfPropertyRepairsAndMaintenance,1,2011,2018,2011 2012 2013 2014 2015 2016 2017 2018
+CostOfGoodsAndServicesSold,CostOfRealEstateRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,CostOfReimbursableExpense,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,CostOfServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,CostOfTrustAssetsSoldToPayExpenses,1,2018,2018,2018
+CostOfGoodsAndServicesSold,CostOfUtilities,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,DirectCostsOfHotels,1,2011,2013,2011 2012 2013
+CostOfGoodsAndServicesSold,DirectOperatingCostRoyaltyExpense,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,DirectOperatingCosts,1,2011,2018,2011 2012 2013 2014 2015 2016 2017 2018
+CostOfGoodsAndServicesSold,DirectTaxesAndLicensesCosts,1,2018,2018,2018
+CostOfGoodsAndServicesSold,ExciseAndSalesTaxes,1,2011,2018,2011 2012 2013 2014 2015 2016 2017 2018
+CostOfGoodsAndServicesSold,FacilityMembershipAndOperationsCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,FranchiseCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,HealthCareOrganizationMedicalSuppliesAndDrugsExpense,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,InventoryFirmPurchaseCommitmentLoss,1,2018,2018,2018
+CostOfGoodsAndServicesSold,InventoryWriteDown,1,2011,2013,2011 2012 2013
+CostOfGoodsAndServicesSold,LicenseCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,LossOnContracts,1,2011,2018,2011 2012 2013 2014 2015 2016 2017 2018
+CostOfGoodsAndServicesSold,MaintenanceCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,ProductionRelatedImpairmentsOrCharges,1,2011,2018,2011 2012 2013 2014 2015 2016 2017 2018
+CostOfGoodsAndServicesSold,RealEstateTaxesAndInsurance,1,2011,2013,2011 2012 2013
+CostOfGoodsAndServicesSold,RelatedPartyCosts,1,2011,2018,2011 2012 2013 2014 2015 2016 2017 2018
+CostOfGoodsAndServicesSold,ServiceManagementCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsAndServicesSold,TimberOperatingCosts,1,2011,2013,2011 2012 2013
+CostOfGoodsAndServicesSoldDepreciation,OperatingLeasesIncomeStatementDepreciationExpenseOnPropertySubjectToOrHeldForLease,1,2018,2018,2018
+CostOfGoodsAndServicesSoldDepreciationAndAmortization,CostOfGoodsAndServicesSoldAmortization,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsAndServicesSoldDepreciationAndAmortization,CostOfGoodsAndServicesSoldDepreciation,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfGoodsSold,CostOfGoodsSoldDepreciationDepletionAndAmortization,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSold,CostOfGoodsSoldDirectLabor,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSold,CostOfGoodsSoldDirectMaterials,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSold,CostOfGoodsSoldDirectTaxesAndLicensesCosts,1,2011,2015,2011 2012 2013 2014 2015
+CostOfGoodsSold,CostOfGoodsSoldMaintenanceCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSold,CostOfGoodsSoldOverhead,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSold,CostOfTrustAssetsSoldToPayExpenses,1,2012,2017,2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldDepreciation,OperatingLeasesIncomeStatementDepreciationExpenseOnPropertySubjectToOrHeldForLease,1,2014,2017,2014 2015 2016 2017
+CostOfGoodsSoldDepreciationAndAmortization,CostOfGoodsSoldAmortization,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldDepreciationAndAmortization,CostOfGoodsSoldDepreciation,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldDepreciationDepletionAndAmortization,CostOfGoodsSoldDepletion,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldDepreciationDepletionAndAmortization,CostOfGoodsSoldDepreciationAndAmortization,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldElectric,CostOfDomesticRegulatedElectric,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldElectric,CostOfPurchasedPower,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldElectric,CostOfTransmission,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldElectric,CostOfWorldwideUnregulatedElectric,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldElectric,ElectricProductionExpense,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization,CostDirectLabor,1,2018,2018,2018
+CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization,CostDirectMaterial,1,2018,2018,2018
+CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization,CostMaintenance,1,2018,2018,2018
+CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization,CostOfGoodsAndServicesSoldOverhead,1,2018,2018,2018
+CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization,CostOfGoodsSoldDirectLabor,1,2014,2017,2014 2015 2016 2017
+CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization,CostOfGoodsSoldDirectMaterials,1,2014,2017,2014 2015 2016 2017
+CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization,CostOfGoodsSoldDirectTaxesAndLicensesCosts,1,2014,2015,2014 2015
+CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization,CostOfGoodsSoldMaintenanceCosts,1,2014,2017,2014 2015 2016 2017
+CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization,CostOfGoodsSoldOverhead,1,2014,2017,2014 2015 2016 2017
+CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization,CostOfTrustAssetsSoldToPayExpenses,1,2014,2018,2014 2015 2016 2017 2018
+CostOfGoodsSoldOilAndGas,BinderCosts,1,2011,2015,2011 2012 2013 2014 2015
+CostOfGoodsSoldOilAndGas,BrokeredNaturalGasMarginCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,CostOfNaturalGasPurchases,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,CostOfOtherAlternativeEnergy,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,CostOfPurchasedOilAndGas,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,ExplorationAndProductionCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,FacilityCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,GasGatheringTransportationMarketingAndProcessingCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,LeaseOperatingExpense,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,MarineServicesCosts,1,2011,2015,2011 2012 2013 2014 2015
+CostOfGoodsSoldOilAndGas,NaturalGasMidstreamCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,OilAndGasProductionExpense,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,OtherUtilityCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,PropaneCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,RefiningAndMarketingCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfGoodsSoldOilAndGas,SyntheticFuelCosts,1,2011,2015,2011 2012 2013 2014 2015
+CostOfGoodsSoldOilAndGas,WellServiceExpense,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRealEstateRevenue,ConcessionsCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRealEstateRevenue,ConstructionAndDevelopmentCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRealEstateRevenue,CostOfRealEstateSales,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRealEstateRevenue,CostsOfRealEstateServicesAndLandSales,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRealEstateRevenue,DirectCostsOfHotels,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRealEstateRevenue,DirectCostsOfLeasedAndRentedPropertyOrEquipment,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRealEstateRevenue,OwnedPropertyManagementCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRealEstateRevenue,RetailLandSalesImprovementCostsPriorSales,1,2011,2015,2011 2012 2013 2014 2015
+CostOfRealEstateRevenue,TimeShareCarryingCharges,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRealEstateRevenue,TimeShareCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRealEstateSales,CostOfRealEstateSalesExcludingInterest,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRealEstateSales,CostOfRealEstateSalesInterest,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRevenue,AmortizationOfCapitalizedValueOfBusinessAcquiredAsset,1,2014,2014,2014
+CostOfRevenue,AmortizationOfMortgageServicingRightsMSRs,1,2014,2026,2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,AmortizationOfValueOfBusinessAcquiredVOBA,1,2014,2026,2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,BenefitClaimsInExcessOfRelatedPolicyholderBalances,1,2014,2015,2014 2015
+CostOfRevenue,ContractAdministrationExpense,1,2014,2015,2014 2015
+CostOfRevenue,CostOfGoodsAndServicesSold,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,DeferredPolicyAcquisitionCostAmortizationExpense,1,2014,2026,2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,DeferredSalesInducementsAmortizationExpense,1,2014,2026,2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,FinancialServicesCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfRevenue,FinancingInterestExpense,1,2018,2026,2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,InsuranceTax,1,2014,2022,2014 2015 2016 2017 2018 2019 2020 2021 2022
+CostOfRevenue,InterestCreditedToPolicyholdersAccountBalances,1,2014,2026,2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,LiabilityForFuturePolicyBenefitsPeriodExpense,1,2014,2025,2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025
+CostOfRevenue,MerchantMarineOperatingDifferentialSubsidy,-1,2018,2026,2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,OtherCostOfOperatingRevenue,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,PolicyholderBenefitsAndClaimsIncurredNet,1,2018,2026,2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,PolicyholderDividends,1,2014,2026,2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,PresentValueOfFutureInsuranceProfitsAmortizationExpense1,1,2015,2026,2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfRevenue,ProvisionForLoanLeaseAndOtherLosses,1,2018,2026,2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostOfServices,CostOfServicesDepreciationAndAmortization,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServices,CostOfServicesDirectLabor,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServices,CostOfServicesDirectMaterials,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServices,CostOfServicesDirectTaxesAndLicensesCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServices,CostOfServicesEnergyServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServices,CostOfServicesEnvironmentalRemediation,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServices,CostOfServicesLicensesAndMaintenanceAgreements,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServices,CostOfServicesLicensesAndServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServices,CostOfServicesMaintenanceCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServices,CostOfServicesOverhead,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServices,EmbeddedServiceCosts,1,2011,2015,2011 2012 2013 2014 2015
+CostOfServices,OtherCostOfServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServices,TechnologyServicesCosts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServicesDepreciationAndAmortization,CostOfServicesAmortization,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfServicesDepreciationAndAmortization,CostOfServicesDepreciation,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+CostOfTransmission,CostOfTransmissionAffiliates,1,2011,2015,2011 2012 2013 2014 2015
+CostOfTransmission,CostOfTransmissionOther,1,2011,2015,2011 2012 2013 2014 2015
+CostsAndExpenses,CostOfRevenue,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+CostsAndExpenses,OperatingExpenses,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+DirectFinancingLeaseSellingLoss,CostOfGoodsSoldDirectFinancingLease,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+DirectOperatingCosts,CostOfGoodsAndServicesSoldDepreciationAndAmortization,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+DirectOperatingCosts,CostOfGoodsAndServicesSoldOverhead,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+DirectOperatingCosts,CostOfGoodsSoldElectric,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+DirectOperatingCosts,CostOfGoodsSoldOilAndGas,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+DirectOperatingCosts,CostOfOilAndGasProspects,1,2011,2015,2011 2012 2013 2014 2015
+DirectOperatingCosts,CostOfOtherManufacturedProducts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+DirectOperatingCosts,CostOfPurchasedWater,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+DirectOperatingCosts,CostOfSecondaryProcessing,1,2011,2015,2011 2012 2013 2014 2015
+GainLossOnSaleOfTrustAssetsToPayExpenses,CostOfTrustAssetsSoldToPayExpenses,-1,2016,2026,2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+GrossProfit,CostOfRevenue,-1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+GrossProfit,Revenues,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments,Revenues,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+MineralExtractionProcessingAndMarketingCosts,CostOfChemicals,1,2011,2015,2011 2012 2013 2014 2015
+MineralExtractionProcessingAndMarketingCosts,CostOfCoalProductsAndServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+MineralExtractionProcessingAndMarketingCosts,CostOfGoldProductsAndServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+NoninterestIncome,RevenueFromContractWithCustomerExcludingAssessedTax,1,2020,2026,2020 2021 2022 2023 2024 2025 2026
+NoninterestIncome,RevenueFromContractWithCustomerIncludingAssessedTax,1,2020,2026,2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,AccretionExpense,1,2011,2011,2011
+OperatingCostsAndExpenses,AccretionExpenseIncludingAssetRetirementObligations,1,2012,2026,2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,AssetRetirementObligationAccretionExpense,1,2011,2011,2011
+OperatingCostsAndExpenses,BusinessCombinationIntegrationRelatedCosts,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,CarryingCostsPropertyAndExplorationRights,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,CustodyFees,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,DepreciationAndAmortization,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,ExplorationExpense,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,GainLossRelatedToLitigationSettlement,-1,2014,2026,2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,InsuranceRecoveries,-1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,LegalFees,1,2011,2013,2011 2012 2013
+OperatingCostsAndExpenses,LoanPortfolioExpense,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,MalpracticeLossContingencyClaimsIncurredNet,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,OtherCostAndExpenseOperating,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,PreOpeningCosts,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,ProfessionalAndContractServicesExpense,1,2014,2026,2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,RecapitalizationCosts,1,2013,2026,2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,ResearchAndDevelopmentExpense,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,RestructuringSettlementAndImpairmentProvisions,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,RoyaltyExpense,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,SponsorFees,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,TrusteeFees,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingCostsAndExpenses,UnsolicitedTenderOfferCosts,1,2014,2026,2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingExpenses,OperatingCostsAndExpenses,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingIncomeLoss,CostsAndExpenses,-1,2011,2013,2011 2012 2013
+OperatingIncomeLoss,GrossProfit,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+OperatingIncomeLoss,Revenues,1,2011,2013,2011 2012 2013
+Revenues,AmortizationOfLeaseIncentives,-1,2018,2020,2018 2019 2020
+Revenues,BrokerageCommissionsRevenue,1,2018,2021,2018 2019 2020 2021
+Revenues,ContractuallySpecifiedServicingFeesLateFeesAndAncillaryFeesEarnedInExchangeForServicingFinancialAssets,1,2018,2026,2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,DirectFinancingLeaseInterestIncome,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,DirectFinancingLeaseRevenue,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,DirectFinancingLeaseVariableLeaseIncome,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,FeeIncome,1,2023,2026,2023 2024 2025 2026
+Revenues,FeesAndCommissions,1,2011,2013,2011 2012 2013
+Revenues,FinancialServicesRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+Revenues,GainLossOnInvestmentsExcludingOtherThanTemporaryImpairments,1,2011,2013,2011 2012 2013
+Revenues,GainsLossesOnSalesOfAssets,1,2011,2026,2011 2012 2013 2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,InsuranceAgencyManagementFee,1,2018,2026,2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,InsuranceCommissionsAndFees,1,2018,2026,2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,InterestAndDividendIncomeOperating,1,2011,2013,2011 2012 2013
+Revenues,InterestIncomeExpenseAfterProvisionForLoanLoss,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,InterestIncomeOperating,1,2011,2013,2011 2012 2013
+Revenues,InvestmentBankingRevenue,1,2014,2021,2014 2015 2016 2017 2018 2019 2020 2021
+Revenues,MarketDataRevenue,1,2014,2021,2014 2015 2016 2017 2018 2019 2020 2021
+Revenues,NetInvestmentIncome,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,NoninterestIncome,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,OperatingLeaseLeaseIncome,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,OperatingLeasesIncomeStatementLeaseRevenue,1,2018,2018,2018
+Revenues,OtherIncome,1,2011,2026,2011 2012 2013 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,OtherOperatingIncome,1,2014,2026,2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,PolicyChargesInsurance,1,2011,2012,2011 2012
+Revenues,PremiumsEarnedNet,1,2011,2026,2011 2012 2013 2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,PrincipalTransactionsRevenue,1,2018,2021,2018 2019 2020 2021
+Revenues,RealEstateRevenueNet,1,2011,2013,2011 2012 2013
+Revenues,RealizedInvestmentGainsLosses,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,RevenueFromLeasedAndOwnedHotels,1,2011,2013,2011 2012 2013
+Revenues,RevenueFromRelatedParties,1,2018,2022,2018 2019 2020 2021 2022
+Revenues,RevenuesExcludingInterestAndDividends,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,SaleOfTrustAssetsToPayExpenses,1,2018,2026,2018 2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,SalesRevenueNet,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+Revenues,SalesTypeLeaseInterestIncome,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,SalesTypeLeaseRevenue,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,SalesTypeLeaseVariableLeaseIncome,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,SubleaseIncome,1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026
+Revenues,UnderwritingIncomeLoss,1,2014,2021,2014 2015 2016 2017 2018 2019 2020 2021
+RevenuesNetOfInterestExpense,Revenues,1,2011,2026,2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026
+SalesRevenueFromEnergyCommoditiesAndServices,SalesRevenueEnergyServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueGoodsNet,SalesDiscountsReturnsAndAllowancesGoods,-1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueGoodsNet,SalesRevenueGoodsGross,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,AdmissionsRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,AdvertisingRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,CargoAndFreightRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,ClearingFeesRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,ConstructionMaterialsRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,FranchiseRevenue,1,2011,2013,2011 2012 2013
+SalesRevenueNet,FranchisorRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,HealthCareOrganizationRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,LicensesRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,MembershipDuesRevenueOnGoing,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,OilAndGasRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,OperatingLeasesIncomeStatementLeaseRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,OtherSalesRevenueNet,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,PassengerRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,PhaseInPlanAmountOfCapitalizedCostsRecovered,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,RealEstateRevenueNet,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,RecyclingRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,ReimbursementRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,RevenueFromEnrollmentAndRegistrationFeesExcludingHospitalityEnterprises,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,RevenueFromGrants,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,RevenueFromLeasedAndOwnedHotels,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,RevenueFromRelatedParties,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,RevenueMineralSales,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,RevenueOtherManufacturedProducts,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,RevenueSteamProductsAndServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,RoyaltyRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,SaleOfTrustAssetsToPayExpenses,1,2012,2017,2012 2013 2014 2015 2016 2017
+SalesRevenueNet,SalesOfOilAndGasProspects,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,SalesRevenueFromEnergyCommoditiesAndServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,SalesRevenueGoodsNet,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,SalesRevenueServicesNet,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,SecondaryProcessingRevenue,1,2011,2015,2011 2012 2013 2014 2015
+SalesRevenueNet,ShippingAndHandlingRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,SubscriptionRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,TimberRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,UtilityRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueNet,VehicleTollRevenue,1,2011,2015,2011 2012 2013 2014 2015
+SalesRevenueServicesNet,ContractsRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueServicesNet,LicenseAndMaintenanceRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueServicesNet,LicenseAndServicesRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueServicesNet,MaintenanceRevenue,1,2011,2013,2011 2012 2013
+SalesRevenueServicesNet,RevenueCoalServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueServicesNet,RevenueEnvironmentalRemediationServices,1,2011,2015,2011 2012 2013 2014 2015
+SalesRevenueServicesNet,RevenueOilAndGasServices,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueServicesNet,SalesAllowancesServices,-1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueServicesNet,SalesDiscountsServices,-1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueServicesNet,SalesRevenueServicesGross,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesRevenueServicesNet,TechnologyServicesRevenue,1,2011,2017,2011 2012 2013 2014 2015 2016 2017
+SalesTypeLeaseSellingProfitLoss,CostOfGoodsSoldSalesTypeLease,-1,2019,2026,2019 2020 2021 2022 2023 2024 2025 2026

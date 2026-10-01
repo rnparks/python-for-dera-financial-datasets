@@ -211,6 +211,7 @@ uv run python tools/fetch_sp500_history.py --batch 0    # S&P 500 membership, mo
 uv run python tools/fetch_ticker_history.py --batch 0   # CIK↔ticker via the Internet Archive; resumes
 uv run python tools/fetch_cover_page_classes.py --sp500 # share-class mappings from 10-K cover pages
 uv run python tools/build_calendar.py                   # NYSE trading calendar, two years ahead
+uv run python tools/fetch_usgaap_cost_elements.py       # FASB taxonomy: cost-of-revenue element years and calc tree
 ```
 
 ## Keeping the documentation current
