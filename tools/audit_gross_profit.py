@@ -51,10 +51,13 @@ PERIODS_SQL = """
 CREATE TEMP TABLE audit_f AS
 SELECT n.cik, n.value_date, n.tag, max(n.value) AS value
 FROM sec_silver.num_silver n
-JOIN sec_silver.sub_silver s ON s.adsh = n.adsh
+JOIN sec_reference.company c ON c.cik = n.cik
 WHERE n.qtrs = 4 AND n.segments IS NULL AND n.coreg IS NULL AND n.uom = 'USD' AND n.rank_pit = 1
   AND n.value_date BETWEEN DATE '2011-01-01' AND DATE '2025-12-31'
-  AND (s.sic IS NULL OR s.sic < 6000 OR s.sic >= 7000)
+  -- non-financial decided once per company (latest SIC), not per filing: a company that changed
+  -- SIC between filings (trucking to real estate) would otherwise lose some of its facts here
+  -- while the resolver, rightly, uses them all
+  AND (c.sic_latest IS NULL OR c.sic_latest < 6000 OR c.sic_latest >= 7000)
   AND n.tag = ANY(%(tags)s)
 GROUP BY 1, 2, 3;
 """

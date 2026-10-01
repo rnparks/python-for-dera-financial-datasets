@@ -218,8 +218,8 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
 -- usgaap_cost_calc_arcs.csv). The order was the reverse until 2026-10-01.
 -- Measured that day on non-financial annual periods (2011-2025, pit) that
 -- file both cost tags and a GrossProfit: revenue - CostOfRevenue reproduces
--- the filed gross profit within 1% in 85.3% of 1,363 periods, revenue -
--- CostOfGoodsAndServicesSold in 66.0% (70.4% against 25.4% in the 582
+-- the filed gross profit within 1% in 85.3% of 1,350 periods, revenue -
+-- CostOfGoodsAndServicesSold in 66.1% (70.5% against 25.6% in the 577
 -- where the two differ); across all periods with a filed gross profit and
 -- a formula, agreement went from 95.3% to 96.1%. Every figure here comes
 -- from tools/audit_gross_profit.py (docs/audits/gross_profit.md).
@@ -490,9 +490,9 @@ CREATE TABLE sec_gold.concept_formula (
 INSERT INTO sec_gold.concept_formula_variant (concept, variant, sic_prefixes, guard_match, guard_except, notes) VALUES
     ('gross_profit',   1, '{}', NULL, NULL, 'Revenue minus cost of revenue'),
     ('gross_profit',   2, '{}', '(Cost|Expense)', '(Selling|General|Administrative|Marketing|Advertising|Research|Development|Interest|Tax|Depreciation|Amortization|Compensation|ShareBased|StockBased|Restructuring|Impairment|Nonoperating|Acquisition|Merger|Severance|Litigation|Legal|Financing|Debt|Lease|Pension|Retirement|Benefit|Insurance|Exploration|Accretion|Transaction|Issuance|Offering|Organization|Startup|PreOpening|Professional)',
-        'Revenue minus the goods and (if filed) services components, when no cost total is filed. Guarded: a custom-namespace cost line in the same period means the components are not the whole cost (Oracle files CostOfServices beside custom cloud and hardware cost lines). Measured 2026-10-01 on non-financial annual periods that also file GrossProfit: 95.5% within 1% guarded (4,237), 90.1% for the 757 the guard blocks.'),
+        'Revenue minus the goods and (if filed) services components, when no cost total is filed. Guarded: a custom-namespace cost line in the same period means the components are not the whole cost (Oracle files CostOfServices beside custom cloud and hardware cost lines). Measured 2026-10-01 on non-financial annual periods that also file GrossProfit: 95.5% within 1% guarded (4,218), 90.1% for the 750 the guard blocks.'),
     ('gross_profit',   3, '{}', '(Cost|Expense)', '(Selling|General|Administrative|Marketing|Advertising|Research|Development|Interest|Tax|Depreciation|Amortization|Compensation|ShareBased|StockBased|Restructuring|Impairment|Nonoperating|Acquisition|Merger|Severance|Litigation|Legal|Financing|Debt|Lease|Pension|Retirement|Benefit|Insurance|Exploration|Accretion|Transaction|Issuance|Offering|Organization|Startup|PreOpening|Professional)',
-        'Revenue minus the services component, for a services-only filer with no cost total. Guarded as variant 2: 93.8% within 1% guarded (434 periods), 88.1% for the 118 blocked.'),
+        'Revenue minus the services component, for a services-only filer with no cost total. Guarded as variant 2: 93.8% within 1% guarded (436 periods), 87.8% for the 115 blocked.'),
     ('free_cash_flow', 1, '{}', NULL, NULL, 'Operating cash flow minus capex'),
     ('total_debt',     1, '{}', NULL, NULL, 'The split: noncurrent (required) plus current'),
     ('total_debt',     2, '{60,63,6798}',
@@ -510,11 +510,10 @@ INSERT INTO sec_gold.concept_formula (concept, variant, operand, coefficient, re
     -- The component variants. Each REQUIRES a cost line: with every cost
     -- operand optional the resolver's at-least-one rule is met by revenue
     -- alone, and gross profit would come back equal to revenue. Measured
-    -- 2026-10-01, before the guard: they resolve 2,863 more non-financial
-    -- annual periods (2011-2025) where no GrossProfit is filed, taking
-    -- periods with a cost or gross-profit tag from 91.9% to 97.4%
-    -- resolved. The custom-cost-line guard (variant table) keeps 2,162
-    -- of those 2,863.
+    -- 2026-10-01, before the guard: they resolve 2,824 more non-financial
+    -- annual periods (2011-2025) where no GrossProfit is filed. The
+    -- custom-cost-line guard (variant table) keeps 2,134 of 2,824
+    -- (docs/audits/gross_profit.md).
     ('gross_profit',   2, 'revenue',             1, TRUE,  'Revenue minus goods (required) and services (optional)'),
     ('gross_profit',   2, 'cost_of_goods',      -1, TRUE,  NULL),
     ('gross_profit',   2, 'cost_of_services',   -1, FALSE, NULL),
