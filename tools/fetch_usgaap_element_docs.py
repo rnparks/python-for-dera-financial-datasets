@@ -19,6 +19,8 @@ that year (balance sheet sfp-*, income statement soi-*, cash flows scf-*,
 equity sheci-*, comprehensive income soc-*).
 
 WHICH ELEMENTS. The union of
+  - every tag in data/reference/compustat_item_map.csv (so every mapped tag
+    is always described),
   - every element named in --elements (one per line), and
   - every descendant, to --depth levels, of the statement roots below in
     that year's calculation linkbases,
@@ -145,6 +147,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--depth", type=int, default=3)
     args = ap.parse_args(argv)
     wanted = set()
+    item_map = ROOT / "data" / "reference" / "compustat_item_map.csv"
+    if item_map.exists():
+        with item_map.open() as f:
+            for r in csv.DictReader(f):
+                if r["rule"] == "tag":
+                    wanted.add(r["term"])
+                elif r["term"].startswith("tag:"):
+                    wanted.add(r["term"][4:])
     if args.elements:
         wanted = {line.strip() for line in Path(args.elements).read_text().splitlines() if line.strip()}
 

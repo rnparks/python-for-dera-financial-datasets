@@ -1,0 +1,14 @@
+item,base_item,kind,notes
+atq,at,instant,Balance at the fiscal quarter end.
+cheq,che,instant,
+ibq,ib,quarter,Three-month figure (qtrs = 1); Q4 is the fiscal year less nine months.
+niq,ni,quarter,
+saleq,sale,quarter,
+revtq,revt,quarter,
+txtq,txt,quarter,
+xrdq,xrd,quarter,
+epspxq,epspx,quarter,Per-share: Q4 is not derived from the year (EPS does not add across quarters).
+epspiq,epspi,quarter,
+capxy,capx,ytd,Year-to-date (qtrs = fiscal quarter number), as Compustat's *Y items.
+oancfy,oancf,ytd,
+cshprq,_cshpr,quarter,Weighted average basic shares used for EPS.

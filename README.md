@@ -200,6 +200,12 @@ against 503 on today's page. The S&P 400 (since 2011) and S&P 600 (since 2018)
 are replayed the same way, so a mid-cap or small-cap cross-section is the index
 of its day too.
 
+## Compustat-style items
+
+`dera_pipeline/compustat.py` turns XBRL facts into Compustat items (AT, CEQ, DLC,
+XSGA, ...) by a cited map, for replicating published predictors; see
+[`docs/compustat_items.md`](docs/compustat_items.md).
+
 ## Reference data
 
 Tracked files under `data/reference/`, all regenerable — see

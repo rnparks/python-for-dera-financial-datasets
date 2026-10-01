@@ -483,3 +483,69 @@ def test_parse_labels_resolves_locator_arc_and_role():
 def test_descendants_stops_at_depth():
     children = {"A": ["B"], "B": ["C"], "C": ["D"]}
     assert fued.descendants(children, ["A"], 2) == {"A", "B", "C"}
+
+
+# ---------------------------------------------------------------------
+# compustat: Compustat-style items from XBRL tags
+# ---------------------------------------------------------------------
+
+from dera_pipeline import compustat  # noqa: E402
+
+
+def _map(tmp_path, rows):
+    p = tmp_path / "map.csv"
+    with p.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["item", "period", "rule", "variant", "priority", "term", "coefficient", "required", "notes"])
+        w.writerows(rows)
+    return compustat.load_map(p)
+
+
+def test_tag_ladder_takes_the_first_priority_with_a_value(tmp_path):
+    items = _map(tmp_path, [["x", "instant", "tag", "", "2", "B", "1", "", ""],
+                            ["x", "instant", "tag", "", "1", "A", "1", "", ""]])
+    assert compustat.resolve_one({"A": 1.0, "B": 2.0}, items) == {"x": 1.0}
+    assert compustat.resolve_one({"B": 2.0}, items) == {"x": 2.0}
+
+
+def test_formula_required_optional_and_at_least_one(tmp_path):
+    items = _map(tmp_path, [["seq", "instant", "tag", "", "1", "SE", "1", "", ""],
+                            ["pstk", "instant", "tag", "", "1", "PS", "1", "", ""],
+                            ["ceq", "instant", "formula", "1", "", "item:seq", "1", "TRUE", ""],
+                            ["ceq", "instant", "formula", "1", "", "item:pstk", "-1", "FALSE", ""],
+                            ["aco", "instant", "formula", "1", "", "tag:P", "1", "FALSE", ""],
+                            ["aco", "instant", "formula", "1", "", "tag:O", "1", "FALSE", ""]])
+    assert compustat.resolve_one({"SE": 100.0, "PS": 10.0}, items)["ceq"] == 90.0
+    assert compustat.resolve_one({"SE": 100.0}, items)["ceq"] == 100.0       # optional term is zero
+    assert "ceq" not in compustat.resolve_one({"PS": 10.0}, items)           # required term missing
+    assert "aco" not in compustat.resolve_one({}, items)                     # none present: nothing, not zero
+    assert compustat.resolve_one({"O": 3.0}, items)["aco"] == 3.0
+
+
+def test_filed_tag_beats_formula(tmp_path):
+    items = _map(tmp_path, [["che", "instant", "tag", "", "1", "Total", "1", "", ""],
+                            ["che", "instant", "formula", "1", "", "tag:Cash", "1", "TRUE", ""]])
+    assert compustat.resolve_one({"Total": 5.0, "Cash": 4.0}, items)["che"] == 5.0
+
+
+def test_cycle_and_unknown_item_are_refused(tmp_path):
+    cyc = _map(tmp_path, [["a", "instant", "formula", "1", "", "item:b", "1", "TRUE", ""],
+                          ["b", "instant", "formula", "1", "", "item:a", "1", "TRUE", ""]])
+    with pytest.raises(ValueError, match="cycle"):
+        compustat.evaluation_order(cyc)
+    unk = _map(tmp_path, [["a", "instant", "formula", "1", "", "item:zz", "1", "TRUE", ""]])
+    with pytest.raises(ValueError, match="unknown item"):
+        compustat.evaluation_order(unk)
+
+
+def test_period_type_must_match_the_taxonomy(tmp_path):
+    items = _map(tmp_path, [["x", "instant", "tag", "", "1", "Revenues", "1", "", ""]])
+    probs = compustat.validate(items, {"Revenues": {"period_type": "duration"}})
+    assert probs and "duration" in probs[0]
+
+
+def test_the_shipped_map_is_sound():
+    items = compustat.load_map()
+    assert compustat.validate(items, compustat.load_element_docs()) == []
+    q = {r["base_item"] for r in compustat.load_quarterly()}
+    assert q <= set(items)

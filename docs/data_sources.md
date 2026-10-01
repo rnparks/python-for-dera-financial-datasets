@@ -424,6 +424,7 @@ taxonomy's structure. Cover-page `dei` elements such as
 | `wayback_stamps.json` | — | The archive captures the last crosswalk run resolved to, keyed by the probe set that produced them |
 | `GAAP Taxonomy 2024.xlsx` | — | Reference taxonomy, not loaded by the pipeline |
 | `revenue_labels*.xlsx` | — | Scratch analysis of revenue tag labels |
+| `compustat_item_map.csv`, `compustat_quarterly_items.csv` | 191, 13 | Compustat item → US-GAAP tag ladders and formulas, each row citing S&P's and FASB's definitions; evaluated by `dera_pipeline/compustat.py`, documented in `docs/compustat_items.md` |
 
 ---
 
