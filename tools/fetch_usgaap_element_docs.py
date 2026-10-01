@@ -87,10 +87,10 @@ def parse_labels(xml: bytes, role: str) -> dict[str, str]:
     root = ET.fromstring(xml)
     loc = {}
     for lk in root.iter(f"{{{NS['link']}}}labelLink"):
-        for l in lk.iter(f"{{{NS['link']}}}loc"):
-            href = l.get(f"{XL}href", "")
+        for locator in lk.iter(f"{{{NS['link']}}}loc"):
+            href = locator.get(f"{XL}href", "")
             if "#us-gaap_" in href:
-                loc[l.get(f"{XL}label")] = href.split("#us-gaap_", 1)[1]
+                loc[locator.get(f"{XL}label")] = href.split("#us-gaap_", 1)[1]
         res = {}
         for r in lk.iter(f"{{{NS['link']}}}label"):
             if r.get(f"{XL}role") == role:
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     wanted = set()
     if args.elements:
-        wanted = {l.strip() for l in Path(args.elements).read_text().splitlines() if l.strip()}
+        wanted = {line.strip() for line in Path(args.elements).read_text().splitlines() if line.strip()}
 
     newest = load_year(YEARS[0])
     children = defaultdict(list)
