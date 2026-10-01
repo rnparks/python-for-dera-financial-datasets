@@ -23,7 +23,7 @@ data. Six acquisition paths, in rough order of how much they matter:
 | 4 | Wikipedia S&P index pages, today and (S&P 500) every month since 2008 | `data/reference/sp1500_universe.csv`, `sp500_history.csv.gz` | 102 KB, 0.7 MB | `tools/fetch_sp1500.py`, `tools/fetch_sp500_history.py` |
 | 4b | Issuer 10-K cover pages (inline XBRL) | `data/reference/share_class_map.csv`, `cover_page_classes.csv` | small | `tools/fetch_cover_page_classes.py` |
 | 5 | NYSE trading calendar | `data/reference/trading_calendar.csv` | 256 KB | `tools/build_calendar.py` |
-| 6 | FASB US-GAAP taxonomy archives, 2011–2026 | `data/reference/usgaap_cost_elements.csv`, `usgaap_cost_calc_arcs.csv` | small (archives cached in `data/taxonomy/`, not tracked) | `tools/fetch_usgaap_cost_elements.py` |
+| 6 | FASB US-GAAP taxonomy archives, 2011–2026 | `data/reference/usgaap_cost_elements.csv`, `usgaap_cost_calc_arcs.csv`, `usgaap_element_docs.csv` | small (archives cached in `data/taxonomy/`, not tracked) | `tools/fetch_usgaap_cost_elements.py`, `tools/fetch_usgaap_element_docs.py` |
 
 Plus a small set of hand-maintained files described under [Manual inputs](#manual-inputs).
 
@@ -404,6 +404,16 @@ total. The "excluding depreciation" elements are a different definition of cost
 Gap: the 2009 and 2010 archives are not on `xbrl.fasb.org` (HTTP 404), so
 element lifespans start at 2011 even where an element is older.
 
+`tools/fetch_usgaap_element_docs.py` reads the same archives for the meaning of
+each element: its standard label, documentation definition, period type
+(instant or duration), debit/credit balance, and its parents and children in
+every statement calculation linkbase (`sfp`, `soi`, `scf`, `sheci`, `soc`) of the
+newest year that declares it. It writes `data/reference/usgaap_element_docs.csv`
+for the elements named in `--elements` plus every element within `--depth`
+calculation levels of the statement totals, so mapping candidates come from the
+taxonomy's structure. Cover-page `dei` elements such as
+`EntityCommonStockSharesOutstanding` are a separate taxonomy and not described.
+
 ## Manual inputs
 
 | File | Rows | What it is |
@@ -497,6 +507,7 @@ uv run python tools/fetch_sp1500.py              # today's S&P 1500
 uv run python tools/fetch_cover_page_classes.py --sp500 --write-map   # dual-class mappings
 uv run python tools/fetch_usgaap_cost_elements.py   # taxonomy element years and calc arcs (evidence only)
 uv run python tools/audit_gross_profit.py          # regenerates docs/audits/gross_profit.md (read-only)
+uv run python tools/fetch_usgaap_element_docs.py    # FASB label, definition, period type and calc context per element
 uv run dera rebuild-reference                    # CSVs -> spine (in place) -> security model -> refresh what changed
 ```
 

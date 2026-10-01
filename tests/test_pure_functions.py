@@ -26,6 +26,7 @@ sys.path.insert(0, str(config.PROJECT_ROOT / "tools"))
 import check_docs
 import fetch_ticker_history as fth
 import fetch_usgaap_cost_elements as fuce
+import fetch_usgaap_element_docs as fued
 
 # ---------------------------------------------------------------------
 # filings.classify: anchored, not prefix-matched
@@ -451,3 +452,34 @@ def test_family_pattern_keeps_cost_elements_and_drops_others():
         assert fuce.FAMILY.match(e)
     for e in ["NetIncomeLoss", "OperatingExpenses", "Assets"]:
         assert not fuce.FAMILY.match(e)
+
+
+# ---------------------------------------------------------------------
+# fetch_usgaap_element_docs: schema, labels, calculation descendants
+# ---------------------------------------------------------------------
+
+def test_parse_schema_reads_period_type_and_balance():
+    xsd = (b"<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema' xmlns:xbrli='http://www.xbrl.org/2003/instance'>"
+           b"<xs:element name='DebtCurrent' type='xbrli:monetaryItemType' xbrli:balance='credit' xbrli:periodType='instant'/>"
+           b"<xs:element name='Revenues' type='xbrli:monetaryItemType' xbrli:balance='credit' xbrli:periodType='duration'/>"
+           b"</xs:schema>")
+    out = fued.parse_schema(xsd)
+    assert out["DebtCurrent"]["period_type"] == "instant" and out["DebtCurrent"]["balance"] == "credit"
+    assert out["Revenues"]["period_type"] == "duration"
+
+
+def test_parse_labels_resolves_locator_arc_and_role():
+    xml = (b"<link:linkbase xmlns:link='http://www.xbrl.org/2003/linkbase' xmlns:xlink='http://www.w3.org/1999/xlink'>"
+           b"<link:labelLink>"
+           b"<link:loc xlink:href='us-gaap.xsd#us-gaap_DebtCurrent' xlink:label='loc_D'/>"
+           b"<link:label xlink:label='lab_D' xlink:role='http://www.xbrl.org/2003/role/documentation'>Amount of debt.</link:label>"
+           b"<link:label xlink:label='lab_D' xlink:role='http://www.xbrl.org/2003/role/label'>Debt, Current</link:label>"
+           b"<link:labelArc xlink:from='loc_D' xlink:to='lab_D'/>"
+           b"</link:labelLink></link:linkbase>")
+    assert fued.parse_labels(xml, fued.DOC_ROLE) == {"DebtCurrent": "Amount of debt."}
+    assert fued.parse_labels(xml, fued.LABEL_ROLE) == {"DebtCurrent": "Debt, Current"}
+
+
+def test_descendants_stops_at_depth():
+    children = {"A": ["B"], "B": ["C"], "C": ["D"]}
+    assert fued.descendants(children, ["A"], 2) == {"A", "B", "C"}
