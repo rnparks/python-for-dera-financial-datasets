@@ -116,10 +116,17 @@ Available for SFAS 87 adopters, the additional minimum liability ended with SFAS
 158 (2006), and the over/underfunded splits with SFAS 132. Audit: the plan's own
 `DefinedBenefitPlanFundedStatusOfPlan`, chosen by the same rule, must equal plan
 assets minus PBO; `tools/export_notes_items.py` prints the share that does. As of
-2026-10-01, on the archives through 2016q2: 3,458 of 3,735 reports within 1% of the
-PBO, and 142 more where the filer reported the funded status with its sign
-reversed (an underfunded plan as a positive number), a sign error in that
-element rather than in assets or PBO.
+2026-10-01, all 80 archives: 11,465 of 12,013 reports within 1% of the PBO (95.4%),
+and 96 more where the filer reported the funded status with its sign reversed (an
+underfunded plan as a positive number), a sign error in that element rather than
+in assets or PBO.
+
+Coverage, as of 2026-10-01 (`notes_items_coverage.csv`): pensions 13,653 annual
+reports of 1,736 companies, segments 80,349 segment-years of 4,429, customers 69,764
+of 4,720, AOCI components 14,208 reports of 2,633. Footnote facts are sparse for
+fiscal 2009–2010 (pensions 0 and 193 companies, segments 2 and 91) and reach
+1,000–2,000 companies a year from 2012: the SEC phased in detailed footnote tagging
+after each filer's first XBRL year.
 
 **Segments** (`segments.parquet`; Compustat segment file, `stype` BUSSEG). One row
 per annual report and member of `StatementBusinessSegmentsAxis`, from a revenue
