@@ -111,24 +111,53 @@ LANGUAGE sql STABLE AS $$
     ),
     -- A formula concept (gross_profit, free_cash_flow) at a period where
     -- no tag resolved it, from operands that share the period; a
-    -- required operand missing means no value.
-    derived AS (
-        SELECT fm.concept, o.value_date, o.qtrs,
+    -- required operand missing means no value. The variants are tried in
+    -- order and the first that resolves wins, as in get_canonical, so a
+    -- quarter and its fiscal year come from the same rule (gross_profit's
+    -- component variants, 050). A variant applies only inside its
+    -- industries, and not at a period where its guard finds a
+    -- custom-namespace line of the same length.
+    guarded AS (
+        SELECT DISTINCT fv.concept, fv.variant, f.value_date, f.qtrs
+        FROM sec_gold.concept_formula_variant fv
+        JOIN company_facts f
+          ON f.value > 0
+         AND f.tag ~ fv.guard_match
+         AND (fv.guard_except IS NULL OR f.tag !~ fv.guard_except)
+        WHERE fv.guard_match IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM sec_silver.tag_silver t
+                           WHERE t.tag = f.tag AND t.version LIKE 'us-gaap%')
+    ),
+    derived_all AS (
+        SELECT fm.concept, fm.variant, o.value_date, o.qtrs,
                SUM(fm.coefficient * o.value) AS value,
                MAX(o.tradable_from) AS tradable_from
         FROM sec_gold.concept_formula fm
+        JOIN sec_gold.concept_formula_variant fv ON fv.concept = fm.concept AND fv.variant = fm.variant
         JOIN sec_gold.canonical_concepts cc ON cc.concept = fm.concept AND cc.fact_type IN ('flow', 'derived')
         JOIN direct o ON o.concept = fm.operand
-        WHERE fm.variant = 1
-        GROUP BY fm.concept, o.value_date, o.qtrs
+        LEFT JOIN sec_reference.company c ON c.cik = p_cik
+        WHERE (cardinality(fv.sic_prefixes) = 0
+               OR EXISTS (SELECT 1 FROM unnest(fv.sic_prefixes) sp
+                           WHERE c.sic_latest::TEXT LIKE sp || '%'))
+          AND NOT EXISTS (SELECT 1 FROM guarded g
+                           WHERE g.concept = fm.concept AND g.variant = fm.variant
+                             AND g.value_date = o.value_date AND g.qtrs = o.qtrs)
+        GROUP BY fm.concept, fm.variant, o.value_date, o.qtrs
         HAVING NOT EXISTS (
             SELECT 1 FROM sec_gold.concept_formula r
-            WHERE r.concept = fm.concept AND r.variant = 1 AND r.required
+            WHERE r.concept = fm.concept AND r.variant = fm.variant AND r.required
               AND r.operand NOT IN (SELECT o2.concept FROM direct o2
                                     WHERE o2.value_date = o.value_date AND o2.qtrs = o.qtrs)
         )
-        AND NOT EXISTS (SELECT 1 FROM direct d WHERE d.concept = fm.concept
-                          AND d.value_date = o.value_date AND d.qtrs = o.qtrs)
+    ),
+    derived AS (
+        SELECT DISTINCT ON (concept, value_date, qtrs)
+               concept, value_date, qtrs, value, tradable_from
+        FROM derived_all da
+        WHERE NOT EXISTS (SELECT 1 FROM direct d WHERE d.concept = da.concept
+                            AND d.value_date = da.value_date AND d.qtrs = da.qtrs)
+        ORDER BY concept, value_date, qtrs, variant
     ),
     period AS (
         SELECT concept, value_date, qtrs, value, tradable_from FROM direct

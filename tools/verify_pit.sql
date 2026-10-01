@@ -1393,3 +1393,28 @@ FROM (
            (SELECT ROUND(ttm_prior_value/1e6) FROM sec_gold.as_of_trailing(19617, DATE '2025-09-01') WHERE concept = 'operating_cash_flow') AS jpm_ocf_prior,
            (SELECT ttm_growth FROM sec_gold.as_of_trailing(19617, DATE '2025-09-01') WHERE concept = 'operating_cash_flow') AS jpm_ocf_growth
 ) t;
+
+-- 65. Gross profit resolves in taxonomy order, and its component variants
+-- are guarded on the income statement (050). Aramark FY2019 files both
+-- cost totals and no gross profit: cost_of_revenue is the parent
+-- CostOfRevenue (15.336B), not its child CostOfGoodsAndServicesSold
+-- (14.533B). Verizon FY2015 prints goods and services cost lines and no
+-- total: 131.620 - 23.119 - 29.438 = 79.063B through variant 2, in the
+-- annual and the as-of resolver alike. Oracle FY2018 files CostOfServices
+-- beside custom cloud and hardware cost lines, so variant 3 is guarded:
+-- NULL everywhere, peer_stats included, rather than 36.5B of gross profit.
+SELECT CASE WHEN aramark_cor = 15336 AND verizon_gp = 79063 AND verizon_gp_asof = 79063
+             AND oracle_gp IS NULL AND oracle_gp_asof IS NULL AND oracle_peer_rows = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       aramark_cor AS aramark_fy2019_cost_of_revenue_m, verizon_gp AS verizon_fy2015_gross_profit_m,
+       verizon_gp_asof AS verizon_gross_profit_asof_2016_06_30_m, oracle_gp AS oracle_fy2018_gross_profit,
+       oracle_gp_asof AS oracle_gross_profit_asof_2019_06_30, oracle_peer_rows
+FROM (
+    SELECT ROUND(sec_gold.resolve_direct(1584509, 'cost_of_revenue', DATE '2019-09-30', 4, 'pit') / 1e6) AS aramark_cor,
+           ROUND(sec_gold.get_canonical(732712, 'gross_profit', DATE '2015-12-31', 4, 'pit') / 1e6) AS verizon_gp,
+           ROUND(sec_gold.as_of_canonical(732712, 'gross_profit', DATE '2015-12-31', 4, DATE '2016-06-30') / 1e6) AS verizon_gp_asof,
+           sec_gold.get_canonical(1341439, 'gross_profit', DATE '2018-05-31', 4, 'pit') AS oracle_gp,
+           sec_gold.as_of_canonical(1341439, 'gross_profit', DATE '2018-05-31', 4, DATE '2019-06-30') AS oracle_gp_asof,
+           (SELECT count(*) FROM sec_gold.peer_stats
+             WHERE cik = 1341439 AND concept = 'gross_profit' AND value_date = DATE '2018-05-31') AS oracle_peer_rows
+) t;

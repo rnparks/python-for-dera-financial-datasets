@@ -152,14 +152,17 @@ direct AS (
 -- Only fires where the direct walk produced nothing for that
 -- company-year: an issuer filing GrossProfit outright keeps its filed
 -- figure rather than a reconstruction.
--- The variant guard (050): a company-date where a plain balance under a
--- custom-namespace tag matches the variant's pattern. The instrument
--- sum is not the whole picture there and yields nothing.
+-- The variant guard (050): a company-date where a value under a
+-- custom-namespace tag matches the variant's pattern -- a balance for a
+-- balance concept (the instrument sum), the annual flow for a flow
+-- concept (gross profit's components). The formula is not the whole
+-- picture there and yields nothing.
 guarded AS (
     SELECT DISTINCT fv.concept, fv.variant, g.cik, g.value_date
     FROM sec_gold.concept_formula_variant fv
+    JOIN sec_gold.canonical_concepts cc ON cc.concept = fv.concept
     JOIN sec_gold.tradable_financials g
-      ON g.qtrs = 0 AND g.value > 0
+      ON g.qtrs = CASE WHEN cc.fact_type = 'balance' THEN 0 ELSE 4 END AND g.value > 0
      AND g.tag ~ fv.guard_match
      AND (fv.guard_except IS NULL OR g.tag !~ fv.guard_except)
     WHERE fv.guard_match IS NOT NULL

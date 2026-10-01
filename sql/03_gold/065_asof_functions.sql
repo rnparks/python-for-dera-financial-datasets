@@ -103,9 +103,11 @@ COMMENT ON FUNCTION sec_gold.as_of_resolve_direct(INTEGER, TEXT, DATE, INTEGER, 
     'Tag-map walk against fact_asof, no formula fallback. Operand '
     'resolver for derived concepts; callers want as_of_canonical.';
 
--- The variant guard, as of a date: a custom-namespace debt line the
--- filer had reported for this balance date by the knowledge date.
+-- The variant guard, as of a date: a custom-namespace line the filer
+-- had reported for this period (a balance at qtrs = 0, else a flow of
+-- that length) by the knowledge date.
 DROP FUNCTION IF EXISTS sec_gold.as_of_custom_line_present(INTEGER, DATE, TEXT, TEXT, DATE, INTEGER);
+DROP FUNCTION IF EXISTS sec_gold.as_of_custom_line_present(INTEGER, DATE, TEXT, TEXT, DATE, INTEGER, INTEGER);
 
 CREATE FUNCTION sec_gold.as_of_custom_line_present(
     p_cik              INTEGER,
@@ -113,7 +115,8 @@ CREATE FUNCTION sec_gold.as_of_custom_line_present(
     p_match            TEXT,
     p_except           TEXT,
     p_asof             DATE,
-    p_buffer_sessions  INTEGER DEFAULT 0
+    p_buffer_sessions  INTEGER DEFAULT 0,
+    p_qtrs             INTEGER DEFAULT 0
 ) RETURNS BOOLEAN
 LANGUAGE sql STABLE AS $$
     SELECT EXISTS (
@@ -122,7 +125,7 @@ LANGUAGE sql STABLE AS $$
              LATERAL (SELECT sec_gold.shift_sessions(p_asof, p_buffer_sessions) AS d) k
         WHERE f.cik = p_cik
           AND f.value_date = p_value_date
-          AND f.qtrs = 0
+          AND f.qtrs = p_qtrs
           AND f.value > 0
           AND f.tradable_from <= k.d
           AND (f.superseded_tradable > k.d OR f.superseded_tradable IS NULL)
@@ -202,7 +205,7 @@ LANGUAGE sql STABLE AS $$
               AND (fv.guard_match IS NULL
                    OR NOT sec_gold.as_of_custom_line_present(
                           p_cik, p_value_date, fv.guard_match, fv.guard_except,
-                          p_asof, p_buffer_sessions))
+                          p_asof, p_buffer_sessions, p_qtrs))
               AND v.total IS NOT NULL
             ORDER BY fv.variant
             LIMIT 1

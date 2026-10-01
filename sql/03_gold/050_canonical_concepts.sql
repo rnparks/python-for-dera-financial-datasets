@@ -73,6 +73,16 @@ INSERT INTO sec_gold.canonical_concepts VALUES
     ('eps_growth',           'Diluted EPS Growth',      'growth',  'ratio',     'Diluted EPS change over the prior fiscal year; undefined from a loss'),
     ('operating_cash_flow_growth', 'Operating Cash Flow Growth', 'growth', 'ratio', 'Operating cash flow change over the prior fiscal year; undefined from a non-positive base');
 
+-- COST COMPONENTS. Until the 2020 taxonomy a filer could report its cost
+-- of revenue as goods and services lines with no total: the calculation
+-- linkbase puts CostOfGoodsSold and CostOfServices under
+-- CostOfGoodsAndServicesSold (2011-2017), and both elements were retired
+-- after 2020 (data/reference/usgaap_cost_calc_arcs.csv). They are operands
+-- of gross_profit's component variants below, never totals, so not scored.
+INSERT INTO sec_gold.canonical_concepts (concept, display_name, fact_type, expected_uom, description, scored) VALUES
+    ('cost_of_goods',    'Cost of Goods Sold (component)', 'flow', 'USD', 'The goods part of cost of revenue, filed without a total (pre-2021 taxonomies)', FALSE),
+    ('cost_of_services', 'Cost of Services (component)',   'flow', 'USD', 'The services part of cost of revenue, filed without a total (pre-2021 taxonomies)', FALSE);
+
 -- INSTRUMENT LINES. A bank, a REIT or an insurer files no current /
 -- noncurrent split: its balance sheet lists each borrowing as its own
 -- line -- mortgages payable, unsecured notes, the revolver, FHLB
@@ -201,11 +211,30 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
     ('gross_profit', 'GrossProfit', 1, 'Direct XBRL tag — companies that file a gross profit line');
 
 -- Cost of revenue --------------------------------------------------
--- Only exists so gross_profit can be derived where GrossProfit is not
--- filed. 641 issuers file CostOfGoodsAndServicesSold, 208 CostOfRevenue.
+-- Operand of gross_profit where GrossProfit is not filed. Ordered as the
+-- FASB calculation linkbase nests them, total first: GrossProfit =
+-- Revenues - CostOfRevenue, and CostOfRevenue contains
+-- CostOfGoodsAndServicesSold (2011-2026; data/reference/
+-- usgaap_cost_calc_arcs.csv). The order was the reverse until 2026-10-01.
+-- Measured that day on non-financial annual periods (2011-2025, pit) that
+-- file both cost tags and a GrossProfit: revenue - CostOfRevenue reproduces
+-- the filed gross profit within 1% in 85.3% of 1,363 periods, revenue -
+-- CostOfGoodsAndServicesSold in 1.7%; across all 31,480 periods with a
+-- filed gross profit and a formula, agreement went from 95.28% to 96.11%.
+-- CostOfMerchandiseSalesBuyingAndOccupancyCosts is a retailer's whole cost
+-- of sales (buying and occupancy included); 19 periods file only it.
+-- The *ExcludingDepreciationDepletionAndAmortization elements are left out
+-- on purpose: they are the cost before D&A (a different definition, the
+-- one Compustat standardizes to), and reproduce a filed gross profit in
+-- only 68.5% of the 203 periods that file one beside them.
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
-    ('cost_of_revenue', 'CostOfGoodsAndServicesSold', 1, 'ASC 606-era standard cost line'),
-    ('cost_of_revenue', 'CostOfRevenue',              2, 'Older/alternate cost line');
+    ('cost_of_revenue', 'CostOfRevenue',                                 1, 'The total: GrossProfit = Revenues - CostOfRevenue in the calculation linkbase'),
+    ('cost_of_revenue', 'CostOfGoodsAndServicesSold',                    2, 'A child of CostOfRevenue; the cost line most filers print'),
+    ('cost_of_revenue', 'CostOfMerchandiseSalesBuyingAndOccupancyCosts', 3, 'A retailer''s cost of sales including buying and occupancy');
+-- Components, for filers that print goods and services lines with no total.
+INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
+    ('cost_of_goods',    'CostOfGoodsSold', 1, 'Child of CostOfGoodsAndServicesSold, 2011-2017 linkbases; retired after 2020'),
+    ('cost_of_services', 'CostOfServices',  1, 'Child of CostOfGoodsAndServicesSold, 2011-2017 linkbases; retired after 2020');
 
 -- Operating income -------------------------------------------------
 INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
@@ -415,6 +444,11 @@ INSERT INTO sec_gold.concept_tag_map (concept, tag, priority, notes) VALUES
 -- every one silently understated. NULL is the honest answer there. The
 -- current portion stays optional: no current maturities is common.
 
+-- The guard reads the same period length as the value being resolved:
+-- balances (qtrs = 0) for a balance concept such as total_debt, and the
+-- flow's own duration for a flow concept such as gross_profit, whose
+-- component variants are guarded against a custom-namespace cost line.
+--
 -- A formula comes in VARIANTS, tried in order; the first whose
 -- operands satisfy it wins, and a filed figure beats any of them at the
 -- same period. A variant can be confined to industries (sic_prefixes)
@@ -453,6 +487,10 @@ CREATE TABLE sec_gold.concept_formula (
 
 INSERT INTO sec_gold.concept_formula_variant (concept, variant, sic_prefixes, guard_match, guard_except, notes) VALUES
     ('gross_profit',   1, '{}', NULL, NULL, 'Revenue minus cost of revenue'),
+    ('gross_profit',   2, '{}', '(Cost|Expense)', '(Selling|General|Administrative|Marketing|Advertising|Research|Development|Interest|Tax|Depreciation|Amortization|Compensation|ShareBased|StockBased|Restructuring|Impairment|Nonoperating|Acquisition|Merger|Severance|Litigation|Legal|Financing|Debt|Lease|Pension|Retirement|Benefit|Insurance|Exploration|Accretion|Transaction|Issuance|Offering|Organization|Startup|PreOpening|Professional)',
+        'Revenue minus the goods and (if filed) services components, when no cost total is filed. Guarded: a custom-namespace cost line in the same period means the components are not the whole cost (Oracle files CostOfServices beside custom cloud and hardware cost lines). Measured 2026-10-01 on non-financial annual periods that also file GrossProfit: 95.5% within 1% guarded (4,237), 90.1% for the 757 the guard blocks.'),
+    ('gross_profit',   3, '{}', '(Cost|Expense)', '(Selling|General|Administrative|Marketing|Advertising|Research|Development|Interest|Tax|Depreciation|Amortization|Compensation|ShareBased|StockBased|Restructuring|Impairment|Nonoperating|Acquisition|Merger|Severance|Litigation|Legal|Financing|Debt|Lease|Pension|Retirement|Benefit|Insurance|Exploration|Accretion|Transaction|Issuance|Offering|Organization|Startup|PreOpening|Professional)',
+        'Revenue minus the services component, for a services-only filer with no cost total. Guarded as variant 2: 93.8% within 1% guarded (434 periods), 88.1% for the 118 blocked.'),
     ('free_cash_flow', 1, '{}', NULL, NULL, 'Operating cash flow minus capex'),
     ('total_debt',     1, '{}', NULL, NULL, 'The split: noncurrent (required) plus current'),
     ('total_debt',     2, '{60,63,6798}',
@@ -467,6 +505,19 @@ INSERT INTO sec_gold.concept_formula (concept, variant, operand, coefficient, re
     -- 857 of 1,569 is as far as this can go.
     ('gross_profit',   1, 'revenue',             1, TRUE,  'Revenue minus cost of revenue'),
     ('gross_profit',   1, 'cost_of_revenue',    -1, TRUE,  NULL),
+    -- The component variants. Each REQUIRES a cost line: with every cost
+    -- operand optional the resolver's at-least-one rule is met by revenue
+    -- alone, and gross profit would come back equal to revenue. Measured
+    -- 2026-10-01, before the guard: they resolve 2,863 more non-financial
+    -- annual periods (2011-2025) where no GrossProfit is filed, taking
+    -- periods with a cost or gross-profit tag from 91.9% to 97.4%
+    -- resolved. The custom-cost-line guard (variant table) keeps 2,162
+    -- of those 2,863.
+    ('gross_profit',   2, 'revenue',             1, TRUE,  'Revenue minus goods (required) and services (optional)'),
+    ('gross_profit',   2, 'cost_of_goods',      -1, TRUE,  NULL),
+    ('gross_profit',   2, 'cost_of_services',   -1, FALSE, NULL),
+    ('gross_profit',   3, 'revenue',             1, TRUE,  'Revenue minus services, for a services-only filer'),
+    ('gross_profit',   3, 'cost_of_services',   -1, TRUE,  NULL),
     -- Both operands already resolved; this proves the mechanism on a
     -- concept that has been declared and uncomputed for months.
     ('free_cash_flow', 1, 'operating_cash_flow', 1, TRUE,  'Operating cash flow minus capex'),

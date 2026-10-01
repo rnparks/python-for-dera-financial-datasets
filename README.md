@@ -5,7 +5,9 @@ built for **point-in-time correct** equity research.
 
 Downloads SEC's quarterly XBRL dumps into a `sec_raw` bronze layer, types and
 deduplicates them into a bitemporal `sec_silver`, and exposes a `sec_gold` query
-layer with a canonical concept taxonomy and peer statistics. A separate
+layer with a canonical concept taxonomy (tag priorities ordered by the FASB
+US-GAAP calculation linkbase where it speaks, e.g. gross profit) and peer
+statistics. A separate
 `sec_reference` spine tracks companies, securities and historical universes
 without survivorship bias.
 
@@ -80,7 +82,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 60 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 65 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 

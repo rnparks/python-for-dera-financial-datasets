@@ -92,13 +92,15 @@ COMMENT ON FUNCTION sec_gold.resolve_direct(INTEGER, TEXT, DATE, INTEGER, TEXT) 
 -- debt? A tag is custom when no version of it is us-gaap. See the
 -- variant table in 050 for why this exists.
 DROP FUNCTION IF EXISTS sec_gold.custom_line_present(INTEGER, DATE, TEXT, TEXT, TEXT);
+DROP FUNCTION IF EXISTS sec_gold.custom_line_present(INTEGER, DATE, TEXT, TEXT, TEXT, INTEGER);
 
 CREATE FUNCTION sec_gold.custom_line_present(
     p_cik         INTEGER,
     p_value_date  DATE,
     p_match       TEXT,
     p_except      TEXT,
-    p_mode        TEXT DEFAULT 'pit'
+    p_mode        TEXT DEFAULT 'pit',
+    p_qtrs        INTEGER DEFAULT 0
 ) RETURNS BOOLEAN
 LANGUAGE sql STABLE AS $$
     SELECT EXISTS (
@@ -106,7 +108,7 @@ LANGUAGE sql STABLE AS $$
         FROM sec_silver.num_silver n
         WHERE n.cik = p_cik
           AND n.value_date = p_value_date
-          AND n.qtrs = 0
+          AND n.qtrs = p_qtrs
           AND n.segments IS NULL AND n.coreg IS NULL
           AND n.value > 0
           AND (
@@ -120,10 +122,11 @@ LANGUAGE sql STABLE AS $$
     );
 $$;
 
-COMMENT ON FUNCTION sec_gold.custom_line_present(INTEGER, DATE, TEXT, TEXT, TEXT) IS
-    'TRUE when the filer has a positive, undimensioned balance at the date '
-    'under a custom-namespace tag matching p_match and not p_except. The '
-    'guard of a concept_formula_variant.';
+COMMENT ON FUNCTION sec_gold.custom_line_present(INTEGER, DATE, TEXT, TEXT, TEXT, INTEGER) IS
+    'TRUE when the filer has a positive, undimensioned value for the period '
+    '(p_qtrs = 0: a balance at the date; otherwise a flow of that many '
+    'quarters ending there) under a custom-namespace tag matching p_match '
+    'and not p_except. The guard of a concept_formula_variant.';
 
 -- A zero read from the balance-sheet face (037_debt_face): the filing
 -- that reported this balance date printed no borrowing line, its
@@ -204,7 +207,7 @@ LANGUAGE sql STABLE AS $$
                                WHERE co.sic_latest::TEXT LIKE sp || '%'))
               AND (fv.guard_match IS NULL
                    OR NOT sec_gold.custom_line_present(
-                          p_cik, p_value_date, fv.guard_match, fv.guard_except, p_mode))
+                          p_cik, p_value_date, fv.guard_match, fv.guard_except, p_mode, p_qtrs))
               AND v.total IS NOT NULL
             ORDER BY fv.variant
             LIMIT 1
