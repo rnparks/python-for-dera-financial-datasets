@@ -9,13 +9,14 @@ Amounts are in millions of dollars, as Compustat.
 
 OUTPUT, under data/exports/compustat/:
 
-    pensions.parquet   cik, datadate, pplao, pbpro (+ rule_pplao, rule_pbpro), funded_status
+    pensions.parquet   cik, datadate, pplao, pbpro, rule (the one both share), funded_status
                        (the plan's own funded-status fact by the same rule, for the audit),
                        paddml, pcupsu, pbnaa, pbnvv, pbpru, pplau (all null:
                        see docs/compustat_items.md), adsh, accepted
     segments.parquet   cik, datadate, stype ("BUSSEG"), sid, snms, member,
                        sales, sales_tag, sics1, naicsh, srcdate, adsh, accepted
     customers.parquet  cik, datadate, cnms, member, ctype, salecs, adsh, accepted
+    aoci.parquet       cik, datadate, recta, msa (+ rule_recta, rule_msa), adsh, accepted
     notes_items_coverage.csv   companies and fiscal years per file and year
 
 Run from the repository root:
@@ -47,8 +48,9 @@ REVENUE_SEGMENT = r"^BusinessSegments=[^;]+;(ConsolidationItems=OperatingSegment
 
 
 def annual(facts: pl.DataFrame) -> pl.DataFrame:
-    """Facts at the fiscal period end of the first accepted annual report per company-period."""
-    f = facts.filter(pl.col("form").is_in(ANNUAL_FORMS) & (pl.col("iprx") == 0)
+    """Facts with a value (nil facts dropped) at the fiscal period end of the first accepted annual
+    report per company-period."""
+    f = facts.filter(pl.col("form").is_in(ANNUAL_FORMS) & (pl.col("iprx") == 0) & pl.col("value").is_not_null()
                      & (pl.col("ddate") == pl.col("period").str.to_date("%Y%m%d")))
     first = (f.select("cik", "ddate", "adsh", "accepted").unique()
              .sort("accepted").unique(["cik", "ddate"], keep="first").select("adsh"))
@@ -60,29 +62,30 @@ def pensions(f: pl.DataFrame) -> pl.DataFrame:
                  & (pl.col("uom") == "USD"))
     p = p.with_columns(scope=pl.col("segments").map_elements(ni.pension_scope, return_dtype=pl.Utf8))
     rows = []
-    for (adsh, tag), g in p.group_by(["adsh", "tag"]):
-        vals = {s: v for s, v in g.filter(pl.col("scope").is_in(["none", "total", "domestic", "foreign"]))
-                .group_by("scope").agg(pl.col("value").first()).iter_rows()}
-        typed = g.filter(pl.col("scope").is_in(["total", "domestic", "foreign", "opeb", "plan_other"])).height > 0
-        value, rule = ni.select_pension(vals, typed)
-        if value is not None:
-            r = g.row(0, named=True)
-            rows.append({"cik": r["cik"], "datadate": r["ddate"], "adsh": adsh, "accepted": r["accepted"],
-                         "tag": tag, "value": value / 1e6, "rule": rule})
+    for adsh, g in p.group_by("adsh"):
+        cand = {}
+        for tag, item in ITEM.items():
+            t = g.filter(pl.col("tag") == tag)
+            vals = {s: v for s, v in t.filter(pl.col("scope").is_in(["none", "total", "domestic", "foreign"]))
+                    .group_by("scope").agg(pl.col("value").first()).iter_rows()}
+            typed = t.filter(pl.col("scope").is_in(["total", "domestic", "foreign", "opeb", "plan_other"])).height > 0
+            cand[item] = ni.pension_candidates(vals, typed)
+        rule = ni.common_rule(cand["pplao"], cand["pbpro"])
+        if not rule:
+            continue
+        r = g.row(0, named=True)
+        fs_rule = rule if rule in cand["funded_status"] else ""
+        rows.append({"cik": r["cik"], "datadate": r["ddate"], "adsh": adsh[0] if isinstance(adsh, tuple) else adsh,
+                     "accepted": r["accepted"], "pplao": cand["pplao"][rule] / 1e6, "pbpro": cand["pbpro"][rule] / 1e6,
+                     "rule": rule, "funded_status": cand["funded_status"][rule] / 1e6 if fs_rule else None})
     if not rows:
         return pl.DataFrame()
-    long = pl.DataFrame(rows)
-    wide = (long.with_columns(item=pl.col("tag").replace_strict(ITEM))
-            .pivot(on="item", index=["cik", "datadate", "adsh", "accepted"], values=["value", "rule"]))
-    wide = wide.rename({f"value_{i}": i for i in ITEM.values() if f"value_{i}" in wide.columns})
-    for c in ["pplao", "pbpro", "funded_status", "rule_pplao", "rule_pbpro", "rule_funded_status"]:
-        if c not in wide.columns:
-            wide = wide.with_columns(pl.lit(None).alias(c))
+    wide = pl.DataFrame(rows, schema_overrides={"funded_status": pl.Float64})
     # S&P: pcupsu is Not Available for SFAS 87 adopters; paddml ended with SFAS 158 (2006); the four
     # over/underfunded splits ended with SFAS 132 (1998). None exists in the SEC era (2009 on).
     nulls = [pl.lit(None, pl.Float64).alias(c) for c in ["paddml", "pcupsu", "pbnaa", "pbnvv", "pbpru", "pplau"]]
     return wide.with_columns(nulls).select(
-        "cik", "datadate", "pplao", "pbpro", "rule_pplao", "rule_pbpro", "funded_status", "rule_funded_status", "paddml", "pcupsu", "pbnaa", "pbnvv",
+        "cik", "datadate", "pplao", "pbpro", "rule", "funded_status", "paddml", "pcupsu", "pbnaa", "pbnvv",
         "pbpru", "pplau", "adsh", "accepted").sort("cik", "datadate")
 
 
@@ -118,6 +121,23 @@ def customers(f: pl.DataFrame) -> pl.DataFrame:
                       "accepted").sort("cik", "datadate", "cnms")
 
 
+def aoci(f: pl.DataFrame) -> pl.DataFrame:
+    a = f.filter((pl.col("kind") == "aoci") & (pl.col("qtrs") == 0) & (pl.col("uom") == "USD"))
+    comp = [ni.aoci_component(t, s) for t, s in zip(a["tag"], a["segments"])]
+    a = a.with_columns(item=pl.Series([c[0] for c in comp], dtype=pl.Utf8),
+                       rule=pl.Series([c[1] for c in comp], dtype=pl.Utf8)).filter(pl.col("item").is_not_null())
+    # the component's own element before the axis member
+    a = a.sort(pl.col("rule") != "element").unique(["adsh", "item"], keep="first")
+    wide = a.with_columns(value=pl.col("value") / 1e6).pivot(
+        on="item", index=["cik", "ddate", "adsh", "accepted"], values=["value", "rule"])
+    wide = wide.rename({c: c.removeprefix("value_") for c in wide.columns if c.startswith("value_")})
+    for c in ["recta", "msa", "rule_recta", "rule_msa"]:
+        if c not in wide.columns:
+            wide = wide.with_columns(pl.lit(None).alias(c))
+    return wide.select("cik", pl.col("ddate").alias("datadate"), "recta", "msa", "rule_recta", "rule_msa", "adsh",
+                       "accepted").sort("cik", "datadate")
+
+
 def write(df: pl.DataFrame, name: str) -> None:
     tmp = OUT / f"{name}.partial"
     df.write_parquet(tmp)
@@ -127,7 +147,7 @@ def write(df: pl.DataFrame, name: str) -> None:
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     f = annual(pl.read_parquet(FACTS))
-    out = {"pensions": pensions(f), "segments": segments(f), "customers": customers(f)}
+    out = {"pensions": pensions(f), "segments": segments(f), "customers": customers(f), "aoci": aoci(f)}
     cov = []
     for name, df in out.items():
         write(df, name)
@@ -138,10 +158,14 @@ def main() -> None:
     pl.concat(cov).sort("file", "fiscal_year_end").write_csv(OUT / "notes_items_coverage.csv")
     p = out["pensions"]
     if p.height:
-        print("pension rules:", dict(p.group_by("rule_pbpro").len().iter_rows()))
+        print("pension rules:", dict(p.group_by("rule").len().iter_rows()))
         k = p.drop_nulls(["pplao", "pbpro", "funded_status"])
-        ok = ((k["pplao"] - k["pbpro"] - k["funded_status"]).abs() <= 0.01 * k["pbpro"].abs() + 0.5).sum()
-        print(f"funded status = plan assets - PBO (within 1% of PBO) in {ok:,} of {k.height:,} reports")
+        tol = 0.01 * k["pbpro"].abs() + 0.5
+        ok = ((k["pplao"] - k["pbpro"] - k["funded_status"]).abs() <= tol).sum()
+        flipped = ((k["pplao"] - k["pbpro"] + k["funded_status"]).abs() <= tol).sum() - \
+            ((k["pplao"] - k["pbpro"]).abs() <= tol).sum()   # a fully funded plan matches either sign
+        print(f"funded status = plan assets - PBO (within 1% of PBO) in {ok:,} of {k.height:,} reports; "
+              f"{flipped:,} more with the funded status's sign reversed (a filer sign error in that element)")
     c = out["customers"]
     print("customer types:", dict(c.group_by("ctype").len().iter_rows()))
     print("sin segments:", out["segments"].filter(pl.col("sics1").is_not_null() | pl.col("naicsh").is_not_null())

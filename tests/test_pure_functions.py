@@ -582,6 +582,11 @@ def test_pension_scope(segments, scope):
 
 def test_select_pension_priority():
     assert ni.select_pension({"total": 10.0, "domestic": 6.0, "foreign": 4.0, "none": 12.0}, True) == (10.0, "pension_total")
+    # assets tagged by location only, the obligation as a total and by location: both use dom_plus_for
+    assets = ni.pension_candidates({"domestic": 6.0, "foreign": 4.0}, True)
+    pbo = ni.pension_candidates({"total": 15.0, "domestic": 9.0, "foreign": 6.0}, True)
+    assert ni.common_rule(assets, pbo) == "dom_plus_for"
+    assert ni.common_rule(ni.pension_candidates({"foreign": 4.0}, True), pbo) == ""
     assert ni.select_pension({"domestic": 6.0, "foreign": 4.0}, True) == (10.0, "dom_plus_for")
     assert ni.select_pension({"foreign": 4.0}, True) == (4.0, "one_location")
     assert ni.select_pension({"none": 12.0}, False) == (12.0, "undimensioned")
@@ -613,3 +618,17 @@ def test_sin_codes():
 ])
 def test_customer_type(name, ctype):
     assert ni.customer_type(name) == ctype
+
+
+def test_aoci_component():
+    assert ni.aoci_component("AccumulatedOtherComprehensiveIncomeLossForeignCurrencyTranslationAdjustmentNetOfTax", "") \
+        == ("recta", "element")
+    assert ni.aoci_component("AccumulatedOtherComprehensiveIncomeLossNetOfTax",
+                             "EquityComponents=AccumulatedNetUnrealizedInvestmentGainLoss;") == ("msa", "component_axis")
+    # hedging reserves are not MSA (S&P excludes SFAS 133 adjustments); the AOCI total is neither item
+    assert ni.aoci_component("AccumulatedOtherComprehensiveIncomeLossNetOfTax",
+                             "EquityComponents=AccumulatedGainLossNetCashFlowHedgeParent;") == (None, "")
+    assert ni.aoci_component("AccumulatedOtherComprehensiveIncomeLossNetOfTax", "") == (None, "")
+    assert ni.aoci_component("AccumulatedOtherComprehensiveIncomeLossNetOfTax",
+                             "ConsolidatedEntities=ParentCompany;EquityComponents=AccumulatedTranslationAdjustment;") \
+        == (None, "")

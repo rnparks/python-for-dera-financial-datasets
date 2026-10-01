@@ -22,6 +22,10 @@ chosen by an allowlist of dimension members, never by pattern:
                        members present the undimensioned figure is
                        sometimes the pension plan, sometimes pension plus
                        OPEB: measured, see the docs)
+
+Plan assets and the obligation take the first rule both support
+(common_rule), so the two describe the same plans; a report where they
+share none gets neither.
 """
 from __future__ import annotations
 
@@ -83,21 +87,40 @@ def pension_scope(segments: str) -> str:
     return "plan_other"
 
 
-def select_pension(values: dict[str, float], plan_typed: bool) -> tuple[float | None, str]:
-    """One filing's pension total for one element.
+def pension_candidates(values: dict[str, float], plan_typed: bool) -> dict[str, float]:
+    """Every rule that applies to one filing's facts for one element, rule -> value.
 
     values: scope -> value for the scopes present ('none', 'total',
     'domestic', 'foreign'); plan_typed: the filing tags any plan-type member
-    (pension, OPEB or other) on this element. Returns (value, rule)."""
+    (pension, OPEB or other) on this element."""
+    out = {}
     if "total" in values:
-        return values["total"], "pension_total"
+        out["pension_total"] = values["total"]
     if "domestic" in values and "foreign" in values:
-        return values["domestic"] + values["foreign"], "dom_plus_for"
-    if "domestic" in values or "foreign" in values:
-        return values.get("domestic", values.get("foreign")), "one_location"
+        out["dom_plus_for"] = values["domestic"] + values["foreign"]
+    elif "domestic" in values or "foreign" in values:
+        out["one_location"] = values.get("domestic", values.get("foreign"))
     if "none" in values and not plan_typed:
-        return values["none"], "undimensioned"
+        out["undimensioned"] = values["none"]
+    return out
+
+
+def select_pension(values: dict[str, float], plan_typed: bool) -> tuple[float | None, str]:
+    """One filing's pension total for one element: the first rule in RULE_ORDER that applies."""
+    cand = pension_candidates(values, plan_typed)
+    for rule in RULE_ORDER:
+        if rule in cand:
+            return cand[rule], rule
     return None, ""
+
+
+def common_rule(assets: dict[str, float], obligation: dict[str, float]) -> str:
+    """The first rule in RULE_ORDER that both elements' candidates share, else ''. Plan assets and
+    the obligation must describe the same plans, or their difference is meaningless."""
+    for rule in RULE_ORDER:
+        if rule in assets and rule in obligation:
+            return rule
+    return ""
 
 
 def camel_words(member: str) -> str:
@@ -153,3 +176,33 @@ def customer_type(name: str) -> str:
     if not name or GENERIC_CUSTOMER.search(name):
         return "UNKNOWN"
     return "COMPANY"
+
+
+# Accumulated OCI components (Compustat RECTA, MSA). S&P: RECTA is the cumulative translation
+# adjustment reported as a separate component of equity; MSA the marketable-securities adjustment so
+# reported, excluding hedging (SFAS 133) adjustments. Either the component's own element,
+# undimensioned, or accumulated OCI on a component axis alone with an allowlisted member.
+AOCI_TOTAL = "AccumulatedOtherComprehensiveIncomeLossNetOfTax"
+AOCI_ELEMENT = {
+    "AccumulatedOtherComprehensiveIncomeLossForeignCurrencyTranslationAdjustmentNetOfTax": "recta",
+    "AccumulatedOtherComprehensiveIncomeLossAvailableForSaleSecuritiesAdjustmentNetOfTax": "msa",
+}
+AOCI_AXES = ("EquityComponents", "ComponentsOfAccumulatedOtherComprehensiveIncome",
+             "ComponentsofAccumulatedOtherComprehensiveIncome")
+AOCI_MEMBER = {
+    "AccumulatedTranslationAdjustment": "recta",
+    "AccumulatedForeignCurrencyAdjustmentAttributableToParent": "recta",
+    "AccumulatedNetUnrealizedInvestmentGainLoss": "msa",
+}
+
+
+def aoci_component(tag: str, segments: str) -> tuple[str | None, str]:
+    """(item, rule) for one fact: ('recta'|'msa', 'element'|'component_axis') or (None, '')."""
+    d = parse_segments(segments)
+    if tag in AOCI_ELEMENT and not d:
+        return AOCI_ELEMENT[tag], "element"
+    if tag == AOCI_TOTAL and len(d) == 1:
+        (axis, member), = d.items()
+        if axis in AOCI_AXES and member in AOCI_MEMBER:
+            return AOCI_MEMBER[member], "component_axis"
+    return None, ""

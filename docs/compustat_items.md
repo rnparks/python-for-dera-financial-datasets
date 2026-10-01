@@ -104,6 +104,9 @@ allowlist of members of the plan-type axis (`RetirementPlanTypeAxis`, before it
 | `one_location` | only one of those two present |
 | `undimensioned` | the undimensioned fact, only when the filing tags no plan-type member on that element |
 
+Plan assets and the PBO take the first rule both support (`common_rule`), so they
+describe the same plans; a report where they share none gets neither.
+
 The undimensioned fact is refused whenever plan-type members are present: in filings
 that carry the undimensioned figure, a pension member and a non-zero OPEB member,
 the undimensioned PBO equalled the pension plan in 9 of 20 and pension plus OPEB in
@@ -112,7 +115,11 @@ the undimensioned PBO equalled the pension plan in 9 of 20 and pension plus OPEB
 Available for SFAS 87 adopters, the additional minimum liability ended with SFAS
 158 (2006), and the over/underfunded splits with SFAS 132. Audit: the plan's own
 `DefinedBenefitPlanFundedStatusOfPlan`, chosen by the same rule, must equal plan
-assets minus PBO; `tools/export_notes_items.py` prints the share that does.
+assets minus PBO; `tools/export_notes_items.py` prints the share that does. As of
+2026-10-01, on the archives through 2016q2: 3,458 of 3,735 reports within 1% of the
+PBO, and 142 more where the filer reported the funded status with its sign
+reversed (an underfunded plan as a positive number), a sign error in that
+element rather than in assets or PBO.
 
 **Segments** (`segments.parquet`; Compustat segment file, `stype` BUSSEG). One row
 per annual report and member of `StatementBusinessSegmentsAxis`, from a revenue
@@ -131,6 +138,17 @@ annual report and member of `MajorCustomersAxis`; `cnms` is the member name spli
 into words, `ctype` is GOVERNMENT for government payers, UNKNOWN for anonymous
 members ("Customer A", "Top Ten Customers": most of them), else COMPANY; `salecs`
 the largest revenue fact on that member, when one is tagged.
+
+**AOCI components** (`aoci.parquet`; Compustat `recta`, `msa`). S&P: RECTA is the
+cumulative translation adjustment reported as a separate component of equity, MSA
+the marketable-securities adjustment so reported, excluding SFAS 133 hedging
+adjustments. Both live in the equity footnote, so the statement map
+(`compustat_item_map.csv`) resolves them for only 1–2% of firm-years. From the
+Notes facts: the component's own element undimensioned
+(`AccumulatedOtherComprehensiveIncomeLossForeignCurrencyTranslationAdjustmentNetOfTax`,
+`AccumulatedOtherComprehensiveIncomeLossAvailableForSaleSecuritiesAdjustmentNetOfTax`),
+else `AccumulatedOtherComprehensiveIncomeLossNetOfTax` on the equity-components axis
+alone with an allowlisted member (`AOCI_MEMBER`); hedging reserves are never MSA.
 
 ## Not mapped
 
