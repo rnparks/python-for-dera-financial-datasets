@@ -47,13 +47,10 @@ lt,instant,tag,,1,Liabilities,1,,S&P Xpressfeed LT = LCT + DLTT + TXDITC + LO (n
 pstk,instant,tag,,1,PreferredStockValue,1,,S&P PSTK carrying value: nonredeemable preferred (2003 guide item 130). FASB PreferredStockValue is nonredeemable preferred.
 pstk,instant,tag,,2,PreferredStockValueOutstanding,1,,
 pstkrv,instant,tag,,1,PreferredStockRedemptionAmount,1,,S&P PSTKRV redemption value.
-pstkl,instant,tag,,1,PreferredStockLiquidationPreferenceValue,1,,S&P PSTKL involuntary liquidating value. FASB element is the excess over par; nearest available.
 tstkp,instant,tag,,1,TreasuryStockPreferredValue,1,,S&P TSTKP preferred treasury stock.
 seq,instant,tag,,1,StockholdersEquity,1,,S&P SEQ = CEQ + PSTK; FASB StockholdersEquity is parent equity excluding noncontrolling interest.
 ceq,instant,formula,1,,item:seq,1,TRUE,S&P CEQ = SEQ - PSTK.
 ceq,instant,formula,1,,item:pstk,-1,FALSE,
-ceqt,instant,formula,1,,item:ceq,1,TRUE,S&P CEQT tangible common equity = CEQ - INTAN.
-ceqt,instant,formula,1,,item:intan,-1,FALSE,
 re,instant,tag,,1,RetainedEarningsAccumulatedDeficit,1,,S&P RE.
 csho,instant,tag,,1,CommonStockSharesOutstanding,1,,S&P CSHO common shares outstanding at year end (shares; exported in millions).
 drc,instant,tag,,1,ContractWithCustomerLiabilityCurrent,1,,S&P DRC deferred revenue current (ASC 606 element first).
@@ -189,3 +186,10 @@ lt,instant,formula,2,,item:mib,-1,FALSE,
 lt,instant,formula,2,,item:_tempeq,-1,FALSE,
 seq,instant,formula,1,,tag:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest,1,TRUE,No parent-equity total filed: total equity including noncontrolling interest less the noncontrolling interest (FASB: StockholdersEquity is the parent portion of this element).
 seq,instant,formula,1,,item:mib,-1,FALSE,
+_pstk_liqx,instant,tag,,1,PreferredStockLiquidationPreferenceValue,1,,"Helper: FASB: the difference between preference in liquidation and the par or stated value of the preferred shares (the excess, not the total)."
+pstkl,instant,formula,1,,item:pstk,1,TRUE,S&P PSTKL: involuntary liquidating value of preferred outstanding = carrying value + the FASB excess of liquidation preference over par.
+pstkl,instant,formula,1,,item:_pstk_liqx,1,FALSE,
+ceqt,instant,formula,1,,item:ceq,1,TRUE,"S&P CEQT (guide item 11): common equity at liquidation value minus intangibles; deductions are unpaid preferred dividends, the excess of preferred liquidating value over carrying value, intangibles."
+ceqt,instant,formula,1,,item:intan,-1,FALSE,
+ceqt,instant,formula,1,,item:_pstk_liqx,-1,FALSE,
+ceqt,instant,formula,1,,item:dvpa,-1,FALSE,

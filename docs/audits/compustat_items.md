@@ -59,6 +59,7 @@ Operating companies (SIC not 6xxx, total assets > $10M, positive sales), first v
 | `drc` | 37.7% |
 | `dv` | 35.6% |
 | `pstk` | 34.5% |
+| `pstkl` | 34.5% |
 | `dltr` | 32.4% |
 | `dvt` | 31.7% |
 | `mib` | 28.1% |
@@ -77,7 +78,6 @@ Operating companies (SIC not 6xxx, total assets > $10M, positive sales), first v
 | `recta` | 2.3% |
 | `xad` | 2.1% |
 | `msa` | 0.9% |
-| `pstkl` | 0.7% |
 | `txfed` | 0.1% |
 | `pstkrv` | 0.1% |
 | `dvpa` | 0.0% |
