@@ -30,6 +30,20 @@ returns the vintage an investor had. Units are Compustat's: dollars and shares i
 millions, per-share items in dollars. As of 2026-10-01: 116,099 firm-years for
 13,808 companies, 298,185 rows.
 
+## Quarterly export
+
+`uv run python tools/export_compustat_quarterly.py` writes
+`data/exports/compustat/quarterly.parquet`: one row per company and fiscal
+quarter, with `fqtr`, `fyearq`, `rdq` (the first NYSE session the quarter's facts
+were tradable) and the items of `data/reference/compustat_quarterly_items.csv`.
+Fourth-quarter flows, which a 10-K does not tag, are the year less the nine
+months to the third quarter end; year-to-date items take the fact whose duration
+is the fiscal quarter. Values are as first reported (later vintages of a quarter
+are not yet followed). Checked against check 64: Apple's FY2024 quarters read
+90,753 / 85,777 / 94,930 revenue and 62,585 / 91,443 year-to-date operating cash
+flow ($M), as the database's own trailing functions do. As of 2026-10-01:
+446,053 company-quarters, 13,791 companies.
+
 ## Audit
 
 `uv run python tools/audit_compustat_items.py` (after the export) checks the items

@@ -71,7 +71,8 @@ Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 
 In reverse chronological order. The 2026-09-04 review landed as six commits; the S&P 500 membership, share-class and ticker back-extension work followed the same day.
 
-- (this commit) — feat(compustat): S&P balancing-identity audit (`tools/audit_compustat_items.py`); "other" items as S&P remainders; liability and equity fallbacks; the export's fact cache keyed to its tag list; `load_map` refuses a row with an unquoted comma
+- (this commit) — feat(compustat): quarterly export (`tools/export_compustat_quarterly.py`): fiscal quarter, Q4 as year less nine months, year-to-date items, rdq from tradable_from
+- `3240acf` — feat(compustat): S&P balancing-identity audit (`tools/audit_compustat_items.py`); "other" items as S&P remainders; liability and equity fallbacks; the export's fact cache keyed to its tag list; `load_map` refuses a row with an unquoted comma
 - `3d3133f` — feat(compustat): point-in-time annual export (`tools/export_compustat.py`): one row per fiscal year and availability date, Compustat units; adds `polars` and `pyarrow`
 - `b22753d` — feat(compustat): Compustat-style items from XBRL by a cited map (`dera_pipeline/compustat.py`, `data/reference/compustat_item_map.csv`, 85 items); validated against the FASB taxonomy, rules unit-tested
 - `463bb00`, `f4494bc` — feat(tools): FASB definitions and calculation context for US-GAAP elements (`tools/fetch_usgaap_element_docs.py`), the evidence base for mapping Compustat items

@@ -209,6 +209,7 @@ XSGA, ...) by a cited map, for replicating published predictors; see
 ```bash
 uv run python tools/export_compustat.py    # data/exports/compustat/annual.parquet, point in time
 uv run python tools/audit_compustat_items.py   # S&P balancing identities -> docs/audits/compustat_items.md
+uv run python tools/export_compustat_quarterly.py   # data/exports/compustat/quarterly.parquet
 ```
 
 ## Reference data
