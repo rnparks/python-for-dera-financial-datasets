@@ -236,6 +236,14 @@ Notes facts: the component's own element undimensioned
 else `AccumulatedOtherComprehensiveIncomeLossNetOfTax` on the equity-components axis
 alone with an allowlisted member (`AOCI_MEMBER`); hedging reserves are never MSA.
 
+**Footnote amounts** (`footnote_items.parquet`): S&P XAD, advertising expense
+(`AdvertisingExpense`, else `MarketingAndAdvertisingExpense`, four quarters), and
+PPEGT, gross property, plant and equipment (`PropertyPlantAndEquipmentGross`),
+undimensioned, from the annual report's own period. Both are footnote
+disclosures, so the statement map resolves them for 5–9% of firm-years. As of
+2026-10-01: 62,746 reports of 9,241 companies (XAD 28,209, PPEGT 57,364); Coca-Cola
+2023 XAD 5,000, Apple FY2023 PPEGT 114,599.
+
 ## Not mapped
 
 `spi` (special items: no single element), `emp` (employees: a cover-page

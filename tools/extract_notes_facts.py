@@ -10,6 +10,8 @@ come from footnotes, each fact qualified by XBRL dimensions:
                 (Compustat segment file: sales by sid, snms)
     customer    facts on the major-customers axis
                 (Compustat customer segment file: cnms)
+    item        Compustat items disclosed in footnotes, undimensioned: advertising
+                expense (XAD) and gross PP&E (PPEGT), FOOTNOTE_ITEM_TAGS
     aoci        accumulated other comprehensive income components
                 (Compustat RECTA, MSA: in the equity footnote, so on the
                 statements for 1-2% of firm-years only)
@@ -24,6 +26,7 @@ its filing from sub.tsv:
                 StatementBusinessSegmentsAxis (written "BusinessSegments=" in dim.tsv)
     customer    dimensions include the MajorCustomersAxis (any tag)
     aoci        tag in AOCI_TAGS (any dimensions)
+    item        tag in FOOTNOTE_ITEM_TAGS, undimensioned
 
 Nothing is selected or summed here: which dimension combination is a
 company's pension total, or its segment list, is decided downstream
@@ -86,6 +89,7 @@ AOCI_TAGS = [
     "AccumulatedOtherComprehensiveIncomeLossAvailableForSaleSecuritiesAdjustmentNetOfTax",
 ]
 COVER_TAGS = ["Security12bTitle", "TradingSymbol", "SecurityExchangeName"]
+FOOTNOTE_ITEM_TAGS = ["AdvertisingExpense", "MarketingAndAdvertisingExpense", "PropertyPlantAndEquipmentGross"]
 SUB_COLS = ["adsh", "cik", "name", "sic", "form", "period", "fy", "fp", "filed", "accepted", "prevrpt"]
 
 
@@ -105,7 +109,8 @@ def extract(path: Path) -> pl.DataFrame:
             .when(pl.col("tag").is_in(REVENUE_TAGS) & seg.str.contains("(^|;)BusinessSegments="))
             .then(pl.lit("segment"))
             .when(seg.str.contains("MajorCustomers=")).then(pl.lit("customer"))
-            .when(pl.col("tag").is_in(AOCI_TAGS)).then(pl.lit("aoci")))
+            .when(pl.col("tag").is_in(AOCI_TAGS)).then(pl.lit("aoci"))
+            .when(pl.col("tag").is_in(FOOTNOTE_ITEM_TAGS) & (seg == "")).then(pl.lit("item")))
     out = (num.with_columns(kind=kind).filter(pl.col("kind").is_not_null())
            .join(sub, on="adsh", how="inner")
            .with_columns(cik=pl.col("cik").cast(pl.Int64), qtrs=pl.col("qtrs").cast(pl.Int32),

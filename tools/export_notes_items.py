@@ -17,6 +17,8 @@ OUTPUT, under data/exports/compustat/:
                        sales, sales_tag, sics1, naicsh, srcdate, adsh, accepted
     customers.parquet  cik, datadate, cnms, member, ctype, salecs, adsh, accepted
     aoci.parquet       cik, datadate, recta, msa (+ rule_recta, rule_msa), adsh, accepted
+    footnote_items.parquet  cik, datadate, xad (AdvertisingExpense, else MarketingAndAdvertisingExpense,
+                       four quarters), ppegt (PropertyPlantAndEquipmentGross), adsh, accepted
     notes_items_coverage.csv   companies and fiscal years per file and year
 
 Run from the repository root:
@@ -138,6 +140,21 @@ def aoci(f: pl.DataFrame) -> pl.DataFrame:
                        "accepted").sort("cik", "datadate")
 
 
+def footnote_items(f: pl.DataFrame) -> pl.DataFrame:
+    """S&P XAD (advertising expense) and PPEGT (gross PP&E): footnote disclosures, undimensioned. XAD prefers
+    AdvertisingExpense; MarketingAndAdvertisingExpense (which can include other marketing) is the fallback."""
+    x = f.filter(pl.col("kind") == "item")
+    xad = (x.filter(pl.col("tag").is_in(["AdvertisingExpense", "MarketingAndAdvertisingExpense"]) & (pl.col("qtrs") == 4))
+           .with_columns(pri=(pl.col("tag") != "AdvertisingExpense").cast(pl.Int8)).sort("pri")
+           .unique(["adsh"], keep="first").select("cik", "ddate", "adsh", "accepted", (pl.col("value") / 1e6).alias("xad")))
+    ppe = (x.filter((pl.col("tag") == "PropertyPlantAndEquipmentGross") & (pl.col("qtrs") == 0))
+           .unique(["adsh"], keep="first").select("adsh", (pl.col("value") / 1e6).alias("ppegt")))
+    out = xad.join(ppe, on="adsh", how="full", coalesce=True)
+    keys = x.select("adsh", "cik", "ddate", "accepted").unique("adsh")
+    out = out.drop("cik", "ddate", "accepted").join(keys, on="adsh")
+    return out.select("cik", pl.col("ddate").alias("datadate"), "xad", "ppegt", "adsh", "accepted").sort("cik", "datadate")
+
+
 def write(df: pl.DataFrame, name: str) -> None:
     tmp = OUT / f"{name}.partial"
     df.write_parquet(tmp)
@@ -147,7 +164,7 @@ def write(df: pl.DataFrame, name: str) -> None:
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     f = annual(pl.read_parquet(FACTS))
-    out = {"pensions": pensions(f), "segments": segments(f), "customers": customers(f), "aoci": aoci(f)}
+    out = {"pensions": pensions(f), "segments": segments(f), "customers": customers(f), "aoci": aoci(f), "footnote_items": footnote_items(f)}
     cov = []
     for name, df in out.items():
         write(df, name)
