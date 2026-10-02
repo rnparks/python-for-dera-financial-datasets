@@ -199,6 +199,7 @@ def load_presentation_rules(path: Path = PRESENTATION_RULES_PATH) -> list[dict]:
             ex = r.get("exclude_regex") or ""
             out.append({"item": r["item"], "rule": r["rule"], "statements": set(r["statements"].split()),
                         "components": set((r.get("component_tags") or "").split()),
+                        "family": set((r.get("family_tags") or "").split()),
                         "tag": r["tag"], "label": re.compile(r["label_regex"], re.IGNORECASE),
                         "exclude": re.compile(ex, re.IGNORECASE) if ex else None, "notes": r["notes"]})
     return out

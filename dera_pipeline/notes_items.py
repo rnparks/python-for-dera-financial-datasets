@@ -21,10 +21,11 @@ chosen by an allowlist of dimension members, never by pattern:
                        (with OPEB members present the undimensioned figure
                        is sometimes the pension plan, sometimes pension
                        plus OPEB: measured, see the docs)
-    4. one_location    only a domestic or only a foreign pension member, with
-                       no undimensioned total (a single location beside a
-                       total is a part of it: Bank of America 2016 2,789
-                       against 23,772)
+    4. one_location    only a domestic or only a foreign pension member, and
+                       no undimensioned figure in the filing at all (a single
+                       location beside a total is a part of it: Bank of
+                       America 2016 2,789 against 23,772; when that total is
+                       refused, the filing gets nothing)
 
 Plan assets and the obligation take the first rule both support
 (common_rule), so the two describe the same plans; a report where they
@@ -101,7 +102,9 @@ def pension_candidates(values: dict[str, float], other_typed: bool) -> dict[str,
         out["pension_total"] = values["total"]
     if "domestic" in values and "foreign" in values:
         out["dom_plus_for"] = values["domestic"] + values["foreign"]
-    elif "domestic" in values or "foreign" in values:
+    elif ("domestic" in values or "foreign" in values) and "none" not in values:
+        # a single location beside an undimensioned total is part of it; refused with the total when the
+        # total itself is refused (OPEB members present): nothing rather than a part (BofA 2016 2,789 of 23,772)
         out["one_location"] = values.get("domestic", values.get("foreign"))
     if "none" in values and not other_typed:
         out["undimensioned"] = values["none"]

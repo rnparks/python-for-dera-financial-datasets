@@ -142,8 +142,14 @@ Coverage of the first vintage of each fiscal year, before → after these rules
 72%, `ivao` 5% → 47%, `pstkrv` 0% → 53%, `cogs` 31% → 47%. `dcvt` is a known
 approximation: convertibles carried inside a single debt line read as 0. Known gaps: debt tagged only with dimensions (Caterpillar, Ford, GM by
 segment) is not in `fact_asof`; bank revenue where neither total nor interest
-income is filed undimensioned (JPM); GE's principal pension plans are tagged apart
-from its other pension plans (see Footnote items).
+income is filed undimensioned (JPM); preferred stock filed under a company
+extension element rather than a US-GAAP one (Bank of America's 28,397 in 2023) is
+missed, so its common equity is overstated by that amount; GE tags its principal pension plans
+(`PensionPlansDefinedBenefit`, 29,744 assets in 2023) apart from its other pension plans
+(`OtherPensionPlansDefinedBenefit`, 10,764), so its pension totals are understated:
+for most filers the pension member is the total (in filings that tag both and an
+undimensioned figure, that figure equals the pension member alone in 17 of 23 PBOs),
+so the members are not summed.
 
 ## Evidence
 

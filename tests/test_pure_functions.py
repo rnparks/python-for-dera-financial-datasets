@@ -589,7 +589,7 @@ def test_select_pension_priority():
     assert ni.common_rule(ni.pension_candidates({"foreign": 4.0}, True), pbo) == ""
     assert ni.select_pension({"domestic": 6.0, "foreign": 4.0}, True) == (10.0, "dom_plus_for")
     assert ni.select_pension({"foreign": 4.0}, True) == (4.0, "one_location")
-    assert ni.select_pension({"foreign": 4.0, "none": 23.0}, True) == (4.0, "one_location")
+    assert ni.select_pension({"foreign": 4.0, "none": 23.0}, True) == (None, "")
     assert ni.select_pension({"none": 12.0}, False) == (12.0, "undimensioned")
     # an undimensioned figure beside OPEB members may include OPEB: nothing, not a guess
     assert ni.select_pension({"none": 12.0}, True) == (None, "")

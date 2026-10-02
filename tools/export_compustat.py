@@ -48,7 +48,8 @@ PER_SHARE = {"epspi", "epspx", "dvpsx_c"}
 # Supersession is recomputed among 10-K and 10-Q vintages only. fact_asof's superseded_tradable counts
 # every form, so an 8-K recast or an S-1/S-4 that re-files a number would end the 10-K vintage while the
 # superseding row (not a 10-K/10-Q) is filtered out here, leaving nothing in force for the tag (MSFT
-# FY2023 Assets after its 2024-12-04 8-K). Compustat updates from periodic reports; so does this.
+# FY2023 Assets after its 2024-12-04 8-K). Compustat updates from periodic reports; so does this. Nil-valued
+# vintages (325,119 facts) are left out so they cannot supersede a value.
 FACTS_SQL = """
 COPY (
   SELECT cik, tag, value_date, qtrs, uom, value, tradable_from,
@@ -58,7 +59,7 @@ COPY (
   FROM (SELECT f.cik, f.tag, f.value_date, f.qtrs, f.uom, f.value, f.tradable_from, f.known_at, f.vintage_seq,
                (f.form LIKE '10-K%%') AS is_10k, f.adsh
         FROM sec_gold.fact_asof f
-        WHERE f.tag = ANY(%s) AND f.qtrs IN (0, 4) AND f.uom IN ('USD', 'shares')
+        WHERE f.tag = ANY(%s) AND f.qtrs IN (0, 4) AND f.uom IN ('USD', 'shares') AND f.value IS NOT NULL
           AND (f.form LIKE '10-K%%' OR f.form LIKE '10-Q%%')) f
 ) TO STDOUT WITH (FORMAT csv, HEADER)
 """
@@ -68,7 +69,8 @@ COPY (SELECT p.adsh, p.report, p.line, p.stmt, p.tag, p.plabel FROM sec_silver.p
 TO STDOUT WITH (FORMAT csv, HEADER)
 """
 NONNEG = ("capx", "dp", "xint", "xrd")
-ELEMENT_DOCS = compustat.load_element_docs()   # non-negative by S&P's definitions; a negative filed value is a sign slip
+ELEMENT_DOCS = compustat.load_element_docs()
+PSTK_BEFORE_ADD: list = []   # non-negative by S&P's definitions; a negative filed value is a sign slip
 SIC_SQL = "COPY (SELECT DISTINCT ON (cik) cik, sic FROM sec_silver.sub_silver ORDER BY cik, filed_date DESC) TO STDOUT WITH (FORMAT csv, HEADER)"
 
 
@@ -86,6 +88,10 @@ def fyear(datadate: pl.Expr) -> pl.Expr:
     return pl.when(datadate.dt.month() <= 5).then(datadate.dt.year() - 1).otherwise(datadate.dt.year())
 
 
+PERIODS = pl.DataFrame(schema={"adsh": pl.String, "period": pl.Date})   # set in main(): adsh -> period end
+PERIOD_SQL = "COPY (SELECT adsh, period_date AS period FROM sec_silver.sub_silver WHERE form LIKE '10-K%%') TO STDOUT WITH (FORMAT csv, HEADER)"
+
+
 def states(facts: pl.DataFrame) -> pl.DataFrame:
     """Every (cik, datadate, avail) state: the fact vintages in force at each availability date."""
     fye = facts.filter((pl.col("qtrs") == 4) & pl.col("is_10k")).select("cik", "value_date").unique()
@@ -98,8 +104,10 @@ def states(facts: pl.DataFrame) -> pl.DataFrame:
     # if two in-force facts for a tag differ, the most recent vintage, deterministically
     vals = (s.sort("tradable_from", "value", descending=[True, False])
             .group_by("cik", "value_date", "avail", "tag").agg(pl.col("value").first()))
-    # the governing annual report of a state: the latest 10-K among its in-force facts
-    gov = (s.filter(pl.col("is_10k")).sort("tradable_from", descending=True)
+    # the governing annual report of a state: the latest 10-K among its in-force facts that reports this
+    # fiscal year as its own period (a later 10-K's balance sheet is about a later year end)
+    own = s.filter(pl.col("is_10k")).join(PERIODS, on="adsh", how="inner").filter(pl.col("period") == pl.col("value_date"))
+    gov = (own.sort("tradable_from", descending=True)
            .group_by("cik", "value_date", "avail").agg(pl.col("adsh").first().alias("gov_adsh")))
     return vals, gov
 
@@ -129,7 +137,7 @@ def presentation_sets(pres: pl.DataFrame, rules: list[dict], items) -> dict[tupl
         if r.get("exclude") is not None:
             lab = lab & ~pl.col("plabel").fill_null("").str.contains("(?i)" + r["exclude"].pattern)
         if r["rule"] == "zero":
-            fam = sorted(compustat.family_tags(items, r["item"], ELEMENT_DOCS))
+            fam = sorted(compustat.family_tags(items, r["item"], ELEMENT_DOCS) | r["family"])
             hit = on.filter(pl.col("tag").is_in(fam) | lab).select("adsh").unique()
             ok = on.select("adsh").unique().join(hit, on="adsh", how="anti")
             out[(r["item"], "zero")] = set(ok["adsh"].to_list())
@@ -171,6 +179,11 @@ def main(argv: list[str] | None = None) -> int:
     pres = pl.read_csv(pres_csv, schema_overrides={"plabel": pl.String, "tag": pl.String})
     facts = refused_facts(facts, pres, rules)
 
+    global PERIODS
+    per_csv = OUT / "periods_10k.csv"
+    if args.refresh or not per_csv.exists():
+        copy_out(PERIOD_SQL, per_csv)
+    PERIODS = pl.read_csv(per_csv, try_parse_dates=True).with_columns(pl.col("period").cast(pl.Date))
     st, gov = states(facts)
     wide = st.pivot(on="tag", index=["cik", "value_date", "avail"], values="value").sort(["cik", "value_date", "avail"])
     print(f"{wide.height:,} firm-year states for {wide['cik'].n_unique():,} companies", flush=True)
@@ -187,6 +200,20 @@ def main(argv: list[str] | None = None) -> int:
             res[c] = res[c] / 1e6
     for c in NONNEG:
         res[c] = res[c].abs()
+    # COGS from the bank variant (interest expense + loan-loss provision) only for financial SICs: captive-finance
+    # industrials (Deere) file a provision too. COGS from S&P's identity (SALE - XSGA - DP - OIADP) only where
+    # it is between 0 and 1.2 x sales (negative when XSGA already carries D&A).
+    sic = pdf[["cik"]].merge(pl.read_csv(sic_csv).to_pandas(), on="cik", how="left").sic.values
+    fin = (sic >= 6000) & (sic < 7000)
+    bank = (pdf.get("InterestExpense") + pdf.get("ProvisionForLoanLeaseAndOtherLosses")) / 1e6 \
+        if "ProvisionForLoanLeaseAndOtherLosses" in pdf and "InterestExpense" in pdf else None
+    if bank is not None:
+        took_bank = (res["cogs"] - bank.values).abs() < 1e-6
+        res.loc[took_bank.values & ~fin, "cogs"] = float("nan")
+    ident = res["sale"] - res["xsga"] - res["dp"] - res["oiadp"]
+    took_ident = (res["cogs"] - ident).abs() < 1e-6
+    implaus = took_ident & ~((res["cogs"] >= 0) & (res["cogs"] <= 1.2 * res["sale"]))
+    res.loc[implaus, "cogs"] = float("nan")
     # presentation rules, on each state's governing 10-K
     g = pdf[["cik", "value_date", "avail"]].merge(gov.to_pandas(), on=["cik", "value_date", "avail"], how="left").gov_adsh
     g.index = res.index
@@ -197,9 +224,15 @@ def main(argv: list[str] | None = None) -> int:
         if r["rule"] == "add_if_label":
             amt = (pdf[r["tag"]] / 1e6).where(hit.values, 0.0).fillna(0.0) if r["tag"] in pdf else 0.0
             amt = pd.Series(amt, index=res.index) if not isinstance(amt, pd.Series) else amt.set_axis(res.index)
+            # only where no preferred is resolved from permanent equity: a filer that tags PreferredStockValue for
+            # the same redeemable instrument would otherwise be counted twice (IEA FY2019)
+            if r["item"] == "pstk":
+                PSTK_BEFORE_ADD[:] = [res["pstk"].copy()]
+            base = PSTK_BEFORE_ADD[0] if PSTK_BEFORE_ADD else res["pstk"]
+            amt = amt.where(base.fillna(0) == 0, 0.0)
             if r["item"] == "pstk":
                 res["pstk"] = res["pstk"].where(amt == 0, res["pstk"].fillna(0) + amt)
-                res["pstkl"] = res["pstkl"].where(amt == 0, res["pstkl"].fillna(res["pstk"] - amt) + amt)
+                res["pstkl"] = res["pstkl"].where(amt == 0, res["pstkl"].fillna(0) + amt)
             else:
                 res[r["item"]] = res[r["item"]] + amt
         elif r["rule"] == "zero":

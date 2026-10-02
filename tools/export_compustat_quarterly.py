@@ -52,7 +52,7 @@ FACTS_SQL = """
 COPY (
   SELECT f.cik, f.tag, f.value_date, f.qtrs, f.value, f.tradable_from, (f.form LIKE '10-K%%') AS is_10k, f.adsh
   FROM sec_gold.fact_asof f
-  WHERE f.tag = ANY(%s) AND f.qtrs IN (0, 1, 2, 3, 4) AND f.uom IN ('USD', 'shares')
+  WHERE f.tag = ANY(%s) AND f.qtrs IN (0, 1, 2, 3, 4) AND f.uom IN ('USD', 'shares') AND f.value IS NOT NULL
     AND (f.form LIKE '10-K%%' OR f.form LIKE '10-Q%%')
 ) TO STDOUT WITH (FORMAT csv, HEADER)
 """
@@ -155,7 +155,9 @@ def main(argv: list[str] | None = None) -> int:
     yr = f.filter(pl.col("qtrs") == 4).join(q4, on=["cik", "datadate"])
     q3 = q.filter(pl.col("fqtr") == 3).select("cik", pl.col("datadate").alias("q3"))
     ytd9 = f.filter(pl.col("qtrs") == 3).rename({"datadate": "q3"}).join(q3, on=["cik", "q3"])
-    yr = yr.join_asof(ytd9.sort("q3").select("cik", "tag", "q3", pl.col("value").alias("v9"), pl.col("tradable_from").alias("tf9")),
+    # join_asof needs both sides sorted on the key within each group: unsorted, 16% of Q4 rows matched another
+    # quarter's nine-month figure and were then dropped by the 80-100 day filter
+    yr = yr.sort("cik", "tag", "datadate").join_asof(ytd9.sort("cik", "tag", "q3").select("cik", "tag", "q3", pl.col("value").alias("v9"), pl.col("tradable_from").alias("tf9")),
                       left_on="datadate", right_on="q3", by=["cik", "tag"], strategy="backward")
     yr = yr.filter((pl.col("datadate") - pl.col("q3")).dt.total_days().is_between(80, 100))
     # share counts are averages, not sums: Q4 weighted shares are not the year less nine months (that gave
