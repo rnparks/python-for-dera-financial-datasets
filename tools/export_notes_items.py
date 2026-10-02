@@ -17,6 +17,8 @@ OUTPUT, under data/exports/compustat/:
                        sales, sales_tag, sics1, naicsh, srcdate, adsh, accepted
     customers.parquet  cik, datadate, cnms, member, ctype, salecs, adsh, accepted
     aoci.parquet       cik, datadate, recta, msa (+ rule_recta, rule_msa), adsh, accepted
+    cover_shares.parquet  cik, adsh, form, accepted, ddate (the as-of date), segments (class of stock),
+                       shares: every cover-page EntityCommonStockSharesOutstanding of a 10-K/10-Q/20-F/40-F
     footnote_items.parquet  cik, datadate, xad (AdvertisingExpense, else MarketingAndAdvertisingExpense,
                        four quarters), ppegt (PropertyPlantAndEquipmentGross), adsh, accepted
     notes_items_coverage.csv   companies and fiscal years per file and year
@@ -161,9 +163,21 @@ def write(df: pl.DataFrame, name: str) -> None:
     tmp.rename(OUT / f"{name}.parquet")
 
 
+def cover_shares(facts: pl.DataFrame) -> pl.DataFrame:
+    """Cover-page shares outstanding by class, every periodic report, as of the date the cover states."""
+    c = facts.filter((pl.col("kind") == "shares") & pl.col("form").str.contains("^(10-K|10-Q|20-F|40-F)")
+                     & pl.col("value").is_not_null() & (pl.col("value") > 0))
+    return (c.select("cik", "adsh", "form", "accepted", "ddate", "segments", pl.col("value").alias("shares"))
+            .unique(["adsh", "ddate", "segments"]).sort("cik", "accepted"))
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    f = annual(pl.read_parquet(FACTS))
+    facts = pl.read_parquet(FACTS)
+    cs = cover_shares(facts)
+    write(cs, "cover_shares")
+    print(f"cover_shares.parquet: {cs.height:,} rows, {cs['cik'].n_unique():,} companies")
+    f = annual(facts)
     out = {"pensions": pensions(f), "segments": segments(f), "customers": customers(f), "aoci": aoci(f), "footnote_items": footnote_items(f)}
     cov = []
     for name, df in out.items():

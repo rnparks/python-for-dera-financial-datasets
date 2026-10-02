@@ -445,6 +445,14 @@ into `data/exports/notes/cover_securities.parquet` (2.4M facts, 12,883 companies
 as of 2026-10-01): each listed security's title (an American Depositary Share is
 named as one) and exchange as the issuer states them, filing by filing.
 
+The same extraction keeps every cover-page `EntityCommonStockSharesOutstanding`
+(dei, numeric) by class of stock; `tools/export_notes_items.py` writes them to
+`data/exports/compustat/cover_shares.parquet` (468,006 counts, 16,728 companies as
+of 2026-10-01): the issuer's own count of common shares outstanding as of the
+date the cover states, the quantity CRSP's shares outstanding records. Unlike the
+share-class table behind `sec_gold.share_class_shares`, it is never a restated
+comparative or an issued-shares figure.
+
 `tools/extract_notes_facts.py --float` writes each filing's public float
 (`sub.tsv` `pubfloatusd`, `floatdate`) to `data/exports/notes/public_float.parquet`
 (103,122 filings, 12,350 companies as of 2026-10-01): a dollar anchor independent

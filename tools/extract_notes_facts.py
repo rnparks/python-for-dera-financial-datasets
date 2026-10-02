@@ -27,6 +27,8 @@ its filing from sub.tsv:
     customer    dimensions include the MajorCustomersAxis (any tag)
     aoci        tag in AOCI_TAGS (any dimensions)
     item        tag in FOOTNOTE_ITEM_TAGS, undimensioned
+    shares      dei EntityCommonStockSharesOutstanding (any dimensions): the cover page's
+                count of common shares outstanding, by class, as of the date stated
 
 Nothing is selected or summed here: which dimension combination is a
 company's pension total, or its segment list, is decided downstream
@@ -110,7 +112,8 @@ def extract(path: Path) -> pl.DataFrame:
             .then(pl.lit("segment"))
             .when(seg.str.contains("MajorCustomers=")).then(pl.lit("customer"))
             .when(pl.col("tag").is_in(AOCI_TAGS)).then(pl.lit("aoci"))
-            .when(pl.col("tag").is_in(FOOTNOTE_ITEM_TAGS) & (seg == "")).then(pl.lit("item")))
+            .when(pl.col("tag").is_in(FOOTNOTE_ITEM_TAGS) & (seg == "")).then(pl.lit("item"))
+            .when(pl.col("tag") == "EntityCommonStockSharesOutstanding").then(pl.lit("shares")))
     out = (num.with_columns(kind=kind).filter(pl.col("kind").is_not_null())
            .join(sub, on="adsh", how="inner")
            .with_columns(cik=pl.col("cik").cast(pl.Int64), qtrs=pl.col("qtrs").cast(pl.Int32),
