@@ -232,6 +232,7 @@ capx,duration,tag,,2,PaymentsToAcquireProductiveAssets,1,,
 prstkc,duration,tag,,1,PaymentsForRepurchaseOfEquity,1,,S&P PRSTKC: uses of funds decreasing common and/or preferred stock; FASB element is common + preferred repurchases.
 prstkc,duration,formula,1,,tag:PaymentsForRepurchaseOfCommonStock,1,FALSE,
 prstkc,duration,formula,1,,tag:PaymentsForRepurchaseOfPreferredStockAndPreferenceStock,1,FALSE,
+prstkcc,duration,tag,,1,PaymentsForRepurchaseOfCommonStock,1,,"S&P PRSTKCC: purchase of common stock (cash flow statement), common only."
 sstk,duration,tag,,1,ProceedsFromIssuanceOrSaleOfEquity,1,,S&P SSTK includes equity offerings and option/warrant exercises; FASB element is common + preferred + options + other equity.
 sstk,duration,formula,1,,tag:ProceedsFromIssuanceOfCommonStock,1,FALSE,
 sstk,duration,formula,1,,tag:ProceedsFromStockOptionsExercised,1,FALSE,

@@ -115,11 +115,17 @@ report among its in-force facts), using the face statements in
   assets, note references and operating leases from counting as debt). S&P
   collects these items from the face statements, and CZ's predictors use them
   without filling zeros, so a firm with no debt line would otherwise drop out of
-  every leverage signal. Applied to `dltt`, `dlc`, `mib`, `pstk`, `invt`, `dvc`,
-  `dvp`, `dv`, `prstkc`, `sstk`, `dltis`, `dltr`; not to items commonly folded
+  every leverage signal. Applied to `dltt`, `dlc`, `dcvt`, `mib`, `pstk`, `pstkrv`,
+  `tstkp`, `dvpa`, `ivao`, `invt`, `dvc`, `dvp`, `dv`, `prstkc`, `prstkcc`, `sstk`,
+  `dltis`, `dltr`, `dlcch` (OSAP's own firm counts confirm Compustat populates
+  these: its NOA, which uses convertible debt, covers 4,455 firms a month); not to
+  items commonly folded
   into an "other" line on the face and broken out in the notes (`xint`, `txp`,
   `ivst`: Apple's interest expense is a footnote figure). Each row records the
   items zeroed in `zeroed_items`.
+- `zero_if_zero`: an item that follows another: with no preferred stock outstanding
+  (`pstk` 0, e.g. "Preferred stock, none issued") `pstkrv`, `tstkp`, `dvpa` and
+  `pstkl` are 0.
 - `refuse_tag`: `Revenues` is not SALE/REVT when the filing labels it as including
   other income, or when the filed `Revenues` equals a sales figure plus
   non-operating components filed for the same period
@@ -132,8 +138,9 @@ report among its in-force facts), using the face statements in
 
 Coverage of the first vintage of each fiscal year, before → after these rules
 (as of 2026-10-01): `mib` 20% → 82%, `invt` 36% → 83%,
-`dvc` 21% → 68%, `pstk` 29% → 61%, `dltt` 32% → 55%, `dlc` 28% → 55%, `cogs` 31% →
-47%. Known gaps: debt tagged only with dimensions (Caterpillar, Ford, GM by
+`dvc` 21% → 68%, `pstk` 29% → 61%, `dltt` 32% → 55%, `dlc` 28% → 55%, `dcvt` 2% →
+72%, `ivao` 5% → 47%, `pstkrv` 0% → 53%, `cogs` 31% → 47%. `dcvt` is a known
+approximation: convertibles carried inside a single debt line read as 0. Known gaps: debt tagged only with dimensions (Caterpillar, Ford, GM by
 segment) is not in `fact_asof`; bank revenue where neither total nor interest
 income is filed undimensioned (JPM); GE's principal pension plans are tagged apart
 from its other pension plans (see Footnote items).

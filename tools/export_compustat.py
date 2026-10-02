@@ -135,6 +135,7 @@ def presentation_sets(pres: pl.DataFrame, rules: list[dict], items) -> dict[tupl
             out[(r["item"], "zero")] = set(ok["adsh"].to_list())
         elif r["rule"] == "add_if_label":
             out[(r["item"], "add_if_label")] = set(on.filter((pl.col("tag") == r["tag"]) & lab)["adsh"].to_list())
+        # zero_if_zero needs no presentation: it follows another item's resolved value
     return out
 
 
@@ -205,6 +206,11 @@ def main(argv: list[str] | None = None) -> int:
             z = hit & res[r["item"]].isna()
             res.loc[z, r["item"]] = 0.0
             zeroed[z] = zeroed[z] + r["item"] + " "
+        elif r["rule"] == "zero_if_zero":       # 'tag' names the item this one follows
+            z = (res[r["tag"]] == 0) & res[r["item"]].isna()
+            res.loc[z, r["item"]] = 0.0
+            zeroed[z] = zeroed[z] + r["item"] + " "
+            hit = z
         if r["rule"] != "refuse_tag":
             print(f"presentation rule {r['rule']} {r['item']}: {int(hit.sum()):,} states eligible", flush=True)
     res["zeroed_items"] = zeroed.str.strip()

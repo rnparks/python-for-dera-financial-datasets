@@ -642,6 +642,7 @@ def test_presentation_rules_load_and_cover_known_items():
     rules = compustat.load_presentation_rules()
     items = compustat.load_map()
     assert {r["item"] for r in rules} <= set(items)
+    assert all(r["tag"] in items for r in rules if r["rule"] == "zero_if_zero")
     assert {r["rule"] for r in rules} <= compustat.PRESENTATION_RULE_KINDS
 
 

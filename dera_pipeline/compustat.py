@@ -182,7 +182,7 @@ def item_users(items: dict[str, Item]) -> dict[str, set[str]]:
 # Presentation rules (data/reference/compustat_presentation_rules.csv): what a filing's face statements
 # show decides three things the facts alone cannot. See docs/compustat_items.md ("Presentation rules").
 PRESENTATION_RULES_PATH = Path(__file__).resolve().parents[1] / "data" / "reference" / "compustat_presentation_rules.csv"
-PRESENTATION_RULE_KINDS = {"zero", "refuse_tag", "add_if_label"}
+PRESENTATION_RULE_KINDS = {"zero", "refuse_tag", "add_if_label", "zero_if_zero"}
 
 
 def load_presentation_rules(path: Path = PRESENTATION_RULES_PATH) -> list[dict]:
