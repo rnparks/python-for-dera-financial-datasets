@@ -68,7 +68,7 @@ def pensions(f: pl.DataFrame) -> pl.DataFrame:
             t = g.filter(pl.col("tag") == tag)
             vals = {s: v for s, v in t.filter(pl.col("scope").is_in(["none", "total", "domestic", "foreign"]))
                     .group_by("scope").agg(pl.col("value").first()).iter_rows()}
-            typed = t.filter(pl.col("scope").is_in(["total", "domestic", "foreign", "opeb", "plan_other"])).height > 0
+            typed = t.filter(pl.col("scope").is_in(["opeb", "plan_other"])).height > 0
             cand[item] = ni.pension_candidates(vals, typed)
         rule = ni.common_rule(cand["pplao"], cand["pbpro"])
         if not rule:

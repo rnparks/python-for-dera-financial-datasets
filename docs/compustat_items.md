@@ -37,12 +37,18 @@ millions, per-share items in dollars. As of 2026-10-01: 116,099 firm-years for
 quarter, with `fqtr`, `fyearq`, `rdq` (the first NYSE session the quarter's facts
 were tradable) and the items of `data/reference/compustat_quarterly_items.csv`.
 Fourth-quarter flows, which a 10-K does not tag, are the year less the nine
-months to the third quarter end; year-to-date items take the fact whose duration
-is the fiscal quarter. Values are as first reported (later vintages of a quarter
-are not yet followed). Checked against check 64: Apple's FY2024 quarters read
+months to the third quarter end (share counts, which are averages, take the year's
+weighted average instead); year-to-date items take the fact whose duration is the
+fiscal quarter. Point in time: `rdq` is the first 10-Q or 10-K tradable on or
+after the quarter end that carries the quarter's balance sheet or own-period
+flows, and every value is the one known by then. A value first reported in a
+later filing (next year's comparative) is excluded, as is a fact dated tradable
+before its quarter ended; before this rule, 25.7% of company-quarters carried a
+number first reported more than 45 days after the date the row was used. Later
+vintages of a quarter are not followed. Checked against check 64: Apple's FY2024 quarters read
 90,753 / 85,777 / 94,930 revenue and 62,585 / 91,443 year-to-date operating cash
 flow ($M), as the database's own trailing functions do. As of 2026-10-01:
-446,053 company-quarters, 13,791 companies.
+447,451 company-quarters, 13,813 companies.
 
 ## Audit
 
@@ -53,9 +59,12 @@ is not cash, receivables or inventory), so `aco`, `lco`, `lo` and `ao` are the
 remainder of their totals, falling back to the single XBRL "other" line only when
 the total is not filed; the test for them is that they are not negative. As of
 2026-10-01, operating companies (SIC not 6xxx, assets over $10M, positive sales),
-43,781 firm-years: AT = LT + SEQ + MIB + temporary equity within 1% of assets in
-95.0% (96.4% with every component filed; 67% before the remainder and liability
-fallbacks); the four remainders are non-negative in 99.9–100.0%.
+first vintage, 44,119 firm-years: AT = LT + SEQ + MIB within 1% of assets in 97.0%
+of the 41,383 with every component filed (95.0% before the review fixes of
+2026-10-01); the four remainders are non-negative in 99.9–100.0%. The variant that
+adds temporary equity reads 93.1%: since `seq` now includes redeemable preferred
+presented in temporary equity (Presentation rules), that identity counts it twice
+for those filers.
 
 ## Rules
 
@@ -65,6 +74,69 @@ present. Formulas may use other items; `validate()` refuses a cycle, an unknown
 item, a tag outside the 2011–2026 US-GAAP taxonomy, and a tag whose FASB period
 type differs from the item's. `tests/test_pure_functions.py` pins the rules and
 runs `validate()` on the shipped map.
+
+Fact vintages. At each availability date the vintage in force is the latest
+10-K or 10-Q filing of the fact: supersession is counted among periodic reports
+only. (`sec_gold.fact_asof` counts every form, so an 8-K recast or an S-1 that
+re-files a number would otherwise end the 10-K vintage and leave nothing in force:
+Microsoft FY2023 assets vanished after its 2024-12-04 8-K.) Where two in-force
+facts for a tag differ, the most recent wins. One fiscal year end per `fyear`:
+where a fiscal-year change or reverse merger leaves two, the later is kept (664
+dropped as of 2026-10-01). `capx`, `dp`, `xint` and `xrd` are taken as absolute
+values: S&P defines them as non-negative, and a negative filed value is a sign slip.
+
+Components summed by FASB's calculation tree. Where the total is not filed, `dltt`
+is `LongTermDebtNoncurrent` plus finance leases, or else the calc children of
+`LongTermDebtNoncurrent` the filer tags (S&P DLTT includes capitalized leases);
+the current-maturity helper `_dd1` and short-term borrowings `_np` likewise; `invt`
+sums its net-of-reserve components and industry inventory lines (not gross
+inventory and the LIFO reserve, which would double count). `cogs`, with no cost of
+revenue filed, is SALE − XSGA − DP − OIADP: S&P (guide item 41) treats total
+operating costs as COGS when no breakdown is reported, and OIADP = SALE − COGS −
+XSGA − DP by S&P's definition; for lenders, interest expense plus loan-loss
+provision (guide item 41). `ni` from income available to common adds back
+preferred dividends; `ib` subtracts whichever discontinued-operations element is
+filed; `epspx` is basic EPS less discontinued operations per share; `csho` falls
+back to shares issued less treasury shares; `pstk` includes preferred carried with
+its paid-in capital (banks). SALE and REVT take the filed total first, then ASC
+606 contract revenue plus revenue not from contracts (contract revenue alone
+omits GM Financial or Walmart membership income).
+
+## Presentation rules
+
+`data/reference/compustat_presentation_rules.csv`, applied by
+`tools/export_compustat.py` to each state's governing 10-K (the latest annual
+report among its in-force facts), using the face statements in
+`sec_silver.pre_silver`:
+
+- `zero`: an item missing from the facts is 0 when the filing presents the
+  statement and no line on it is in the item's family: its tags, their FASB
+  calculation descendants, or a label matching the rule (an `exclude_regex` keeps
+  assets, note references and operating leases from counting as debt). S&P
+  collects these items from the face statements, and CZ's predictors use them
+  without filling zeros, so a firm with no debt line would otherwise drop out of
+  every leverage signal. Applied to `dltt`, `dlc`, `mib`, `pstk`, `invt`, `dvc`,
+  `dvp`, `dv`, `prstkc`, `sstk`, `dltis`, `dltr`; not to items commonly folded
+  into an "other" line on the face and broken out in the notes (`xint`, `txp`,
+  `ivst`: Apple's interest expense is a footnote figure). Each row records the
+  items zeroed in `zeroed_items`.
+- `refuse_tag`: `Revenues` is not SALE/REVT when the filing labels it as including
+  other income, or when the filed `Revenues` equals a sales figure plus
+  non-operating components filed for the same period
+  (`compustat.revenues_include_nonoperating`). Not caught: a filer that files only
+  the total (XOM 2022: 413,680 against 398,675 sales and other operating revenue).
+- `add_if_label`: S&P SEQ = CEQ + PSTK and PSTK includes redeemable preferred
+  (guide items 216, 130), while XBRL `StockholdersEquity` excludes temporary
+  equity; temporary equity presented as preferred is added to `seq` and `pstk`
+  (SPAC class A subject to redemption is common and is not).
+
+Coverage of the first vintage of each fiscal year, before → after these rules
+(as of 2026-10-01): `mib` 20% → 82%, `invt` 36% → 83%,
+`dvc` 21% → 68%, `pstk` 29% → 61%, `dltt` 32% → 55%, `dlc` 28% → 55%, `cogs` 31% →
+47%. Known gaps: debt tagged only with dimensions (Caterpillar, Ford, GM by
+segment) is not in `fact_asof`; bank revenue where neither total nor interest
+income is filed undimensioned (JPM); GE's principal pension plans are tagged apart
+from its other pension plans (see Footnote items).
 
 ## Evidence
 

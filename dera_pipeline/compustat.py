@@ -176,3 +176,98 @@ def item_users(items: dict[str, Item]) -> dict[str, set[str]]:
         for d in it.dependencies():
             users[d].add(it.name)
     return users
+
+
+# ---------------------------------------------------------------------------------------------------
+# Presentation rules (data/reference/compustat_presentation_rules.csv): what a filing's face statements
+# show decides three things the facts alone cannot. See docs/compustat_items.md ("Presentation rules").
+PRESENTATION_RULES_PATH = Path(__file__).resolve().parents[1] / "data" / "reference" / "compustat_presentation_rules.csv"
+PRESENTATION_RULE_KINDS = {"zero", "refuse_tag", "add_if_label"}
+
+
+def load_presentation_rules(path: Path = PRESENTATION_RULES_PATH) -> list[dict]:
+    """Rules as dicts: item, rule, statements (set), tag, label and exclude (compiled regexes; exclude
+    may be None: a line whose label matches it is not evidence of the item), notes."""
+    import re
+    out = []
+    with Path(path).open() as f:
+        for r in csv.DictReader(f):
+            if None in r:
+                raise ValueError(f"{path}: row for {r['item']} has more fields than the header")
+            if r["rule"] not in PRESENTATION_RULE_KINDS:
+                raise ValueError(f"{path}: unknown rule {r['rule']!r} for {r['item']}")
+            ex = r.get("exclude_regex") or ""
+            out.append({"item": r["item"], "rule": r["rule"], "statements": set(r["statements"].split()),
+                        "components": set((r.get("component_tags") or "").split()),
+                        "tag": r["tag"], "label": re.compile(r["label_regex"], re.IGNORECASE),
+                        "exclude": re.compile(ex, re.IGNORECASE) if ex else None, "notes": r["notes"]})
+    return out
+
+
+def family_tags(items: dict[str, Item], name: str, element_docs: dict | None = None) -> set[str]:
+    """Every tag an item can resolve from, through the items its formulas use, plus (given the FASB element
+    docs) every calculation descendant of those tags: a filer presenting a component of the item has it."""
+    seen, stack, tags = set(), [name], set()
+    while stack:
+        n = stack.pop()
+        if n in seen or n not in items:
+            continue
+        seen.add(n)
+        tags |= items[n].tags_used()
+        stack += list(items[n].dependencies())
+    if element_docs:
+        frontier = list(tags)
+        while frontier:
+            t = frontier.pop()
+            for c in (element_docs.get(t) or {}).get("calc_children", "").split():
+                c = c.split(":")[0]
+                if c not in tags:
+                    tags.add(c)
+                    frontier.append(c)
+    return tags
+
+
+def zero_allowed(lines: list[tuple[str, str, str]], rule: dict, family: set[str]) -> bool:
+    """A structural zero: the filing presents at least one of the rule's statements, and no line on them
+    is in the item's tag family or carries a label in its family. lines: (stmt, tag, label)."""
+    on = [(t, lab) for s, t, lab in lines if s in rule["statements"]]
+    if not on:
+        return False
+    ex = rule.get("exclude")
+
+    def evidence(lab):
+        lab = lab or ""
+        return bool(rule["label"].search(lab)) and not (ex and ex.search(lab))
+    return not any(t in family or evidence(lab) for t, lab in on)
+
+
+def label_matches(lines: list[tuple[str, str, str]], rule: dict) -> bool:
+    """The rule's tag is presented on one of its statements with a label matching its pattern."""
+    return any(s in rule["statements"] and t == rule["tag"] and rule["label"].search(lab or "") for s, t, lab in lines)
+
+
+REVENUE_CONTRACT_TAGS = ("RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax",
+                         "SalesRevenueNet")
+
+
+def revenues_include_nonoperating(frame, components: set[str], tol: float = 0.005):
+    """Boolean mask over a wide frame (one row per state, one column per tag): the filed Revenues equals a
+    contract or sales revenue figure plus non-operating income components the same state files (non-zero),
+    within tol. Then Revenues is 'revenues and other income', not S&P SALE (XOM 2022: 398,675 sales +
+    equity-affiliate and other income = 413,680 'Total revenues')."""
+    import numpy as np
+    import pandas as pd
+    if "Revenues" not in frame:
+        return pd.Series(False, index=frame.index)
+    comp = [c for c in sorted(components) if c in frame]
+    if not comp:
+        return pd.Series(False, index=frame.index)
+    extra = frame[comp].fillna(0).sum(axis=1)
+    rev = frame["Revenues"]
+    hit = pd.Series(False, index=frame.index)
+    for t in REVENUE_CONTRACT_TAGS:
+        if t in frame:
+            # the components are material (Revenues is not within tolerance of the sales figure alone) and close it
+            hit |= ((rev - frame[t]).abs() > tol * rev.abs()) & ((rev - frame[t] - extra).abs() <= tol * rev.abs()) \
+                & frame[t].notna()
+    return hit & rev.notna() & np.isfinite(rev)

@@ -589,9 +589,12 @@ def test_select_pension_priority():
     assert ni.common_rule(ni.pension_candidates({"foreign": 4.0}, True), pbo) == ""
     assert ni.select_pension({"domestic": 6.0, "foreign": 4.0}, True) == (10.0, "dom_plus_for")
     assert ni.select_pension({"foreign": 4.0}, True) == (4.0, "one_location")
+    assert ni.select_pension({"foreign": 4.0, "none": 23.0}, True) == (4.0, "one_location")
     assert ni.select_pension({"none": 12.0}, False) == (12.0, "undimensioned")
     # an undimensioned figure beside OPEB members may include OPEB: nothing, not a guess
     assert ni.select_pension({"none": 12.0}, True) == (None, "")
+    # a single location beside an undimensioned total is part of it
+    assert ni.select_pension({"foreign": 4.0, "none": 23.0}, False) == (23.0, "undimensioned")
 
 
 @pytest.mark.parametrize("member,words", [
@@ -632,3 +635,58 @@ def test_aoci_component():
     assert ni.aoci_component("AccumulatedOtherComprehensiveIncomeLossNetOfTax",
                              "ConsolidatedEntities=ParentCompany;EquityComponents=AccumulatedTranslationAdjustment;") \
         == (None, "")
+
+
+# ---------------------------------------------------------------------------- presentation rules
+def test_presentation_rules_load_and_cover_known_items():
+    rules = compustat.load_presentation_rules()
+    items = compustat.load_map()
+    assert {r["item"] for r in rules} <= set(items)
+    assert {r["rule"] for r in rules} <= compustat.PRESENTATION_RULE_KINDS
+
+
+def _rule(**kw):
+    import re
+    base = {"item": "dltt", "rule": "zero", "statements": {"BS"}, "tag": "", "label": re.compile("debt|notes?", re.I),
+            "exclude": re.compile(r"receivable|\bnotes? \d", re.I)}
+    return base | kw
+
+
+def test_zero_needs_the_statement_and_no_family_line():
+    r = _rule()
+    fam = {"LongTermDebtNoncurrent"}
+    assert compustat.zero_allowed([("BS", "Assets", "Total assets"), ("BS", "Liabilities", "Total liabilities")], r, fam)
+    # a debt line with an unmapped tag: unknown, not zero
+    assert not compustat.zero_allowed([("BS", "Assets", "Total assets"), ("BS", "Custom1", "Senior notes")], r, fam)
+    # a mapped tag present
+    assert not compustat.zero_allowed([("BS", "LongTermDebtNoncurrent", "LTD")], r, fam)
+    # an excluded label (an asset, a note reference) is not evidence of debt
+    assert compustat.zero_allowed([("BS", "Custom2", "Notes receivable"), ("BS", "Custom3", "Commitments (Note 9)")], r, fam)
+    # no balance sheet presented at all: unknown
+    assert not compustat.zero_allowed([("IS", "Revenues", "Revenue")], r, fam)
+
+
+def test_label_rule_matches_only_its_tag_and_statement():
+    import re
+    r = _rule(rule="refuse_tag", statements={"IS"}, tag="Revenues", label=re.compile("other income", re.I))
+    assert compustat.label_matches([("IS", "Revenues", "Total revenues and other income")], r)
+    assert not compustat.label_matches([("IS", "Revenues", "Total revenues")], r)
+    assert not compustat.label_matches([("BS", "Revenues", "Total revenues and other income")], r)
+
+
+def test_family_tags_follow_helper_items():
+    items = compustat.load_map()
+    fam = compustat.family_tags(items, "dlc")
+    assert {"DebtCurrent", "LongTermDebtCurrent", "ShortTermBorrowings"} <= fam
+
+
+def test_revenues_including_other_income_is_detected():
+    import pandas as pd
+    f = pd.DataFrame({"Revenues": [413680.0, 383285.0, 100.0],
+                      "RevenueFromContractWithCustomerIncludingAssessedTax": [398675.0, None, 100.0],
+                      "RevenueFromContractWithCustomerExcludingAssessedTax": [None, 383285.0, None],
+                      "IncomeLossFromEquityMethodInvestments": [11463.0, None, 0.0],
+                      "OtherNonoperatingIncomeExpense": [3542.0, 5.0, None]})
+    comps = {"IncomeLossFromEquityMethodInvestments", "OtherNonoperatingIncomeExpense"}
+    # XOM-like: sales + equity income + other income = Revenues; Apple-like and zero-component rows are not
+    assert compustat.revenues_include_nonoperating(f, comps).tolist() == [True, False, False]

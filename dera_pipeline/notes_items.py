@@ -16,12 +16,15 @@ chosen by an allowlist of dimension members, never by pattern:
 
     1. pension_total   the plan-type axis alone, on a pension member
     2. dom_plus_for    domestic + foreign pension members, both present
-    3. one_location    only a domestic or only a foreign pension member
-    4. undimensioned   the undimensioned fact, only when the filing tags
-                       no plan type at all for that element (with OPEB
-                       members present the undimensioned figure is
-                       sometimes the pension plan, sometimes pension plus
-                       OPEB: measured, see the docs)
+    3. undimensioned   the undimensioned fact, only when the filing tags
+                       no OPEB or other plan-type member on that element
+                       (with OPEB members present the undimensioned figure
+                       is sometimes the pension plan, sometimes pension
+                       plus OPEB: measured, see the docs)
+    4. one_location    only a domestic or only a foreign pension member, with
+                       no undimensioned total (a single location beside a
+                       total is a part of it: Bank of America 2016 2,789
+                       against 23,772)
 
 Plan assets and the obligation take the first rule both support
 (common_rule), so the two describe the same plans; a report where they
@@ -42,7 +45,7 @@ OPEB = {"OtherPostretirementBenefitPlansDefinedBenefit", "OtherPostretirementBen
         "UnitedStatesPostretirementBenefitPlansOfUSEntityDefinedBenefit",
         "ForeignPostretirementBenefitPlansDefinedBenefit", "DefinedBenefitPostretirementHealthCoverage",
         "DefinedBenefitPostretirementLifeInsurance"}
-RULE_ORDER = ["pension_total", "dom_plus_for", "one_location", "undimensioned"]
+RULE_ORDER = ["pension_total", "dom_plus_for", "undimensioned", "one_location"]
 
 
 def parse_segments(segments: str) -> dict[str, str]:
@@ -87,12 +90,12 @@ def pension_scope(segments: str) -> str:
     return "plan_other"
 
 
-def pension_candidates(values: dict[str, float], plan_typed: bool) -> dict[str, float]:
+def pension_candidates(values: dict[str, float], other_typed: bool) -> dict[str, float]:
     """Every rule that applies to one filing's facts for one element, rule -> value.
 
     values: scope -> value for the scopes present ('none', 'total',
-    'domestic', 'foreign'); plan_typed: the filing tags any plan-type member
-    (pension, OPEB or other) on this element."""
+    'domestic', 'foreign'); other_typed: the filing tags an OPEB or other
+    (non-pension) plan-type member on this element."""
     out = {}
     if "total" in values:
         out["pension_total"] = values["total"]
@@ -100,14 +103,14 @@ def pension_candidates(values: dict[str, float], plan_typed: bool) -> dict[str, 
         out["dom_plus_for"] = values["domestic"] + values["foreign"]
     elif "domestic" in values or "foreign" in values:
         out["one_location"] = values.get("domestic", values.get("foreign"))
-    if "none" in values and not plan_typed:
+    if "none" in values and not other_typed:
         out["undimensioned"] = values["none"]
     return out
 
 
-def select_pension(values: dict[str, float], plan_typed: bool) -> tuple[float | None, str]:
+def select_pension(values: dict[str, float], other_typed: bool) -> tuple[float | None, str]:
     """One filing's pension total for one element: the first rule in RULE_ORDER that applies."""
-    cand = pension_candidates(values, plan_typed)
+    cand = pension_candidates(values, other_typed)
     for rule in RULE_ORDER:
         if rule in cand:
             return cand[rule], rule

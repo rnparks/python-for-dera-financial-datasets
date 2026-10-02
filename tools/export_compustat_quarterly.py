@@ -18,9 +18,14 @@ HOW
     not tag, is the year less the nine months to the third quarter end, tag by
     tag (not for per-share items, which do not add across quarters).
   - kind ytd: from the fact whose duration is the fiscal quarter number.
-  - avail and rdq: the first NYSE session the quarter's facts were tradable
-    (the original 10-Q or 10-K). Values are as first reported: later vintages
-    of a quarter are not followed yet (the annual export does follow them).
+  - avail and rdq: the first NYSE session, on or after the quarter end, that
+    a 10-Q or 10-K carrying the quarter's balance sheet or own-period flows was
+    tradable. Every value is the one known at rdq: facts first reported later
+    (a comparative in next year's filing) are excluded, as are facts dated
+    tradable before the quarter ended (mis-dated). Later vintages are not
+    followed (the annual export does follow them).
+  - share counts (weighted average shares) in Q4 are the year's average, not
+    the year less nine months.
 
 UNITS as Compustat: millions; per-share items in dollars.
 
@@ -39,17 +44,24 @@ import polars as pl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from export_compustat import OUT, PER_SHARE, copy_out, fyear  # noqa: E402
+from export_compustat import NONNEG, OUT, PER_SHARE, copy_out, fyear, refused_facts  # noqa: E402
 
 from dera_pipeline import compustat  # noqa: E402
 
 FACTS_SQL = """
 COPY (
-  SELECT f.cik, f.tag, f.value_date, f.qtrs, f.value, f.tradable_from, (f.form LIKE '10-K%%') AS is_10k
+  SELECT f.cik, f.tag, f.value_date, f.qtrs, f.value, f.tradable_from, (f.form LIKE '10-K%%') AS is_10k, f.adsh
   FROM sec_gold.fact_asof f
   WHERE f.tag = ANY(%s) AND f.qtrs IN (0, 1, 2, 3, 4) AND f.uom IN ('USD', 'shares')
     AND (f.form LIKE '10-K%%' OR f.form LIKE '10-Q%%')
 ) TO STDOUT WITH (FORMAT csv, HEADER)
+"""
+
+
+PRES_SQL = """
+COPY (SELECT p.adsh, p.report, p.line, p.stmt, p.tag, p.plabel FROM sec_silver.pre_silver p
+      WHERE p.adsh = ANY(%s) AND p.tag = ANY(%s))
+TO STDOUT WITH (FORMAT csv, HEADER)
 """
 
 
@@ -85,7 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     items = compustat.load_map()
     qitems = compustat.load_quarterly()
     need = closure(items, [q["base_item"] for q in qitems])
-    tags = sorted(set().union(*(i.tags_used() for i in need.values())))
+    tags = sorted(set().union(*(i.tags_used() for i in need.values()),
+                              *(r["components"] for r in compustat.load_presentation_rules() if r["rule"] == "refuse_tag")))
     OUT.mkdir(parents=True, exist_ok=True)
     csv_path, tags_txt = OUT / "facts_quarterly.csv", OUT / "facts_quarterly.tags"
     stale = not tags_txt.exists() or tags_txt.read_text().split() != tags
@@ -95,6 +108,12 @@ def main(argv: list[str] | None = None) -> int:
         tags_txt.write_text("\n".join(tags))
     f = pl.read_csv(csv_path, try_parse_dates=True, schema_overrides={"value": pl.Float64, "is_10k": pl.String})
     f = f.with_columns(is_10k=pl.col("is_10k") == "t")
+    rules = [r for r in compustat.load_presentation_rules() if r["rule"] == "refuse_tag"]
+    pres_csv = OUT / "presentation_quarterly.csv"
+    if args.refresh or not pres_csv.exists() or stale:
+        copy_out(PRES_SQL, pres_csv, (sorted(f["adsh"].unique().to_list()),
+                                      sorted({r["tag"] for r in rules} | set().union(*(r["components"] for r in rules)))))
+    f = refused_facts(f, pl.read_csv(pres_csv, schema_overrides={"plabel": pl.String, "tag": pl.String}), rules)
     # first-reported value of each fact
     f = f.sort("tradable_from").unique(["cik", "tag", "value_date", "qtrs"], keep="first")
     print(f"{f.height:,} first-reported facts", flush=True)
@@ -116,6 +135,19 @@ def main(argv: list[str] | None = None) -> int:
     q = q.with_columns(fyearq=fyear(pl.col("fye"))).rename({"value_date": "datadate"}).select("cik", "datadate", "fqtr", "fyearq")
 
     f = f.rename({"value_date": "datadate"})
+    # Point in time. A quarter's report date (rdq) is the first 10-Q/10-K tradable on or after the quarter
+    # end that carries its balance sheet or its own-period flows (three months, or the year for Q4). Only
+    # facts tradable by then count: a value first reported in a later filing (next year's comparative) is
+    # not known at rdq, and a fact tradable before the quarter even ended is mis-dated and dropped.
+    f = f.filter(pl.col("tradable_from") >= pl.col("datadate"))
+    own = pl.concat([f.filter(pl.col("qtrs") == 0), f.filter(pl.col("qtrs") == 1), f.filter(pl.col("qtrs") == 4)])
+    rdq = own.join(q.select("cik", "datadate"), on=["cik", "datadate"]).group_by("cik", "datadate").agg(
+        rdq=pl.col("tradable_from").min())
+    f = f.join(rdq, on=["cik", "datadate"], how="left")
+    known = f.filter(pl.col("tradable_from") <= pl.col("rdq"))
+    later = f.height - known.height
+    f = known.drop("rdq")
+    print(f"{later:,} facts first reported after their quarter's report date excluded", flush=True)
     inst = f.filter(pl.col("qtrs") == 0).join(q.select("cik", "datadate"), on=["cik", "datadate"])
     q1 = f.filter(pl.col("qtrs") == 1).join(q.select("cik", "datadate"), on=["cik", "datadate"])
     # fourth quarter = year less nine months, tag by tag
@@ -126,19 +158,31 @@ def main(argv: list[str] | None = None) -> int:
     yr = yr.join_asof(ytd9.sort("q3").select("cik", "tag", "q3", pl.col("value").alias("v9"), pl.col("tradable_from").alias("tf9")),
                       left_on="datadate", right_on="q3", by=["cik", "tag"], strategy="backward")
     yr = yr.filter((pl.col("datadate") - pl.col("q3")).dt.total_days().is_between(80, 100))
-    q4f = yr.with_columns(value=pl.col("value") - pl.col("v9")).select(q1.columns)
+    # share counts are averages, not sums: Q4 weighted shares are not the year less nine months (that gave
+    # Apple -48 million); the year's weighted average stands in for the fourth quarter's
+    share_tags = items["_cshpr"].tags_used()
+    q4f = yr.with_columns(value=pl.when(pl.col("tag").is_in(sorted(share_tags))).then(pl.col("value"))
+                          .otherwise(pl.col("value") - pl.col("v9"))).select(q1.columns)
     qflow = pl.concat([q1, q4f.join(q1.select("cik", "datadate", "tag"), on=["cik", "datadate", "tag"], how="anti")])
     ytd = f.filter(pl.col("qtrs").is_between(1, 4)).join(q, on=["cik", "datadate"]).filter(pl.col("qtrs") == pl.col("fqtr")).select(f.columns)
 
-    avail = pl.concat([inst, q1, f.filter(pl.col("qtrs") == 4)]).group_by("cik", "datadate").agg(avail=pl.col("tradable_from").min())
-    out = q.join(avail, on=["cik", "datadate"], how="left").to_pandas().set_index(["cik", "datadate"])
+    out = q.join(rdq.rename({"rdq": "avail"}), on=["cik", "datadate"], how="left").to_pandas().set_index(["cik", "datadate"])
     src = {"instant": wide(inst), "quarter": wide(qflow), "ytd": wide(ytd)}
+    comps = set().union(*(r["components"] for r in rules))
+    for k in ("quarter", "ytd"):
+        fr = src[k].to_pandas()
+        inc = compustat.revenues_include_nonoperating(fr, comps)
+        fr.loc[inc, "Revenues"] = float("nan")
+        src[k] = pl.from_pandas(fr)
+        print(f"{k}: Revenues refused in {int(inc.sum()):,} quarters where it equals sales plus non-operating income")
     eps_q1 = wide(q1)
     for qi in qitems:
         frame = eps_q1 if (qi["kind"] == "quarter" and qi["base_item"] in PER_SHARE) else src[qi["kind"]]
         s = resolve(frame, items, qi["base_item"])
         if qi["base_item"] not in PER_SHARE:
             s = s / 1e6
+        if qi["base_item"] in NONNEG:
+            s = s.abs()
         out[qi["item"]] = s.reindex(out.index)
     out["rdq"] = out["avail"]
     res = pl.from_pandas(out.reset_index())

@@ -13,6 +13,12 @@ che,instant,formula,1,,item:ivst,1,FALSE,IVST optional (zero when absent).
 rect,instant,tag,,1,ReceivablesNetCurrent,1,,S&P RECT: all claims collectible within one year (trade + tax refund + other). FASB ReceivablesNetCurrent is the total.
 rect,instant,tag,,2,AccountsReceivableNetCurrent,1,,Trade only; used when no total is filed.
 invt,instant,tag,,1,InventoryNet,1,,S&P INVT inventories total.
+invt,instant,formula,1,,tag:InventoryFinishedGoodsAndWorkInProcessNetOfReserves,1,FALSE,"No inventory total filed: the net-of-reserve components the filer tags (FASB InventoryNet children other than gross inventory and the LIFO reserve, which would double count) and industry inventory lines."
+invt,instant,formula,1,,tag:InventoryRawMaterialsAndSuppliesNetOfReserves,1,FALSE,
+invt,instant,formula,1,,tag:InventoryPartsAndComponentsNetOfReserves,1,FALSE,
+invt,instant,formula,1,,tag:OtherInventoryNetOfReserves,1,FALSE,
+invt,instant,formula,1,,tag:EnergyRelatedInventory,1,FALSE,
+invt,instant,formula,1,,tag:RetailRelatedInventoryMerchandise,1,FALSE,
 xpp,instant,tag,,1,PrepaidExpenseCurrent,1,,S&P XPP prepaid expenses.
 _acox,instant,tag,,1,OtherAssetsCurrent,1,,Helper: S&P ACOX current assets other (sundry).
 ppent,instant,tag,,1,PropertyPlantAndEquipmentNet,1,,S&P PPENT = PPEGT - accumulated DD&A.
@@ -26,8 +32,34 @@ intan,instant,formula,1,,item:gdwl,1,FALSE,
 intan,instant,formula,1,,item:_intano,1,FALSE,
 lct,instant,tag,,1,LiabilitiesCurrent,1,,S&P LCT = AP + LCO + DLC + TXP.
 _dd1,instant,tag,,1,LongTermDebtAndCapitalLeaseObligationsCurrent,1,,Helper: S&P DD1 long-term debt due in one year (incl. capital leases).
-_dd1,instant,tag,,2,LongTermDebtCurrent,1,,Excludes lease obligations.
+_dd1,instant,formula,1,,tag:LongTermDebtCurrent,1,TRUE,FASB calc: LongTermDebtAndCapitalLeaseObligationsCurrent = LongTermDebtCurrent + FinanceLeaseLiabilityCurrent.
+_dd1,instant,formula,1,,tag:FinanceLeaseLiabilityCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:ConvertibleDebtCurrent,1,FALSE,"No current-maturities total filed: the FASB calc children of LongTermDebtCurrent the filer tags, plus finance leases."
+_dd1,instant,formula,2,,tag:ConvertibleSubordinatedDebtCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:FederalHomeLoanBankAdvancesCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:LinesOfCreditCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:LongTermCommercialPaperCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:LongTermConstructionLoanCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:LongtermPollutionControlBondCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:LongtermTransitionBondCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:NotesAndLoansPayableCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:OtherLongTermDebtCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:SecuredDebtCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:SpecialAssessmentBondCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:SubordinatedDebtCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:UnsecuredDebtCurrent,1,FALSE,
+_dd1,instant,formula,2,,tag:FinanceLeaseLiabilityCurrent,1,FALSE,
 _np,instant,tag,,1,ShortTermBorrowings,1,,Helper: S&P NP notes payable; FASB ShortTermBorrowings includes commercial paper and overdrafts (its calc children).
+_np,instant,formula,1,,tag:BankOverdrafts,1,FALSE,No ShortTermBorrowings total filed: its FASB calc children the filer tags.
+_np,instant,formula,1,,tag:BridgeLoan,1,FALSE,
+_np,instant,formula,1,,tag:CommercialPaper,1,FALSE,
+_np,instant,formula,1,,tag:ConstructionLoan,1,FALSE,
+_np,instant,formula,1,,tag:FederalHomeLoanBankAdvancesMaturitiesSummaryDueWithinOneYearOfBalanceSheetDate,1,FALSE,
+_np,instant,formula,1,,tag:OtherShortTermBorrowings,1,FALSE,
+_np,instant,formula,1,,tag:SecuritiesSoldUnderAgreementsToRepurchase,1,FALSE,
+_np,instant,formula,1,,tag:ShortTermBankLoansAndNotesPayable,1,FALSE,
+_np,instant,formula,1,,tag:ShortTermNonBankLoansAndNotesPayable,1,FALSE,
+_np,instant,formula,1,,tag:WarehouseAgreementBorrowings,1,FALSE,
 dlc,instant,tag,,1,DebtCurrent,1,,S&P DLC = DD1 + NP; FASB DebtCurrent is debt and finance lease obligation classified current (parent of ShortTermBorrowings).
 dlc,instant,formula,1,,item:_dd1,1,FALSE,
 dlc,instant,formula,1,,item:_np,1,FALSE,
@@ -38,14 +70,49 @@ txp,instant,tag,,2,TaxesPayableCurrent,1,,Includes non-income taxes (FASB); S&P 
 xacc,instant,tag,,1,AccruedLiabilitiesCurrent,1,,S&P XACC accrued expenses.
 _lcox,instant,tag,,1,OtherLiabilitiesCurrent,1,,Helper: S&P LCOX.
 dltt,instant,tag,,1,LongTermDebtAndCapitalLeaseObligations,1,,S&P DLTT: debt due after one year incl. capitalized lease obligations (guide item 9).
-dltt,instant,tag,,2,LongTermDebtNoncurrent,1,,Excludes lease obligations.
-dltt,instant,tag,,3,LongTermNotesPayable,1,,
+dltt,instant,formula,1,,tag:LongTermDebtNoncurrent,1,TRUE,No combined total filed. FASB calc: LongTermDebtAndCapitalLeaseObligations = LongTermDebtNoncurrent + FinanceLeaseLiabilityNoncurrent; S&P DLTT includes capitalized lease obligations (guide item 9).
+dltt,instant,formula,1,,tag:FinanceLeaseLiabilityNoncurrent,1,FALSE,
+dltt,instant,formula,2,,tag:LongTermNotesAndLoans,1,TRUE,"No long-term debt total filed: the FASB calc children of LongTermDebtNoncurrent the filer tags, plus finance leases."
+dltt,instant,formula,2,,tag:CommercialPaperNoncurrent,1,FALSE,
+dltt,instant,formula,2,,tag:ConstructionLoanNoncurrent,1,FALSE,
+dltt,instant,formula,2,,tag:ConvertibleDebtNoncurrent,1,FALSE,
+dltt,instant,formula,2,,tag:ConvertibleSubordinatedDebtNoncurrent,1,FALSE,
+dltt,instant,formula,2,,tag:JuniorSubordinatedDebentureOwedToUnconsolidatedSubsidiaryTrustNoncurrent,1,FALSE,
+dltt,instant,formula,2,,tag:LongTermLineOfCredit,1,FALSE,
+dltt,instant,formula,2,,tag:LongTermPollutionControlBond,1,FALSE,
+dltt,instant,formula,2,,tag:LongTermTransitionBond,1,FALSE,
+dltt,instant,formula,2,,tag:LongtermFederalHomeLoanBankAdvancesNoncurrent,1,FALSE,
+dltt,instant,formula,2,,tag:OtherLongTermDebtNoncurrent,1,FALSE,
+dltt,instant,formula,2,,tag:SecuredLongTermDebt,1,FALSE,
+dltt,instant,formula,2,,tag:SpecialAssessmentBondNoncurrent,1,FALSE,
+dltt,instant,formula,2,,tag:SubordinatedLongTermDebt,1,FALSE,
+dltt,instant,formula,2,,tag:UnsecuredLongTermDebt,1,FALSE,
+dltt,instant,formula,2,,tag:FinanceLeaseLiabilityNoncurrent,1,FALSE,
+dltt,instant,formula,3,,tag:CommercialPaperNoncurrent,1,FALSE,As variant 2 when LongTermNotesAndLoans is not filed: its children LongTermNotesPayable and LongTermLoansPayable stand in (a separate variant so a filer tagging parent and child is not counted twice).
+dltt,instant,formula,3,,tag:ConstructionLoanNoncurrent,1,FALSE,
+dltt,instant,formula,3,,tag:ConvertibleDebtNoncurrent,1,FALSE,
+dltt,instant,formula,3,,tag:ConvertibleSubordinatedDebtNoncurrent,1,FALSE,
+dltt,instant,formula,3,,tag:JuniorSubordinatedDebentureOwedToUnconsolidatedSubsidiaryTrustNoncurrent,1,FALSE,
+dltt,instant,formula,3,,tag:LongTermLineOfCredit,1,FALSE,
+dltt,instant,formula,3,,tag:LongTermPollutionControlBond,1,FALSE,
+dltt,instant,formula,3,,tag:LongTermTransitionBond,1,FALSE,
+dltt,instant,formula,3,,tag:LongtermFederalHomeLoanBankAdvancesNoncurrent,1,FALSE,
+dltt,instant,formula,3,,tag:OtherLongTermDebtNoncurrent,1,FALSE,
+dltt,instant,formula,3,,tag:SecuredLongTermDebt,1,FALSE,
+dltt,instant,formula,3,,tag:SpecialAssessmentBondNoncurrent,1,FALSE,
+dltt,instant,formula,3,,tag:SubordinatedLongTermDebt,1,FALSE,
+dltt,instant,formula,3,,tag:UnsecuredLongTermDebt,1,FALSE,
+dltt,instant,formula,3,,tag:LongTermNotesPayable,1,FALSE,
+dltt,instant,formula,3,,tag:LongTermLoansPayable,1,FALSE,
+dltt,instant,formula,3,,tag:FinanceLeaseLiabilityNoncurrent,1,FALSE,
 txditc,instant,tag,,1,DeferredTaxLiabilitiesNoncurrent,1,,S&P TXDITC = TXDB + ITCB; excludes current deferred taxes. FASB element retired after 2024.
 txditc,instant,tag,,2,DeferredIncomeTaxLiabilitiesNet,1,,Net DTL after ASU 2015-17 noncurrent classification.
 mib,instant,tag,,1,MinorityInterest,1,,S&P MIB noncontrolling interest.
 lt,instant,tag,,1,Liabilities,1,,S&P Xpressfeed LT = LCT + DLTT + TXDITC + LO (noncontrolling interest outside; the 2003 guide included minority interest before SFAS 160).
 pstk,instant,tag,,1,PreferredStockValue,1,,S&P PSTK carrying value: nonredeemable preferred (2003 guide item 130). FASB PreferredStockValue is nonredeemable preferred.
 pstk,instant,tag,,2,PreferredStockValueOutstanding,1,,
+pstk,instant,tag,,3,PreferredStockIncludingAdditionalPaidInCapital,1,,"Preferred carried with its paid-in capital (common for banks: JPM 2023 27,404)."
+pstk,instant,tag,,4,PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount,1,,
 pstkrv,instant,tag,,1,PreferredStockRedemptionAmount,1,,S&P PSTKRV redemption value.
 tstkp,instant,tag,,1,TreasuryStockPreferredValue,1,,S&P TSTKP preferred treasury stock.
 seq,instant,tag,,1,StockholdersEquity,1,,S&P SEQ = CEQ + PSTK; FASB StockholdersEquity is parent equity excluding noncontrolling interest.
@@ -53,6 +120,10 @@ ceq,instant,formula,1,,item:seq,1,TRUE,S&P CEQ = SEQ - PSTK.
 ceq,instant,formula,1,,item:pstk,-1,FALSE,
 re,instant,tag,,1,RetainedEarningsAccumulatedDeficit,1,,S&P RE.
 csho,instant,tag,,1,CommonStockSharesOutstanding,1,,S&P CSHO common shares outstanding at year end (shares; exported in millions).
+csho,instant,formula,1,,tag:CommonStockSharesIssued,1,TRUE,Shares issued less treasury shares (balance sheet parenthetical).
+csho,instant,formula,1,,tag:TreasuryStockShares,-1,TRUE,
+csho,instant,formula,2,,tag:CommonStockSharesIssued,1,TRUE,
+csho,instant,formula,2,,tag:TreasuryStockCommonShares,-1,TRUE,
 drc,instant,tag,,1,ContractWithCustomerLiabilityCurrent,1,,S&P DRC deferred revenue current (ASC 606 element first).
 drc,instant,tag,,2,DeferredRevenueCurrent,1,,
 drlt,instant,tag,,1,ContractWithCustomerLiabilityNoncurrent,1,,S&P DRLT deferred revenue long-term.
@@ -61,14 +132,22 @@ dcvt,instant,tag,,1,ConvertibleDebtNoncurrent,1,,S&P DCVT convertible debt.
 dcvt,instant,tag,,2,ConvertibleNotesPayable,1,,
 recta,instant,tag,,1,AccumulatedOtherComprehensiveIncomeLossForeignCurrencyTranslationAdjustmentNetOfTax,1,,S&P RECTA cumulative translation adjustment.
 msa,instant,tag,,1,AccumulatedOtherComprehensiveIncomeLossAvailableForSaleSecuritiesAdjustmentNetOfTax,1,,S&P MSA marketable securities adjustment.
-sale,duration,tag,,1,RevenueFromContractWithCustomerExcludingAssessedTax,1,,S&P SALE: gross sales less discounts and returns; excludes excise taxes. Order as sec_gold.concept_tag_map revenue (non-financial).
-sale,duration,tag,,2,Revenues,1,,
-sale,duration,tag,,3,RevenueFromContractWithCustomerIncludingAssessedTax,1,,
-sale,duration,tag,,4,SalesRevenueNet,1,,
-revt,duration,tag,,1,Revenues,1,,S&P REVT revenue total (Xpressfeed item; not in 2003 guide). Total first.
-revt,duration,tag,,2,RevenueFromContractWithCustomerExcludingAssessedTax,1,,
-revt,duration,tag,,3,RevenueFromContractWithCustomerIncludingAssessedTax,1,,
-revt,duration,tag,,4,SalesRevenueNet,1,,
+sale,duration,tag,,1,Revenues,1,,"S&P SALE: gross sales and other operating revenue less discounts, returns and excise taxes, including revenue sources expected to continue (finance subsidiaries, leasing). The filed total first; ASC 606 contract revenue alone omits non-contract revenue (GM Financial, Walmart membership income), so it is used only with RevenueNotFromContractWithCustomer added. Revenues labelled as including other income is refused by the presentation rule (compustat_presentation_rules.csv)."
+sale,duration,tag,,2,SalesRevenueNet,1,,
+sale,duration,formula,1,,tag:RevenueFromContractWithCustomerExcludingAssessedTax,1,TRUE,ASC 606: contract revenue plus revenue not from contracts with customers (FASB both children of Revenues).
+sale,duration,formula,1,,tag:RevenueNotFromContractWithCustomer,1,FALSE,
+sale,duration,formula,2,,tag:RevenueFromContractWithCustomerIncludingAssessedTax,1,TRUE,Including excise taxes the filer collects: the last resort for SALE (S&P excludes excise).
+sale,duration,formula,2,,tag:RevenueNotFromContractWithCustomer,1,FALSE,
+sale,duration,formula,3,,tag:InterestAndDividendIncomeOperating,1,TRUE,Banks: S&P bank revenue is total interest income plus noninterest income.
+sale,duration,formula,3,,tag:NoninterestIncome,1,FALSE,
+revt,duration,tag,,1,Revenues,1,,S&P REVT revenue total (Xpressfeed item; not in 2003 guide). Same ladder as SALE.
+revt,duration,tag,,2,SalesRevenueNet,1,,
+revt,duration,formula,1,,tag:RevenueFromContractWithCustomerExcludingAssessedTax,1,TRUE,ASC 606: contract revenue plus revenue not from contracts with customers (FASB both children of Revenues).
+revt,duration,formula,1,,tag:RevenueNotFromContractWithCustomer,1,FALSE,
+revt,duration,formula,2,,tag:RevenueFromContractWithCustomerIncludingAssessedTax,1,TRUE,Including excise taxes the filer collects: the last resort for SALE (S&P excludes excise).
+revt,duration,formula,2,,tag:RevenueNotFromContractWithCustomer,1,FALSE,
+revt,duration,formula,3,,tag:InterestAndDividendIncomeOperating,1,TRUE,Banks: S&P bank revenue is total interest income plus noninterest income.
+revt,duration,formula,3,,tag:NoninterestIncome,1,FALSE,
 _cor,duration,tag,,1,CostOfRevenue,1,,Helper: as-filed cost of revenue in taxonomy order (sec_gold.concept_tag_map cost_of_revenue).
 _cor,duration,tag,,2,CostOfGoodsAndServicesSold,1,,
 _cor,duration,tag,,3,CostOfMerchandiseSalesBuyingAndOccupancyCosts,1,,
@@ -77,6 +156,12 @@ cogs,duration,tag,,2,CostOfGoodsSoldExcludingDepreciationDepletionAndAmortizatio
 cogs,duration,tag,,3,CostOfServicesExcludingDepreciationDepletionAndAmortization,1,,
 cogs,duration,formula,1,,item:_cor,1,TRUE,As-filed cost of revenue less the D&A the filer tags inside it (S&P removes depreciation from COGS).
 cogs,duration,formula,1,,item:_cor_da,-1,FALSE,
+cogs,duration,formula,2,,item:sale,1,TRUE,"No cost of revenue filed. S&P (guide item 41): total operating costs of nonmanufacturing companies are COGS when no breakdown is reported; by S&P's identity OIADP = SALE - COGS - XSGA - DP, COGS = SALE - XSGA - DP - OIADP (XBRL operating income can include special items, which then sit in COGS)."
+cogs,duration,formula,2,,item:xsga,-1,TRUE,
+cogs,duration,formula,2,,item:dp,-1,TRUE,
+cogs,duration,formula,2,,item:oiadp,-1,TRUE,
+cogs,duration,formula,3,,tag:InterestExpense,1,TRUE,Banks and savings institutions (guide item 41): interest expense plus provision for loan losses.
+cogs,duration,formula,3,,tag:ProvisionForLoanLeaseAndOtherLosses,1,TRUE,"Required: only lenders file a loan-loss provision, so an industrial firm never takes this variant."
 _cor_da,duration,tag,,1,CostOfGoodsAndServicesSoldDepreciationAndAmortization,1,,Helper: D&A tagged inside cost of revenue.
 _cor_da,duration,tag,,2,CostOfGoodsAndServicesSoldDepreciation,1,,
 xrd,duration,tag,,1,ResearchAndDevelopmentExpense,1,,S&P XRD.
@@ -90,8 +175,7 @@ xsga,duration,formula,2,,item:xrd,1,FALSE,
 xad,duration,tag,,1,AdvertisingExpense,1,,S&P XAD advertising; excludes selling and marketing expense.
 xad,duration,tag,,2,MarketingAndAdvertisingExpense,1,,Includes marketing (FASB parent of AdvertisingExpense); fallback.
 dp,duration,tag,,1,DepreciationDepletionAndAmortization,1,,S&P DP includes amortization of intangibles and depletion (guide item 14); FASB element covers tangible and intangible and depleting assets.
-dp,duration,tag,,2,DepreciationAmortizationAndAccretionNet,1,,
-dp,duration,tag,,3,DepreciationAndAmortization,1,,
+dp,duration,tag,,2,DepreciationAndAmortization,1,,
 dp,duration,formula,1,,tag:Depreciation,1,TRUE,
 dp,duration,formula,1,,tag:AmortizationOfIntangibleAssets,1,FALSE,
 xint,duration,tag,,1,InterestExpense,1,,S&P XINT interest and related expense.
@@ -104,10 +188,14 @@ txfo,duration,tag,,1,CurrentForeignTaxExpenseBenefit,1,,
 pi,duration,tag,,1,IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest,1,,S&P PI pretax income.
 pi,duration,tag,,2,IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments,1,,
 ni,duration,tag,,1,NetIncomeLoss,1,,S&P NI: income after discontinued operations and extraordinary items.
-ni,duration,tag,,2,NetIncomeLossAvailableToCommonStockholdersBasic,1,,
+ni,duration,formula,1,,tag:NetIncomeLossAvailableToCommonStockholdersBasic,1,TRUE,S&P NI is before preferred dividends: income available to common plus preferred dividends and adjustments.
+ni,duration,formula,1,,tag:PreferredStockDividendsAndOtherAdjustments,1,FALSE,
 ib,duration,tag,,1,IncomeLossFromContinuingOperations,1,,"S&P IB: after taxes and minority interest, before discontinued operations and extraordinary items (guide item 18). FASB element is continuing operations attributable to parent."
-ib,duration,formula,1,,item:ni,1,TRUE,Net income less discontinued operations attributable to parent.
-ib,duration,formula,1,,tag:IncomeLossFromDiscontinuedOperationsNetOfTaxAttributableToReportingEntity,-1,FALSE,
+ib,duration,formula,1,,item:ni,1,TRUE,Net income less discontinued operations attributable to the parent.
+ib,duration,formula,1,,tag:IncomeLossFromDiscontinuedOperationsNetOfTaxAttributableToReportingEntity,-1,TRUE,
+ib,duration,formula,2,,item:ni,1,TRUE,Filers that tag only the consolidated discontinued-operations element.
+ib,duration,formula,2,,tag:IncomeLossFromDiscontinuedOperationsNetOfTax,-1,TRUE,
+ib,duration,formula,3,,item:ni,1,TRUE,No discontinued operations tagged.
 nopi,duration,tag,,1,NonoperatingIncomeExpense,1,,S&P NOPI.
 nopi,duration,tag,,2,OtherNonoperatingIncomeExpense,1,,
 oiadp,duration,tag,,1,OperatingIncomeLoss,1,,"S&P OIADP: after COGS, SG&A and DD&A. XBRL operating income also includes items S&P moves to special items."
@@ -117,10 +205,12 @@ ebitda,duration,formula,1,,item:oiadp,1,TRUE,Xpressfeed EBITDA; taken as OIBDP.
 ebitda,duration,formula,1,,item:dp,1,TRUE,
 epspi,duration,tag,,1,EarningsPerShareBasic,1,,S&P EPSPI basic EPS incl. extraordinary items.
 epspx,duration,tag,,1,IncomeLossFromContinuingOperationsPerBasicShare,1,,S&P EPSPX basic EPS excl. extraordinary items.
-epspx,duration,tag,,2,EarningsPerShareBasic,1,,
+epspx,duration,formula,1,,tag:EarningsPerShareBasic,1,TRUE,Basic EPS includes discontinued operations; S&P EPSPX excludes them.
+epspx,duration,formula,1,,tag:IncomeLossFromDiscontinuedOperationsNetOfTaxPerBasicShare,-1,FALSE,
 dvc,duration,tag,,1,DividendsCommonStock,1,,S&P DVC: common dividends declared as on the equity statement (guide item 21). FASB DividendsCommonStock is declared.
 dvc,duration,tag,,2,DividendsCommonStockCash,1,,
 dvc,duration,tag,,3,PaymentsOfDividendsCommonStock,1,,Paid (cash flow statement); fallback.
+dvc,duration,tag,,4,PaymentsOfDividends,1,,All dividends paid (cash flow statement); can include preferred: last fallback.
 dvp,duration,tag,,1,DividendsPreferredStock,1,,S&P DVP.
 dvp,duration,tag,,2,PaymentsOfDividendsPreferredStockAndPreferenceStock,1,,
 dvt,duration,tag,,1,Dividends,1,,Xpressfeed DVT total dividends.
