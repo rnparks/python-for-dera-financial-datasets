@@ -438,6 +438,13 @@ filings' footnote facts with their XBRL dimensions. In `dim.tsv`, axes and membe
 appear by local name without the `Axis`/`Member` suffix
 (`StatementBusinessSegmentsAxis` is written `BusinessSegments=`).
 
+`tools/extract_notes_facts.py --cover` also reads the archives' text facts
+(`txt.tsv`) for the cover-page security table tagged since 2019 —
+`Security12bTitle`, `TradingSymbol`, `SecurityExchangeName` by class of stock —
+into `data/exports/notes/cover_securities.parquet` (2.4M facts, 12,883 companies
+as of 2026-10-01): each listed security's title (an American Depositary Share is
+named as one) and exchange as the issuer states them, filing by filing.
+
 `tools/export_notes_items.py` turns these facts into Compustat-style pension,
 segment and customer files (`data/exports/compustat/pensions.parquet`,
 `segments.parquet`, `customers.parquet`), by the rules in

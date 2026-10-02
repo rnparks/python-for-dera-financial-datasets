@@ -29,6 +29,14 @@ Nothing is selected or summed here: which dimension combination is a
 company's pension total, or its segment list, is decided downstream
 (dera_pipeline/notes_items.py) so the rule is documented in one place.
 
+COVER PAGES. From txt.tsv (text facts), every Security12bTitle, TradingSymbol
+and SecurityExchangeName (the 10-K/10-Q/20-F cover page, tagged since 2019), by
+class of stock (dimension string), with its filing: written to
+data/exports/notes/cover_<archive>.parquet and combined into
+data/exports/notes/cover_securities.parquet (--cover). Each listed security's
+title (e.g. "American Depositary Shares, each representing ...") and exchange,
+as the issuer states them.
+
 OUTPUT. data/exports/notes/facts_<archive>.parquet, one per archive
 (an archive already extracted is skipped unless --force), and
 data/exports/notes/notes_facts.parquet, all archives, one row per
@@ -36,6 +44,7 @@ data/exports/notes/notes_facts.parquet, all archives, one row per
 
 Run from the repository root:
     uv run python tools/extract_notes_facts.py [--force]
+    uv run python tools/extract_notes_facts.py --cover [--force]
 """
 from __future__ import annotations
 
@@ -75,6 +84,7 @@ AOCI_TAGS = [
     "AccumulatedOtherComprehensiveIncomeLossForeignCurrencyTranslationAdjustmentNetOfTax",
     "AccumulatedOtherComprehensiveIncomeLossAvailableForSaleSecuritiesAdjustmentNetOfTax",
 ]
+COVER_TAGS = ["Security12bTitle", "TradingSymbol", "SecurityExchangeName"]
 SUB_COLS = ["adsh", "cik", "name", "sic", "form", "period", "fy", "fp", "filed", "accepted", "prevrpt"]
 
 
@@ -106,10 +116,51 @@ def extract(path: Path) -> pl.DataFrame:
     return out
 
 
+def extract_cover(path: Path) -> pl.DataFrame:
+    with zipfile.ZipFile(path) as z:
+        if "txt.tsv" not in z.namelist():
+            return pl.DataFrame()
+        sub = read(z, "sub.tsv", SUB_COLS)
+        dim = read(z, "dim.tsv", ["dimhash", "segments"]).rename({"dimhash": "dimh"})
+        lf = pl.read_csv(io.BytesIO(z.read("txt.tsv")), separator="\t", quote_char=None, infer_schema_length=0,
+                         truncate_ragged_lines=True, columns=["adsh", "tag", "ddate", "dimh", "coreg", "value"])
+    t = lf.filter(pl.col("tag").is_in(COVER_TAGS) & (pl.col("coreg").is_null() | (pl.col("coreg") == "")))
+    return (t.join(dim, on="dimh", how="left").join(sub, on="adsh", how="inner")
+            .with_columns(cik=pl.col("cik").cast(pl.Int64), segments=pl.col("segments").fill_null(""),
+                          accepted=pl.col("accepted").str.to_datetime("%Y-%m-%d %H:%M:%S%.f", strict=False),
+                          archive=pl.lit(path.stem))
+            .select("cik", "adsh", "form", "period", "accepted", "segments", "tag", "value", "archive"))
+
+
+def main_cover(force: bool) -> None:
+    zips = sorted(RAW.glob("*.zip"))
+    for i, p in enumerate(zips, 1):
+        dest = OUT / f"cover_{p.stem}.parquet"
+        if dest.exists() and not force:
+            continue
+        df = extract_cover(p)
+        tmp = dest.with_suffix(".partial")
+        df.write_parquet(tmp)
+        tmp.rename(dest)
+        print(f"({i}/{len(zips)}) {p.name}: {df.height:,} cover facts", flush=True)
+    parts = [pl.read_parquet(f) for f in sorted(OUT.glob("cover_2*.parquet"))]
+    allc = pl.concat([x for x in parts if x.height], how="diagonal_relaxed").unique(
+        ["adsh", "segments", "tag", "value"])
+    tmp = OUT / "cover_securities.partial"
+    allc.write_parquet(tmp)
+    tmp.rename(OUT / "cover_securities.parquet")
+    print(f"cover_securities.parquet: {allc.height:,} facts, {allc['cik'].n_unique():,} companies")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--cover", action="store_true", help="extract cover-page security titles, symbols, exchanges")
     args = ap.parse_args()
+    if args.cover:
+        OUT.mkdir(parents=True, exist_ok=True)
+        main_cover(args.force)
+        return
     OUT.mkdir(parents=True, exist_ok=True)
     zips = sorted(RAW.glob("*.zip"))
     for i, p in enumerate(zips, 1):
