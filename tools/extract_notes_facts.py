@@ -45,6 +45,7 @@ data/exports/notes/notes_facts.parquet, all archives, one row per
 Run from the repository root:
     uv run python tools/extract_notes_facts.py [--force]
     uv run python tools/extract_notes_facts.py --cover [--force]
+    uv run python tools/extract_notes_facts.py --float      # public float per filing (sub.tsv)
 """
 from __future__ import annotations
 
@@ -132,6 +133,26 @@ def extract_cover(path: Path) -> pl.DataFrame:
             .select("cik", "adsh", "form", "period", "accepted", "segments", "tag", "value", "archive"))
 
 
+def main_float() -> None:
+    """Public float (sub.tsv pubfloatusd, floatdate): the dollar value of non-affiliate common equity each
+    annual report states, an anchor independent of share-count tags."""
+    rows = []
+    for p in sorted(RAW.glob("*.zip")):
+        with zipfile.ZipFile(p) as z:
+            sub = pl.read_csv(io.BytesIO(z.read("sub.tsv")), separator="\t", quote_char=None, infer_schema_length=0,
+                              truncate_ragged_lines=True)
+        if "pubfloatusd" not in sub.columns:
+            continue
+        rows.append(sub.select("adsh", pl.col("cik").cast(pl.Int64), "form", "floatdate",
+                               pl.col("pubfloatusd").cast(pl.Float64, strict=False), "accepted"))
+    f = (pl.concat(rows).filter(pl.col("pubfloatusd") > 0)
+         .with_columns(floatdate=pl.col("floatdate").str.to_date("%Y%m%d", strict=False),
+                       accepted=pl.col("accepted").str.to_datetime("%Y-%m-%d %H:%M:%S%.f", strict=False))
+         .drop_nulls(["floatdate"]).unique(["adsh"]))
+    f.write_parquet(OUT / "public_float.parquet")
+    print(f"public_float.parquet: {f.height:,} filings, {f['cik'].n_unique():,} companies")
+
+
 def main_cover(force: bool) -> None:
     zips = sorted(RAW.glob("*.zip"))
     for i, p in enumerate(zips, 1):
@@ -156,7 +177,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--cover", action="store_true", help="extract cover-page security titles, symbols, exchanges")
+    ap.add_argument("--float", action="store_true", dest="pubfloat", help="extract each filing's public float")
     args = ap.parse_args()
+    if args.pubfloat:
+        OUT.mkdir(parents=True, exist_ok=True)
+        main_float()
+        return
     if args.cover:
         OUT.mkdir(parents=True, exist_ok=True)
         main_cover(args.force)

@@ -445,6 +445,11 @@ into `data/exports/notes/cover_securities.parquet` (2.4M facts, 12,883 companies
 as of 2026-10-01): each listed security's title (an American Depositary Share is
 named as one) and exchange as the issuer states them, filing by filing.
 
+`tools/extract_notes_facts.py --float` writes each filing's public float
+(`sub.tsv` `pubfloatusd`, `floatdate`) to `data/exports/notes/public_float.parquet`
+(103,122 filings, 12,350 companies as of 2026-10-01): a dollar anchor independent
+of share-count tags, though itself sometimes mis-scaled.
+
 `tools/export_notes_items.py` turns these facts into Compustat-style pension,
 segment and customer files (`data/exports/compustat/pensions.parquet`,
 `segments.parquet`, `customers.parquet`), by the rules in
