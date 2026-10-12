@@ -2,7 +2,7 @@
 
 The gold layer is the query-facing top of the medallion pipeline: SEC DERA fundamentals for every company that has ever been an S&P 500, 400 or 600 constituent (membership dated where the history has been replayed), keyed by ticker, with a canonical-concept taxonomy and pre-computed peer statistics on top. Everything here is derived from `sec_silver` — rebuild it any time with `uv run dera build-gold`.
 
-**Data coverage** (as of the 2026q2 load, figures dated 2026-09-11): filings from 2009-04-15 through 2026-06-30, 16.2M rows per display matview (2,400 companies that have ever been index constituents) and 97.9M in `fact_asof`.
+**Data coverage** (as of the 2026q3 load, figures dated 2026-10-12): filings from 2009-04-15 through 2026-09-30, 16.5M rows per display matview (2,406 companies that have ever been index constituents) and 99.4M in `fact_asof`.
 
 For the whole database — including `sec_reference`, which holds the survivorship-free company and security spine — see [`schema_overview.md`](schema_overview.md).
 
@@ -12,11 +12,11 @@ For the whole database — including `sec_reference`, which holds the survivorsh
 
 | Object | Kind | Rows | One-line description |
 |---|---|---:|---|
-| [`fact_asof`](#fact_asof) | matview | 97.9M | **Bitemporal facts, every vintage. The correct backtest source.** |
-| [`tradable_financials`](#tradable_financials) | matview | 12.4M | Latest-restated facts, one row per fact, index membership dated |
-| [`tradable_financials_pit`](#tradable_financials_pit) | matview | 12.4M | Earliest-sighting twin of the above |
-| [`peer_stats`](#peer_stats) | matview | 480K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level`; population is the index of the time |
-| [`share_class_shares`](#share_class_shares) | matview | 778K | **Per-share-class counts for 9,654 companies, delisted included. The market-cap denominator.** |
+| [`fact_asof`](#fact_asof) | matview | 99.4M | **Bitemporal facts, every vintage. The correct backtest source.** |
+| [`tradable_financials`](#tradable_financials) | matview | 16.5M | Latest-restated facts, one row per fact, index membership dated |
+| [`tradable_financials_pit`](#tradable_financials_pit) | matview | 16.5M | Earliest-sighting twin of the above |
+| [`peer_stats`](#peer_stats) | matview | 663K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level`; population is the index of the time |
+| [`share_class_shares`](#share_class_shares) | matview | 788K | **Per-share-class counts for 9,679 companies, delisted included. The market-cap denominator.** |
 | [`canonical_concepts`](#canonical_concepts) | table | 15 | Research-meaningful metric definitions (revenue, capex, …) |
 | [`concept_tag_map`](#concept_tag_map) | table | 38 | Priority-ordered XBRL tag resolution rules per concept |
 | `concept_formula` | table | 6 | Derived concepts as linear combinations of other concepts |
@@ -95,7 +95,7 @@ Rule 3 matters: before it, Apple's `total_debt` resolved to a 2015 `LongTermDebt
 
 ### `fact_asof`
 
-**The backtest source.** One row per (fact, filing), with every vintage retained — nothing is overwritten by a later restatement. 97.9M rows, 33 GB, covering the full company spine rather than only S&P 1500 constituents, so it carries no survivorship bias of its own.
+**The backtest source.** One row per (fact, filing), with every vintage retained — nothing is overwritten by a later restatement. 99.4M rows, 33 GB (2026-10-12), covering the full company spine rather than only S&P 1500 constituents, so it carries no survivorship bias of its own.
 
 Slice it with a half-open interval scan, which returns exactly one row per fact key with no window function at query time:
 

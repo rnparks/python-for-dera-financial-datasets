@@ -35,7 +35,7 @@ Plus a small set of hand-maintained files described under [Manual inputs](#manua
 **The fundamentals.** Every number in the silver and gold layers originates here.
 
 - **URL**: `https://www.sec.gov/files/dera/data/financial-statement-data-sets/<year>q<n>.zip`
-- **Coverage**: 2009q1 → 2026q2, **70 quarters**. The default end quarter is the
+- **Coverage**: 2009q1 → 2026q3, **71 quarters** (2026q3 loaded 2026-10-12). The default end quarter is the
   last fully elapsed calendar quarter, computed from today's date; a quarter SEC
   has not published yet answers 404 and is reported once, not retried.
 - **Shape**: four tab-separated files per quarter — `sub` (submissions), `num`
@@ -580,3 +580,17 @@ on 2026-09-04 was the pre-replay population, not a refresh defect: that
 refresh ran before the S&P 400 and 600 histories had been fetched (their files
 are stamped 22:23 and 22:30 that evening; the bronze reload 21:42), and check
 41 records the population growing from 1,701 to 2,392 when they were loaded.
+
+**First new quarter, 2026-10-12**: 2026q3 (published by SEC 2026-10-07) went
+in by the sequence above with no preparation. Load 0:13 (6,516 filings,
+3,905,397 facts), fold 7:18 (3,275,671 rows out, 7,181,068 in; 188,863,324
+silver facts after), `rebuild-reference` 25:00 (`tradable_financials` 2:03,
+`_pit` 1:25, `fact_asof` 7:33, `share_class_shares` 0:35, `debt_face` 7:56,
+`peer_stats` 4:31). Nothing knowable by 2026-06-30 moved: a per-company digest
+of every `fact_asof` row tradable by then (16,999 companies, 97.88M rows) was
+identical before and after, except for 7 rows that entered because
+`fact_asof` keeps `value_date <= CURRENT_DATE + 1 year` and the refresh date
+moved: facts filed 2021–2025 by PennyMac Mortgage Investment Trust and
+PhenixFIN dated 2027-09-30, the filers' own misdating. ExxonMobil Holdings
+(2115436) still has no company row: Exxon's 10-Q of 2026-08-03 was filed by
+34088, which keeps the membership.

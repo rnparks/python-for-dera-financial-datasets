@@ -89,7 +89,7 @@ uv run pytest              # unit tests for the pure Python (no database)
 Or one stage at a time:
 
 ```bash
-uv run dera download --from 2009q1 --to 2026q2   # ~29 GB on disk; default --to is the last full quarter
+uv run dera download --from 2009q1 --to 2026q3   # ~30 GB on disk; default --to is the last full quarter
 uv run dera init-db                               # bronze DDL
 uv run dera load                                  # COPY → bronze (incremental; every row carries its source_quarter)
 uv run dera build-silver                          # ~39 min

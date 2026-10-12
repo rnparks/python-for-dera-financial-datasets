@@ -12,7 +12,7 @@ A living document that tracks what exists, what's partial, and what's planned. T
 
 Postgres medallion pipeline (`sec_raw` → `sec_silver` → `sec_gold` →
 `sec_reference`) over SEC DERA Financial Statement Data Sets,
-2009q1 → 2026q2, 185M num rows, 139 GB.
+2009q1 → 2026q3, 189M num rows, 164 GB (2026-10-12).
 
 **All figures in this file are as of 2026-09-04 unless dated otherwise.**
 
