@@ -15,7 +15,7 @@ For the whole database — including `sec_reference`, which holds the survivorsh
 | [`fact_asof`](#fact_asof) | matview | 99.4M | **Bitemporal facts, every vintage. The correct backtest source.** |
 | [`tradable_financials`](#tradable_financials) | matview | 16.5M | Latest-restated facts, one row per fact, index membership dated |
 | [`tradable_financials_pit`](#tradable_financials_pit) | matview | 16.5M | Earliest-sighting twin of the above |
-| [`peer_stats`](#peer_stats) | matview | 663K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level`; population is the index of the time |
+| [`peer_stats`](#peer_stats) | matview | 662K | Cross-sectional scores at sector AND sub-industry, tagged by `peer_level`; population is the index of the time |
 | [`share_class_shares`](#share_class_shares) | matview | 788K | **Per-share-class counts for 9,679 companies, delisted included. The market-cap denominator.** |
 | [`canonical_concepts`](#canonical_concepts) | table | 15 | Research-meaningful metric definitions (revenue, capex, …) |
 | [`concept_tag_map`](#concept_tag_map) | table | 38 | Priority-ordered XBRL tag resolution rules per concept |
@@ -553,7 +553,7 @@ sec_gold.shares_outstanding_at(p_cik INTEGER, p_asof DATE, p_buffer_sessions INT
   RETURNS TABLE (shares NUMERIC, value_date DATE, tradable_from DATE, source_tag TEXT, method TEXT)
 ```
 
-One collapsed share count knowable on the date, by a tag ladder (`EntityCommonStockSharesOutstanding`, `CommonStockSharesOutstanding`, `CommonStockSharesIssued`, then weighted averages) with mapped share-class summation. An instant count within 400 days of the newest available period beats a period average at the newest period; when only an average is that recent, `source_tag` says so (130 of 1,573 tracked companies today). **Not sufficient for market cap on a multi-class issuer**; use `share_classes_at()`.
+One collapsed share count knowable on the date, by a tag ladder (`EntityCommonStockSharesOutstanding`, `CommonStockSharesOutstanding`, `CommonStockSharesIssued`, then weighted averages) with mapped share-class summation. An instant count within 400 days of the newest available period beats a period average at the newest period; when only an average is that recent, `source_tag` says so (130 of 1,573 tracked companies today). Class rows are summed per period length: a second- or third-quarter 10-Q reports the quarter's and the year-to-date weighted average at one period end, and adding them had read Berkshire at 4.31B for 2.155B (fixed 2026-10-12; check 15 pins a fixed date). **Not sufficient for market cap on a multi-class issuer**; use `share_classes_at()`.
 
 ### `share_classes_at()`
 

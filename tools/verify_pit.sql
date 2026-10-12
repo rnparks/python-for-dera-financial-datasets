@@ -242,13 +242,23 @@ FROM (
 --
 -- The number that matters: 2.1572B (B-equivalent alone), NOT the
 -- 2.1586B that summing both expressions produced before the fix.
-SELECT CASE WHEN shares BETWEEN 2.15e9 AND 2.158e9
+--
+-- A second- or third-quarter 10-Q reports the weighted average for the
+-- quarter and for the year to date at one period end, and the class sum
+-- once added the two: 4.3147B on 2025-09-15 (newest filing the 10-Q of
+-- 2025-06-30), 4.3106B today when the 2026q3 load brought the 10-Q of
+-- 2026-06-30. CURRENT_DATE alone only catches that while the newest
+-- filing is such a 10-Q, so the fixed date pins it.
+SELECT CASE WHEN s.shares BETWEEN 2.15e9 AND 2.158e9
+                 AND q.shares BETWEEN 2.15e9 AND 2.158e9
                  AND EXISTS (SELECT 1 FROM sec_reference.share_class
                               WHERE cik=1067983 AND class_label='EquivalentClassA'
                                 AND is_excluded)
             THEN 'PASS' ELSE 'FAIL' END AS status,
-       to_char(shares/1e9,'FM990.0000')||'B' AS brk_shares, method, source_tag
-FROM sec_gold.shares_outstanding_at(1067983, CURRENT_DATE);
+       to_char(s.shares/1e9,'FM990.0000')||'B' AS brk_shares, s.method, s.source_tag,
+       to_char(q.shares/1e9,'FM990.0000')||'B' AS brk_shares_2025_09_15
+FROM sec_gold.shares_outstanding_at(1067983, CURRENT_DATE) s,
+     sec_gold.shares_outstanding_at(1067983, DATE '2025-09-15') q;
 
 \echo ''
 \echo '=== 16. Multi-class issuers resolve each listed class separately ==='

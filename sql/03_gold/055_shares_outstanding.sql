@@ -129,7 +129,7 @@ LANGUAGE sql STABLE AS $$
                 WHEN 'CommonStockSharesIssued'      THEN 5
                 ELSE 9
             END AS rung,
-            MIN(v.qtrs) AS qtrs
+            v.qtrs
         FROM visible v
         -- ALLOWLIST, not a pattern match. The previous filter was
         -- `segments LIKE 'ClassOfStock=%' AND NOT ILIKE '%treasury%'`,
@@ -164,7 +164,13 @@ LANGUAGE sql STABLE AS $$
               SELECT 1 FROM consolidated c
               WHERE c.source_tag = v.tag AND c.value_date = v.value_date
           )
-        GROUP BY v.value_date, v.tag
+        -- One sum per period length. A second- or third-quarter 10-Q
+        -- reports the weighted average for the quarter AND for the year
+        -- to date at the same period end; grouping without qtrs added the
+        -- two, and Berkshire's 2026-06-30 10-Q read 4.311B (2,154,664,073
+        -- for the quarter plus 2,155,918,015 for six months) instead of
+        -- 2.155B. The ladder then takes the shortest period.
+        GROUP BY v.value_date, v.tag, v.qtrs
     ),
     laddered AS (
         SELECT l.*, MAX(l.value_date) OVER () AS newest_period
