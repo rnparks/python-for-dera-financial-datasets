@@ -82,7 +82,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 71 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 72 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -101,7 +101,7 @@ Each new DERA quarter after that (four a year) is a fold, not a rebuild:
 ```bash
 uv run dera download --from 2026q3 --to 2026q3
 uv run dera load --quarter 2026q3            # --force replaces a quarter already loaded
-uv run dera build-silver --quarter 2026q3    # recomputes only the fact partitions the quarter touches (~18 min; the full build is 39)
+uv run dera build-silver --quarter 2026q3    # recomputes only the fact partitions the quarter touches (~18 min; the full build is 39), then refreshes suspect_fact (~20 min)
 uv run dera rebuild-reference                # spine, security model, then the gold matviews whose inputs changed (a new quarter changes them all: ~27 min)
 uv run dera verify                           # the correctness suite
 ```
@@ -111,6 +111,9 @@ Prices and the backtest (`sec_market`, a vendor, not SEC data; see `docs/data_so
 ```bash
 uv run dera load-prices                      # month-end closes for the primary ticker of every company ever in the S&P 1500 (Yahoo, ~10 min)
 uv run dera build-factor-panel --index SP500 # the factor sheet at every month end since 2010, stored for the backtest (~100 s per date)
+uv run dera build-factor-panel --index SP400 --since 2011-01-01   # the 400 and 600 from where their replayed histories begin
+uv run dera build-factor-panel --index SP600 --since 2018-08-01
+uv run dera build-factor-panel --index SP1500 --since 2018-08-01  # the three re-ranked together, one row per company; seconds per date
 ```
 
 Rehearsed end to end on 2026-09-10 by reloading 2026q2 under `--force`: 52

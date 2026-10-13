@@ -52,7 +52,7 @@ Prices (a vendor, not SEC data; schema ``sec_market``)::
 
 Verification::
 
-    uv run dera verify        # 71 data-correctness checks
+    uv run dera verify        # 72 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 
@@ -153,8 +153,13 @@ def _build_silver_quarter(quarter: str) -> int:
     Calls ``sec_silver.build_quarter``: the quarter's filings are
     upserted, new taxonomy rows added, and every ``num_silver`` fact
     partition the quarter touches is recomputed whole. Minutes, not the
-    39-minute full build, and idempotent. The spine, security model and
-    gold still need ``dera rebuild-reference`` afterwards.
+    39-minute full build, and idempotent. Then ``sec_gold.suspect_fact``
+    is refreshed, when it exists: it is computed from silver alone, so
+    this is the step that changes its inputs, and the fact matviews that
+    ``dera rebuild-reference`` refreshes next anti-join it. Without this
+    a mis-dated or mis-scaled fact in the new quarter would pass into
+    gold until the next full build. The spine, security model and gold
+    still need ``dera rebuild-reference`` afterwards.
     """
     with db.get_conn() as conn:
         with conn.cursor() as cur:
@@ -172,7 +177,15 @@ def _build_silver_quarter(quarter: str) -> int:
             print(f"Folding {quarter} into silver ...", flush=True)
             conn.add_notice_handler(lambda d: print("  " + (d.message_primary or "")))
             cur.execute("CALL sec_silver.build_quarter(%s)", (quarter,))
-            print(f"  done in {time.monotonic() - t0:,.0f}s. Next: `dera rebuild-reference`.")
+            print(f"  done in {time.monotonic() - t0:,.0f}s.")
+            cur.execute("SELECT to_regclass('sec_gold.suspect_fact')")
+            if cur.fetchone()[0] is not None:
+                t0 = time.monotonic()
+                print("Refreshing sec_gold.suspect_fact (the rows gold refuses, from the new silver) ...",
+                      flush=True)
+                _refresh_matview(cur, "sec_gold.suspect_fact")
+                print(f"  done in {time.monotonic() - t0:,.0f}s.")
+            print("Next: `dera rebuild-reference`.")
     return 0
 
 
@@ -559,7 +572,9 @@ def cmd_build_factor_panel(args: argparse.Namespace) -> int:
     ends first so a quarterly backtest is possible before the monthly
     panel is complete, each date committed as it lands so an interrupted
     run keeps what it built. Dates already in the panel are skipped
-    unless --rebuild.
+    unless --rebuild. --index SP1500 is the union of the three component
+    panels re-ranked over all 1,500 names (prices.UNION_PANELS), built
+    only for the dates every component already holds; seconds per date.
     """
     from . import prices as pr
     with db.get_conn() as conn:
@@ -579,7 +594,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     `tools/verify_pit.sql` had 15 passing checks at the time and was
     invoked from nothing: no test runner, no CI, no CLI path. It now
-    holds 71. A correctness suite
+    holds 72. A correctness suite
     nobody runs is documentation, not a guard. This gives it a command.
 
     It shells out to psql rather than going through psycopg because the
@@ -780,7 +795,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_panel = sub.add_parser(
         "build-factor-panel",
         help="store the factor sheet at every month end for the backtest (sec_market.factor_panel)")
-    p_panel.add_argument("--index", default="SP500", help="SP500, SP400 or SP600 (default SP500)")
+    p_panel.add_argument("--index", default="SP500", help="SP500, SP400, SP600, or SP1500 for the three re-ranked together (default SP500)")
     p_panel.add_argument("--since", default=None, metavar="YYYY-MM-DD", help="first month end (default 2010-01-01)")
     p_panel.add_argument("--until", default=None, metavar="YYYY-MM-DD", help="last month end (default: the last complete month)")
     p_panel.add_argument("--rebuild", action="store_true", default=False, help="rebuild dates already in the panel")

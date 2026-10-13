@@ -1682,3 +1682,40 @@ FROM (
         HAVING COUNT(*) > 1
     ) dup
 ) t;
+
+\echo ''
+\echo '=== 72. The combined universe is the re-rank of its components: one row per company, the sheet rule reproduced ==='
+-- sec_market.factor_panel rows for 'SP1500' are written by
+-- build_factor_panel_union from the SP500, SP400 and SP600 rows of the
+-- same date: the stored values unchanged, the percentiles and the
+-- composite recomputed over the union by the factor sheet's rule (090).
+-- On the newest SP1500 date: one row per company and exactly the
+-- companies of the three components; every percentile in [0, 1]; a
+-- higher gross-profit-to-assets never ranks lower and a higher revenue
+-- growth never ranks higher (the sign); the composite is the mean of
+-- the percentiles present when four or more are, and absent otherwise.
+-- Fails when no SP1500 date exists: the union is expected to be built.
+SELECT CASE WHEN rows_n > 0 AND rows_n = distinct_ciks AND rows_n = component_ciks
+             AND out_of_range = 0 AND gp_violations = 0 AND growth_violations = 0
+             AND composite_rule = 0 AND composite_mismatch = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       asof, rows_n, distinct_ciks, component_ciks, out_of_range, gp_violations, growth_violations, composite_rule, composite_mismatch
+FROM (
+    WITH d AS (SELECT max(asof) AS asof FROM sec_market.factor_panel WHERE index_name = 'SP1500'),
+    u AS (SELECT fp.* FROM sec_market.factor_panel fp, d WHERE fp.index_name = 'SP1500' AND fp.asof = d.asof)
+    SELECT (SELECT asof FROM d) AS asof,
+           (SELECT count(*) FROM u) AS rows_n,
+           (SELECT count(DISTINCT cik) FROM u) AS distinct_ciks,
+           (SELECT count(DISTINCT fp.cik) FROM sec_market.factor_panel fp, d
+             WHERE fp.index_name IN ('SP500', 'SP400', 'SP600') AND fp.asof = d.asof) AS component_ciks,
+           (SELECT count(*) FROM u WHERE gp_at_pct NOT BETWEEN 0 AND 1 OR ocf_at_pct NOT BETWEEN 0 AND 1
+               OR roa_pct NOT BETWEEN 0 AND 1 OR roe_pct NOT BETWEEN 0 AND 1 OR sue_pct NOT BETWEEN 0 AND 1
+               OR composite NOT BETWEEN 0 AND 1) AS out_of_range,
+           (SELECT count(*) FROM u a JOIN u b ON a.gp_at > b.gp_at AND a.gp_at_pct < b.gp_at_pct) AS gp_violations,
+           (SELECT count(*) FROM u a JOIN u b ON a.revenue_growth < b.revenue_growth AND a.revenue_growth_pct < b.revenue_growth_pct) AS growth_violations,
+           (SELECT count(*) FROM u WHERE (n_factors >= 4) <> (composite IS NOT NULL)) AS composite_rule,
+           (SELECT count(*) FROM u WHERE composite IS NOT NULL AND abs(composite - round(
+               (coalesce(gp_at_pct, 0) + coalesce(ocf_at_pct, 0) + coalesce(roa_pct, 0) + coalesce(roe_pct, 0)
+                + coalesce(operating_margin_pct, 0) + coalesce(revenue_growth_pct, 0) + coalesce(roe_q_pct, 0)
+                + coalesce(roa_q_pct, 0) + coalesce(sue_pct, 0)) / n_factors, 4)) > 0.0001) AS composite_mismatch
+) t;

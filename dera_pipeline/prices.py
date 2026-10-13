@@ -399,6 +399,11 @@ def panel_dates(
     return quarter + other
 
 
+# Combined universes: a name, and the component panels it is the union
+# of (sec_market.build_factor_panel dispatches 'SP1500' to the re-rank).
+UNION_PANELS = {"SP1500": ("SP500", "SP400", "SP600")}
+
+
 def build_factor_panel(
     conn: psycopg.Connection, *, index: str, since: dt.date,
     until: dt.date | None = None, rebuild: bool = False,
@@ -412,6 +417,17 @@ def build_factor_panel(
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT asof FROM sec_market.factor_panel WHERE index_name = %s", (index,))
         have = {r[0] for r in cur.fetchall()}
+        if index in UNION_PANELS:
+            # A union is a re-rank of its component panels: only the
+            # dates every component already holds can be built.
+            components = UNION_PANELS[index]
+            cur.execute(
+                "SELECT asof FROM sec_market.factor_panel WHERE index_name = ANY(%s) "
+                "GROUP BY asof HAVING count(DISTINCT index_name) = %s", (list(components), len(components)))
+            complete = {r[0] for r in cur.fetchall()}
+            skipped = [d for d in dates if d not in complete]
+            dates = [d for d in dates if d in complete]
+            log(f"{index} = {' + '.join(components)}: {len(skipped)} month ends skipped where a component is not built")
     todo = [d for d in dates if rebuild or d not in have]
     log(f"{index}: {len(dates)} month ends in range, {len(have)} already built, {len(todo)} to build")
     built = 0

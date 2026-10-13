@@ -230,12 +230,12 @@ filing and which from Yahoo. Loaded by `uv run dera load-prices` and
 | `monthly_price` | table | 303.8K | One row per company, primary ticker and month end, 2009-01 to the last complete month, for the 1,693 companies ever in the S&P 1500 whose primary ticker is still listed. `close_split_adj` is Yahoo's split-restated close, `adj_close` its total-return index, `close_raw` the as-traded close reconstructed from the split ratios (Apple July 2020: 106.26, 102.80, 425.04) |
 | `price_load` | table | 1 per load | When the vendor was asked, how many symbols answered, how many members have no open listing |
 | `monthly_return` | view | — | `ret_1m` per company and month from `adj_close`; NULL across a gap, when either month did not trade, or when the prior close was under a dollar |
-| `factor_panel` | table | 500 per date | `sec_gold.factor_sheet_asof` stored per (index, knowledge date, company); CHECKs refuse any row whose period or availability is after its own knowledge date |
+| `factor_panel` | table | 500 / 400 / 600 per date, 1,500 for the union | `sec_gold.factor_sheet_asof` stored per (index, knowledge date, company) for SP500 (2010 on), SP400 (2011 on) and SP600 (2018 on, the replayed histories); `SP1500` is the union of the three on a date, one row per company, with the percentiles and composite recomputed over all of them by the sheet's rule (`build_factor_panel_union`, 2026-10-13); CHECKs refuse any row whose period or availability is after its own knowledge date |
 
 Functions: `price_at(cik, asof)` (the newest month-end close strictly before
 the date, within 45 days), `market_cap_at(cik, asof)` (that close times the
 cover-page shares knowable on the date, from `sec_gold.shares_outstanding_at`),
-`build_factor_panel(index, asof)` (one knowledge date of the panel),
+`build_factor_panel(index, asof)` (one knowledge date of the panel; `SP1500` dispatches to `build_factor_panel_union(name, components[], asof)`, the re-rank of the stored component rows, which refuses a date any component lacks),
 `backtest(index, factor, freq, from, to, buckets)` (sort the panel into equal
 buckets on each rebalance date, monthly, quarterly or annual, hold
 equal-weighted to the next, and return each bucket's monthly total return,

@@ -616,7 +616,7 @@ the specific archived captures a run resolved to, so the run is reproducible.
 ```bash
 uv run dera download --from 2026q3 --to 2026q3   # new DERA quarter
 uv run dera load --quarter 2026q3                # into bronze; --force replaces a loaded quarter
-uv run dera build-silver --quarter 2026q3        # fold: only the fact partitions it touches are recomputed (~18 min)
+uv run dera build-silver --quarter 2026q3        # fold: only the fact partitions it touches are recomputed (~18 min), then suspect_fact is refreshed
 uv run dera rebuild-reference                    # spine, security model, gold matviews whose inputs changed (~27 min for a new quarter)
 uv run dera verify                               # correctness suite
 
