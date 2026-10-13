@@ -53,7 +53,7 @@ a { color: var(--link); }
 <p class="sub">Point-in-time fundamentals from SEC DERA, month-end prices, equal-weight quintile sorts rebalanced monthly, quarterly and annually, measured raw and against the Fama-French five factors and momentum. Generated 2026-10-13 from the database by <code>tools/factor_report.py</code>.</p>
 
 <div class="verdict">
-<p><b>Verdict: nothing pays.</b> Across the composite and nine factors at three rebalancing frequencies, no top-minus-bottom spread has a raw t-statistic above 1.6. After the five-factor model the spreads are their factor loadings: 0.3 to 0.56 on profitability (RMW), −0.2 to −0.7 on value (HML), and 0.25 to 0.30 on momentum for the quarterly signals. One test in thirty, Revenue growth (low is good) at quarterly rebalancing, reaches an FF5 alpha t of 2.50; one hit in thirty is what chance delivers, and that sort loads 0.4 on the investment factor (CMA).</p>
+<p><b>Verdict: nothing pays beyond chance. 1 of 30 sorts clear t 2 after the five factors and momentum, which is what 30 tests produce from noise.</b> Across the composite and nine factors at three rebalancing frequencies, no top-minus-bottom spread has a raw t-statistic above 1.6. After the five-factor model the profitability sorts are largely their factor loadings: 0.30 to 0.56 on profitability (RMW), -0.68 to -0.21 on value (HML), and 0.07 to 0.30 on momentum for the quarterly signals. 1 of 30 tests clear t 2 on FF5 (Revenue growth (low is good) at quarterly rebalancing, 4.3% a year, t 2.50) and 1 on FF5 plus momentum (Revenue growth (low is good) at quarterly rebalancing, 4.2% a year, t 2.37). With 30 tests, one or two |t| above 2 are what chance delivers at the 5% level.</p>
 <p>The machinery checks out: the equal-weight benchmark of all members earns 13.8% a year with an FF5 alpha of -0.3%, market beta 0.98 and R² 0.96. The Yahoo returns and the French series line up.</p>
 </div>
 
@@ -259,8 +259,8 @@ a { color: var(--link); }
 <ul>
 <li><b>Survivors only.</b> Yahoo returns nothing for a delisted ticker, so 718 of the 2,417 companies ever in the S&amp;P 1500 have no prices. Failures and takeovers leave the index from the bottom quintile more than the top; their missing returns flatter Q1 and shrink the measured spread. The share of panel members with a price the following month rises from 66.1% in 2010 to 97.8% by 2025.</li>
 <li><b>Large caps, equal-weighted.</b> The published profitability premium is smallest among the largest stocks; an equal-weight sort within the S&amp;P 500 is one of the harder tests to pass.</li>
-<li><b>Thin first year.</b> The composite covers 290 of 498 members in 2010 (the surprise factor needs eight quarters of history and DERA begins in 2009) and 480 or more from 2013.</li>
-<li><b>Thirty tests.</b> Ten sorts on three schedules; at the 5% level one or two |t| &gt; 2 are expected from noise alone.</li>
+<li><b>The first year is thinner.</b> The composite covers 290 of 498 members in 2010 (the surprise factor needs eight quarters of history and DERA begins in 2009) and 477 or more a date from 2013.</li>
+<li><b>30 tests.</b> Ten sorts on three schedules; at the 5% level one or two |t| &gt; 2 are expected from noise alone.</li>
 </ul>
 
 <h2>5. Coverage</h2>

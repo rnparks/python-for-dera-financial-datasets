@@ -441,20 +441,109 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_index_membership_key ON sec_reference.inde
 CREATE INDEX IF NOT EXISTS idx_index_membership_cik   ON sec_reference.index_membership (cik, valid_from);
 CREATE INDEX IF NOT EXISTS idx_index_membership_range ON sec_reference.index_membership (index_name, valid_from, valid_to);
 
+-- THE SECTOR LABEL, CANONICAL. The pages spell the eleven GICS sectors
+-- in more than one way ("Healthcare", "Utilites", "FInancials",
+-- "Information Technologies", "Communications Services") and sometimes
+-- put an industry group where the sector goes ("Capital Goods",
+-- "Consumer Services"). Every spelling became its own peer group in
+-- sec_gold.peer_stats until 2026-10-13. A label that is not a GICS
+-- sector (the eleven, plus the pre-2018 Telecommunication Services)
+-- is no sector and is filled below like a missing one.
+CREATE OR REPLACE FUNCTION sec_reference.gics_sector_canonical(p TEXT)
+RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE
+        WHEN p IS NULL THEN NULL
+        WHEN p IN ('Communication Services', 'Consumer Discretionary', 'Consumer Staples', 'Energy',
+                   'Financials', 'Health Care', 'Industrials', 'Information Technology', 'Materials',
+                   'Real Estate', 'Utilities', 'Telecommunication Services') THEN p
+        WHEN p = 'Healthcare' THEN 'Health Care'
+        WHEN p IN ('Utilites', 'Utilties') THEN 'Utilities'
+        WHEN p IN ('FInancials', 'Finances', 'Finance') THEN 'Financials'
+        WHEN p IN ('Information Technologies', 'Technology') THEN 'Information Technology'
+        WHEN p = 'Communications Services' THEN 'Communication Services'
+        WHEN p = 'Telecommunications Services' THEN 'Telecommunication Services'
+        ELSE NULL END
+$$;
+
+COMMENT ON FUNCTION sec_reference.gics_sector_canonical(TEXT) IS
+    'The page''s sector label as one of the GICS sectors (the eleven, plus the pre-2018 Telecommunication '
+    'Services); a misspelling corrected, anything else NULL.';
+
 TRUNCATE sec_reference.index_membership;
 INSERT INTO sec_reference.index_membership
-WITH obs AS (
+WITH obs_raw AS (
     -- One row per (index, company, capture). An issuer listed twice on a
     -- page (two share classes: Fox, News Corp) is one member; if the two
     -- rows disagree on GICS the lower sorts first, deterministically.
     SELECT index_name, cik, observed_on, sn,
-           COALESCE(MIN(gics_sector), '')       AS gics_sector,
+           COALESCE(sec_reference.gics_sector_canonical(MIN(gics_sector)), '') AS gics_sector,
+           COALESCE(MIN(gics_sector), '') AS gics_sector_raw,   -- the page's label, which segments the span
            COALESCE(MIN(gics_sub_industry), '') AS gics_sub_industry,
            MIN(ticker) AS ticker,
            MIN(date_added) FILTER (WHERE date_added IS NOT NULL) AS date_added
     FROM sec_reference.index_observation_resolved
     WHERE cik IS NOT NULL
     GROUP BY 1, 2, 3, 4
+),
+-- THE SECTOR, FILLED BY RULE WHERE THE PAGE HAD NONE. The S&P 400 page
+-- from 2013-10 to 2019-08 and the S&P 600 page before 2021-03-31 carry a
+-- sub-industry and no sector column, and the sector level is what the
+-- as-of cross-sections rank in: the S&P 400 had no annual factor at all
+-- in 2017 and the S&P 600 none before 2021 (2026-10-13). A sub-industry
+-- belongs to exactly one sector at a time, and a company's sector
+-- rarely changes, so a sighting without a sector takes, first, the
+-- sector its sub-industry carries in the nearest-dated sighting of any
+-- index that has one (nearest in time, because the 2018 reclassification
+-- moved Advertising, Broadcasting and Cable & Satellite to Communication
+-- Services; among equally near, the sector that sub-industry carries
+-- most often, so a page's one-off error does not win), and failing that
+-- the sector the company itself carries in its nearest-dated sighting.
+-- A sighting that neither rule reaches stays unclassified; check 73
+-- pins how many intervals that leaves. THE FILL IS A LABEL, NOT A
+-- BOUNDARY: intervals are still segmented by the label the page gave
+-- (gics_sector_raw, below), so filling a sector changes what an interval
+-- says and never where it starts or ends. Merging the segments that a
+-- missing sector had split moved the CIK-succession cuts (history_keyed)
+-- across seats a registrant absorbed (BancorpSouth and Cadence, Ashland,
+-- Fox), re-keying 192 member-months; those cuts have their own defects,
+-- listed in docs/data_sources.md, and are a separate fix.
+sub_sector AS (
+    SELECT gics_sub_industry, observed_on, gics_sector,
+           SUM(COUNT(*)) OVER (PARTITION BY gics_sub_industry, gics_sector) AS carriers
+    FROM obs_raw
+    WHERE gics_sector <> '' AND gics_sub_industry <> ''
+    GROUP BY 1, 2, 3
+),
+cik_sector AS (
+    SELECT cik, observed_on, gics_sector
+    FROM obs_raw
+    WHERE gics_sector <> ''
+    GROUP BY 1, 2, 3
+),
+need AS (
+    SELECT index_name, cik, observed_on, sn, gics_sub_industry
+    FROM obs_raw WHERE gics_sector = ''
+),
+by_sub AS (
+    SELECT DISTINCT ON (n.index_name, n.cik, n.sn) n.index_name, n.cik, n.sn, s.gics_sector
+    FROM need n
+    JOIN sub_sector s ON s.gics_sub_industry = n.gics_sub_industry
+    ORDER BY n.index_name, n.cik, n.sn, ABS(s.observed_on - n.observed_on), s.carriers DESC, s.gics_sector
+),
+by_cik AS (
+    SELECT DISTINCT ON (n.index_name, n.cik, n.sn) n.index_name, n.cik, n.sn, c.gics_sector
+    FROM need n
+    JOIN cik_sector c ON c.cik = n.cik
+    ORDER BY n.index_name, n.cik, n.sn, ABS(c.observed_on - n.observed_on), c.gics_sector
+),
+obs AS (
+    SELECT o.index_name, o.cik, o.observed_on, o.sn,
+           CASE WHEN o.gics_sector <> '' THEN o.gics_sector
+                ELSE COALESCE(bs.gics_sector, bc.gics_sector, '') END AS gics_sector,
+           o.gics_sector_raw, o.gics_sub_industry, o.ticker, o.date_added
+    FROM obs_raw o
+    LEFT JOIN by_sub bs ON bs.index_name = o.index_name AND bs.cik = o.cik AND bs.sn = o.sn
+    LEFT JOIN by_cik bc ON bc.index_name = o.index_name AND bc.cik = o.cik AND bc.sn = o.sn
 ),
 -- MEMBERSHIP RUNS PER (INDEX, COMPANY), GICS-BLIND. A company is in or
 -- out; the classification the page gave it is an attribute, segmented
@@ -509,15 +598,19 @@ spans_to AS (
     FROM spans s
 ),
 -- GICS segments: consecutive sightings inside a span with the same
--- classification. A change starts a new interval at its first capture,
--- contiguous with the one before; an unclassified stretch is its own
--- segment with NULL GICS rather than a hole in membership.
+-- classification AS THE PAGE GAVE IT (gics_sector_raw, the spelling and
+-- the blanks included). A change starts a new interval at its first
+-- capture, contiguous with the one before; an unclassified stretch is
+-- its own segment rather than a hole in membership. The segment's
+-- published sector is the filled, canonical one (obs.gics_sector): a
+-- label on the same interval, so the sector fill of 2026-10-13 moved no
+-- boundary and no succession cut (see the fill's note above).
 sightings AS (
-    SELECT o.index_name, o.cik, o.sn, o.observed_on, o.gics_sector, o.gics_sub_industry,
+    SELECT o.index_name, o.cik, o.sn, o.observed_on, o.gics_sector, o.gics_sector_raw, o.gics_sub_industry,
            o.ticker, o.date_added, sp.grp, sp.valid_to AS span_valid_to,
-           CASE WHEN LAG(o.gics_sector || '|' || o.gics_sub_industry) OVER w IS NULL THEN 0
-                WHEN LAG(o.gics_sector || '|' || o.gics_sub_industry) OVER w
-                     IS DISTINCT FROM (o.gics_sector || '|' || o.gics_sub_industry) THEN 1
+           CASE WHEN LAG(o.gics_sector_raw || '|' || o.gics_sub_industry) OVER w IS NULL THEN 0
+                WHEN LAG(o.gics_sector_raw || '|' || o.gics_sub_industry) OVER w
+                     IS DISTINCT FROM (o.gics_sector_raw || '|' || o.gics_sub_industry) THEN 1
                 ELSE 0 END AS new_segment
     FROM obs o
     JOIN spans_to sp ON sp.index_name = o.index_name AND sp.cik = o.cik
@@ -531,13 +624,15 @@ segmented AS (
     FROM sightings x
 ),
 segments AS (
-    SELECT index_name, cik, grp, seg, gics_sector, gics_sub_industry,
+    SELECT index_name, cik, grp, seg,
+           MODE() WITHIN GROUP (ORDER BY gics_sector) AS gics_sector,   -- the filled label, one per segment
+           gics_sub_industry,
            MIN(observed_on) AS first_seen,
            MIN(date_added) AS date_added,
            (ARRAY_AGG(ticker ORDER BY sn DESC))[1] AS ticker,
            MIN(span_valid_to) AS span_valid_to
     FROM segmented
-    GROUP BY index_name, cik, grp, seg, gics_sector, gics_sub_industry
+    GROUP BY index_name, cik, grp, seg, gics_sector_raw, gics_sub_industry
 ),
 segments_dated AS (
     SELECT s.*,

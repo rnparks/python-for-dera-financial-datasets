@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factor backtest report, SP1500, 2026-10-13</title>
+<style>
+:root { --bg:#fbfbf9; --fg:#1d1d1b; --muted:#5f5f5a; --rule:#dedcd3; --head:#f1efe6; --zebra:#f7f6f1;
+        --accent:#8a3b12; --sig:#fde8d9; --weak:#fff6e5; --band:#eceae2; --link:#1f4e79; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#15161a; --fg:#e8e6df; --muted:#a3a39b; --rule:#33353c; --head:#1f2127; --zebra:#1a1c21;
+          --accent:#e8905a; --sig:#4a2a17; --weak:#3a3114; --band:#24262d; --link:#8ab4e8; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 32px 16px 80px; }
+h1 { font-size: 2rem; line-height:1.2; margin: 0 0 4px; letter-spacing:-0.01em; }
+h2 { font-size: 1.35rem; margin: 44px 0 12px; padding-top: 10px; border-top: 2px solid var(--rule); }
+h3 { font-size: 1.05rem; margin: 26px 0 8px; }
+p, li { max-width: 72ch; }
+.sub { color: var(--muted); margin: 0 0 24px; }
+.verdict { border-left: 5px solid var(--accent); padding: 12px 18px; background: var(--head); margin: 20px 0; }
+.verdict p { margin: 6px 0; }
+.kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0; }
+.kpi { background: var(--head); border:1px solid var(--rule); border-radius: 8px; padding: 10px 14px; }
+.kpi b { display:block; font-size: 1.35rem; }
+.kpi span { color: var(--muted); font-size: 0.85rem; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0 6px; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--rule); text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+thead th { background: var(--head); position: sticky; top: 0; }
+tbody tr:nth-child(even) { background: var(--zebra); }
+td.sig { background: var(--sig); font-weight: 600; }
+td.weak { background: var(--weak); }
+.wrap { overflow-x: auto; }
+.note { color: var(--muted); font-size: 0.85rem; margin: 2px 0 14px; }
+code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--head); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--head); border:1px solid var(--rule); border-radius: 8px; padding: 12px 14px; overflow-x:auto; font-size: 0.85rem; }
+figure { margin: 16px 0 6px; }
+figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 6px; }
+svg { width: 100%; height: auto; display:block; }
+svg .grid { stroke: var(--rule); stroke-width: 1; }
+svg .axis { fill: var(--muted); font-size: 12px; }
+svg .lbl { fill: var(--fg); font-size: 12px; }
+svg .band { fill: var(--band); }
+a { color: var(--link); }
+.small { font-size: 0.85rem; color: var(--muted); }
+@media print { body { background:#fff; color:#000; } main { max-width:none; padding:0; } h2 { break-after: avoid; } .wrap { overflow: visible; } }
+</style>
+</head>
+<body>
+<main>
+<h1>Do accounting factors pay in the SP1500?</h1>
+<p class="sub">Point-in-time fundamentals from SEC DERA, month-end prices, equal-weight quintile sorts rebalanced monthly, quarterly and annually, measured raw and against the Fama-French five factors and momentum. Generated 2026-10-13 from the database by <code>tools/factor_report.py</code>.</p>
+
+<div class="verdict">
+<p><b>Verdict: nothing pays.</b> Across the composite and nine factors at three rebalancing frequencies, no top-minus-bottom spread has a raw t-statistic above 1.0. After the five-factor model the profitability sorts are largely their factor loadings: 0.32 to 0.67 on profitability (RMW), -0.54 to -0.09 on value (HML), and 0.12 to 0.31 on momentum for the quarterly signals. No test clears t 2 on either model; the strongest is Composite at annual rebalancing, FF5 alpha t -1.49. With 30 tests, one or two |t| above 2 are what chance delivers at the 5% level.</p>
+<p>The machinery checks out: the equal-weight benchmark of all members earns 10.1% a year with an FF5 alpha of -1.2%, market beta 0.99 and R² 0.98. The Yahoo returns and the French series line up.</p>
+</div>
+
+<div class="kpis">
+<div class="kpi"><b>98</b><span>month ends in the panel, 2018-08-31 to 2026-09-30</span></div>
+<div class="kpi"><b>143,886</b><span>company-date rows (about 1468 members a date)</span></div>
+<div class="kpi"><b>1,693</b><span>companies with prices, 303,761 month-end rows</span></div>
+<div class="kpi"><b>718</b><span>of 2,417 members ever with no open listing (no prices)</span></div>
+<div class="kpi"><b>30</b><span>tests: 10 sorts × 3 schedules, two factor models each</span></div>
+</div>
+
+<h2>1. The headline table</h2>
+<p>Each sort ranks the members that have the factor into five equal buckets by the factor's signed percentile (a higher percentile always means the higher expected return in the literature), holds each bucket equal-weighted to the next rebalance date, and reports the top-minus-bottom spread. Alphas come from regressing the monthly spread on the Fama-French factors with Newey-West (six lags) standard errors. Cells are shaded when |t| ≥ 2 (strong) or ≥ 1.65 (faint).</p>
+<div class="wrap"><table>
+<thead><tr><th rowspan="2">Factor</th><th colspan="3">Raw spread, annualised</th><th colspan="3">Raw t</th><th colspan="3">FF5 alpha t</th><th colspan="3">FF5 + UMD alpha t</th></tr>
+<tr><th>M</th><th>Q</th><th>A</th><th>M</th><th>Q</th><th>A</th><th>M</th><th>Q</th><th>A</th><th>M</th><th>Q</th><th>A</th></tr></thead>
+<tbody><tr><td>Composite</td><td>-0.4%</td><td>-1.2%</td><td>-3.4%</td><td>-0.09</td><td>-0.27</td><td>-0.71</td><td>-0.21</td><td>-0.51</td><td>-1.49</td><td>-0.51</td><td>-0.84</td><td>-1.58</td></tr><tr><td>Gross profit / assets</td><td>-2.5%</td><td>-3.1%</td><td>-2.2%</td><td>-0.76</td><td>-0.96</td><td>-0.59</td><td>-0.50</td><td>-0.64</td><td>-0.22</td><td>-0.51</td><td>-0.66</td><td>-0.29</td></tr><tr><td>Operating cash flow / assets</td><td>0.0%</td><td>-0.5%</td><td>-0.1%</td><td>0.00</td><td>-0.13</td><td>-0.04</td><td>-0.55</td><td>-0.58</td><td>-0.64</td><td>-0.56</td><td>-0.59</td><td>-0.61</td></tr><tr><td>Return on assets</td><td>-0.4%</td><td>-1.2%</td><td>-2.9%</td><td>-0.09</td><td>-0.28</td><td>-0.63</td><td>-0.28</td><td>-0.59</td><td>-1.02</td><td>-0.33</td><td>-0.63</td><td>-1.06</td></tr><tr><td>Return on equity</td><td>-0.3%</td><td>-0.9%</td><td>-3.1%</td><td>-0.09</td><td>-0.23</td><td>-0.76</td><td>-0.32</td><td>-0.55</td><td>-1.23</td><td>-0.39</td><td>-0.63</td><td>-1.24</td></tr><tr><td>Operating margin</td><td>-3.1%</td><td>-3.4%</td><td>-5.1%</td><td>-0.67</td><td>-0.74</td><td>-1.01</td><td>-1.17</td><td>-1.21</td><td>-1.40</td><td>-1.19</td><td>-1.23</td><td>-1.42</td></tr><tr><td>Revenue growth (low is good)</td><td>-0.8%</td><td>-1.1%</td><td>2.0%</td><td>-0.24</td><td>-0.33</td><td>0.54</td><td>0.39</td><td>0.42</td><td>0.99</td><td>0.37</td><td>0.38</td><td>0.90</td></tr><tr><td>Quarterly ROE</td><td>-0.3%</td><td>-0.1%</td><td>-1.9%</td><td>-0.07</td><td>-0.03</td><td>-0.41</td><td>-0.04</td><td>-0.07</td><td>-0.80</td><td>-0.34</td><td>-0.41</td><td>-0.90</td></tr><tr><td>Quarterly ROA</td><td>-0.6%</td><td>-0.0%</td><td>-2.1%</td><td>-0.12</td><td>0.00</td><td>-0.43</td><td>-0.02</td><td>0.25</td><td>-0.80</td><td>-0.44</td><td>-0.20</td><td>-0.91</td></tr><tr><td>Earnings surprise (SUE)</td><td>-1.1%</td><td>0.4%</td><td>-0.4%</td><td>-0.37</td><td>0.15</td><td>-0.14</td><td>-1.04</td><td>-0.03</td><td>-0.70</td><td class="weak">-1.85</td><td>-0.60</td><td>-0.80</td></tr></tbody></table></div>
+<p class="note">M = monthly, Q = quarterly, A = annual rebalancing. Period 2010-01-01 to the last priced month; the French series end 2026-08 (vintage 202608), so the regressions drop the final month.</p>
+
+<figure><svg viewBox="0 0 860 366" role="img" aria-label="Alpha t-statistics">
+<rect x="344.4" y="26" width="381.2" height="310" class="band"/>
+<line x1="249.1" y1="26" x2="249.1" y2="336" class="grid"/>
+<text x="249.1" y="20" class="axis" text-anchor="middle">t = -3</text>
+<line x1="344.4" y1="26" x2="344.4" y2="336" class="grid"/>
+<text x="344.4" y="20" class="axis" text-anchor="middle">t = -2</text>
+<line x1="439.7" y1="26" x2="439.7" y2="336" class="grid"/>
+<text x="439.7" y="20" class="axis" text-anchor="middle">t = -1</text>
+<line x1="535.0" y1="26" x2="535.0" y2="336" class="grid"/>
+<text x="535.0" y="20" class="axis" text-anchor="middle">t = 0</text>
+<line x1="630.3" y1="26" x2="630.3" y2="336" class="grid"/>
+<text x="630.3" y="20" class="axis" text-anchor="middle">t = 1</text>
+<line x1="725.6" y1="26" x2="725.6" y2="336" class="grid"/>
+<text x="725.6" y="20" class="axis" text-anchor="middle">t = 2</text>
+<line x1="820.9" y1="26" x2="820.9" y2="336" class="grid"/>
+<text x="820.9" y="20" class="axis" text-anchor="middle">t = 3</text>
+<text x="220" y="55.0" class="lbl" text-anchor="end">Composite</text>
+<line x1="230" y1="51.0" x2="840" y2="51.0" class="grid"/>
+<circle cx="514.7" cy="51.0" r="5" fill="#2980b9" fill-opacity="0.85"><title>Composite, monthly, FF5: t = -0.21</title></circle>
+<circle cx="486.0" cy="51.0" r="5" fill="#c0392b" fill-opacity="0.85"><title>Composite, monthly, FF5+UMD: t = -0.51</title></circle>
+<rect x="481.3" y="46.0" width="10" height="10" fill="#2980b9" fill-opacity="0.85"><title>Composite, quarterly, FF5: t = -0.51</title></rect>
+<rect x="449.9" y="46.0" width="10" height="10" fill="#c0392b" fill-opacity="0.85"><title>Composite, quarterly, FF5+UMD: t = -0.84</title></rect>
+<path d="M393.3,45.0 L399.3,56.0 L387.3,56.0 Z" fill="#2980b9" fill-opacity="0.85"><title>Composite, annual, FF5: t = -1.49</title></path>
+<path d="M384.5,45.0 L390.5,56.0 L378.5,56.0 Z" fill="#c0392b" fill-opacity="0.85"><title>Composite, annual, FF5+UMD: t = -1.58</title></path>
+<text x="220" y="85.0" class="lbl" text-anchor="end">Gross profit / assets</text>
+<line x1="230" y1="81.0" x2="840" y2="81.0" class="grid"/>
+<circle cx="487.6" cy="81.0" r="5" fill="#2980b9" fill-opacity="0.85"><title>Gross profit / assets, monthly, FF5: t = -0.50</title></circle>
+<circle cx="485.9" cy="81.0" r="5" fill="#c0392b" fill-opacity="0.85"><title>Gross profit / assets, monthly, FF5+UMD: t = -0.51</title></circle>
+<rect x="469.3" y="76.0" width="10" height="10" fill="#2980b9" fill-opacity="0.85"><title>Gross profit / assets, quarterly, FF5: t = -0.64</title></rect>
+<rect x="467.3" y="76.0" width="10" height="10" fill="#c0392b" fill-opacity="0.85"><title>Gross profit / assets, quarterly, FF5+UMD: t = -0.66</title></rect>
+<path d="M513.8,75.0 L519.8,86.0 L507.8,86.0 Z" fill="#2980b9" fill-opacity="0.85"><title>Gross profit / assets, annual, FF5: t = -0.22</title></path>
+<path d="M507.8,75.0 L513.8,86.0 L501.8,86.0 Z" fill="#c0392b" fill-opacity="0.85"><title>Gross profit / assets, annual, FF5+UMD: t = -0.29</title></path>
+<text x="220" y="115.0" class="lbl" text-anchor="end">Operating cash flow / assets</text>
+<line x1="230" y1="111.0" x2="840" y2="111.0" class="grid"/>
+<circle cx="482.2" cy="111.0" r="5" fill="#2980b9" fill-opacity="0.85"><title>Operating cash flow / assets, monthly, FF5: t = -0.55</title></circle>
+<circle cx="481.5" cy="111.0" r="5" fill="#c0392b" fill-opacity="0.85"><title>Operating cash flow / assets, monthly, FF5+UMD: t = -0.56</title></circle>
+<rect x="474.3" y="106.0" width="10" height="10" fill="#2980b9" fill-opacity="0.85"><title>Operating cash flow / assets, quarterly, FF5: t = -0.58</title></rect>
+<rect x="473.5" y="106.0" width="10" height="10" fill="#c0392b" fill-opacity="0.85"><title>Operating cash flow / assets, quarterly, FF5+UMD: t = -0.59</title></rect>
+<path d="M474.0,105.0 L480.0,116.0 L468.0,116.0 Z" fill="#2980b9" fill-opacity="0.85"><title>Operating cash flow / assets, annual, FF5: t = -0.64</title></path>
+<path d="M476.7,105.0 L482.7,116.0 L470.7,116.0 Z" fill="#c0392b" fill-opacity="0.85"><title>Operating cash flow / assets, annual, FF5+UMD: t = -0.61</title></path>
+<text x="220" y="145.0" class="lbl" text-anchor="end">Return on assets</text>
+<line x1="230" y1="141.0" x2="840" y2="141.0" class="grid"/>
+<circle cx="508.7" cy="141.0" r="5" fill="#2980b9" fill-opacity="0.85"><title>Return on assets, monthly, FF5: t = -0.28</title></circle>
+<circle cx="503.2" cy="141.0" r="5" fill="#c0392b" fill-opacity="0.85"><title>Return on assets, monthly, FF5+UMD: t = -0.33</title></circle>
+<rect x="474.2" y="136.0" width="10" height="10" fill="#2980b9" fill-opacity="0.85"><title>Return on assets, quarterly, FF5: t = -0.59</title></rect>
+<rect x="470.2" y="136.0" width="10" height="10" fill="#c0392b" fill-opacity="0.85"><title>Return on assets, quarterly, FF5+UMD: t = -0.63</title></rect>
+<path d="M437.7,135.0 L443.7,146.0 L431.7,146.0 Z" fill="#2980b9" fill-opacity="0.85"><title>Return on assets, annual, FF5: t = -1.02</title></path>
+<path d="M433.8,135.0 L439.8,146.0 L427.8,146.0 Z" fill="#c0392b" fill-opacity="0.85"><title>Return on assets, annual, FF5+UMD: t = -1.06</title></path>
+<text x="220" y="175.0" class="lbl" text-anchor="end">Return on equity</text>
+<line x1="230" y1="171.0" x2="840" y2="171.0" class="grid"/>
+<circle cx="504.6" cy="171.0" r="5" fill="#2980b9" fill-opacity="0.85"><title>Return on equity, monthly, FF5: t = -0.32</title></circle>
+<circle cx="497.4" cy="171.0" r="5" fill="#c0392b" fill-opacity="0.85"><title>Return on equity, monthly, FF5+UMD: t = -0.39</title></circle>
+<rect x="477.8" y="166.0" width="10" height="10" fill="#2980b9" fill-opacity="0.85"><title>Return on equity, quarterly, FF5: t = -0.55</title></rect>
+<rect x="469.7" y="166.0" width="10" height="10" fill="#c0392b" fill-opacity="0.85"><title>Return on equity, quarterly, FF5+UMD: t = -0.63</title></rect>
+<path d="M417.5,165.0 L423.5,176.0 L411.5,176.0 Z" fill="#2980b9" fill-opacity="0.85"><title>Return on equity, annual, FF5: t = -1.23</title></path>
+<path d="M416.4,165.0 L422.4,176.0 L410.4,176.0 Z" fill="#c0392b" fill-opacity="0.85"><title>Return on equity, annual, FF5+UMD: t = -1.24</title></path>
+<text x="220" y="205.0" class="lbl" text-anchor="end">Operating margin</text>
+<line x1="230" y1="201.0" x2="840" y2="201.0" class="grid"/>
+<circle cx="423.5" cy="201.0" r="5" fill="#2980b9" fill-opacity="0.85"><title>Operating margin, monthly, FF5: t = -1.17</title></circle>
+<circle cx="421.7" cy="201.0" r="5" fill="#c0392b" fill-opacity="0.85"><title>Operating margin, monthly, FF5+UMD: t = -1.19</title></circle>
+<rect x="414.4" y="196.0" width="10" height="10" fill="#2980b9" fill-opacity="0.85"><title>Operating margin, quarterly, FF5: t = -1.21</title></rect>
+<rect x="412.9" y="196.0" width="10" height="10" fill="#c0392b" fill-opacity="0.85"><title>Operating margin, quarterly, FF5+UMD: t = -1.23</title></rect>
+<path d="M401.7,195.0 L407.7,206.0 L395.7,206.0 Z" fill="#2980b9" fill-opacity="0.85"><title>Operating margin, annual, FF5: t = -1.40</title></path>
+<path d="M399.5,195.0 L405.5,206.0 L393.5,206.0 Z" fill="#c0392b" fill-opacity="0.85"><title>Operating margin, annual, FF5+UMD: t = -1.42</title></path>
+<text x="220" y="235.0" class="lbl" text-anchor="end">Revenue growth (low is good)</text>
+<line x1="230" y1="231.0" x2="840" y2="231.0" class="grid"/>
+<circle cx="571.9" cy="231.0" r="5" fill="#2980b9" fill-opacity="0.85"><title>Revenue growth (low is good), monthly, FF5: t = 0.39</title></circle>
+<circle cx="570.4" cy="231.0" r="5" fill="#c0392b" fill-opacity="0.85"><title>Revenue growth (low is good), monthly, FF5+UMD: t = 0.37</title></circle>
+<rect x="570.0" y="226.0" width="10" height="10" fill="#2980b9" fill-opacity="0.85"><title>Revenue growth (low is good), quarterly, FF5: t = 0.42</title></rect>
+<rect x="566.1" y="226.0" width="10" height="10" fill="#c0392b" fill-opacity="0.85"><title>Revenue growth (low is good), quarterly, FF5+UMD: t = 0.38</title></rect>
+<path d="M629.4,225.0 L635.4,236.0 L623.4,236.0 Z" fill="#2980b9" fill-opacity="0.85"><title>Revenue growth (low is good), annual, FF5: t = 0.99</title></path>
+<path d="M620.4,225.0 L626.4,236.0 L614.4,236.0 Z" fill="#c0392b" fill-opacity="0.85"><title>Revenue growth (low is good), annual, FF5+UMD: t = 0.90</title></path>
+<text x="220" y="265.0" class="lbl" text-anchor="end">Quarterly ROE</text>
+<line x1="230" y1="261.0" x2="840" y2="261.0" class="grid"/>
+<circle cx="530.9" cy="261.0" r="5" fill="#2980b9" fill-opacity="0.85"><title>Quarterly ROE, monthly, FF5: t = -0.04</title></circle>
+<circle cx="502.9" cy="261.0" r="5" fill="#c0392b" fill-opacity="0.85"><title>Quarterly ROE, monthly, FF5+UMD: t = -0.34</title></circle>
+<rect x="523.1" y="256.0" width="10" height="10" fill="#2980b9" fill-opacity="0.85"><title>Quarterly ROE, quarterly, FF5: t = -0.07</title></rect>
+<rect x="490.5" y="256.0" width="10" height="10" fill="#c0392b" fill-opacity="0.85"><title>Quarterly ROE, quarterly, FF5+UMD: t = -0.41</title></rect>
+<path d="M458.5,255.0 L464.5,266.0 L452.5,266.0 Z" fill="#2980b9" fill-opacity="0.85"><title>Quarterly ROE, annual, FF5: t = -0.80</title></path>
+<path d="M449.3,255.0 L455.3,266.0 L443.3,266.0 Z" fill="#c0392b" fill-opacity="0.85"><title>Quarterly ROE, annual, FF5+UMD: t = -0.90</title></path>
+<text x="220" y="295.0" class="lbl" text-anchor="end">Quarterly ROA</text>
+<line x1="230" y1="291.0" x2="840" y2="291.0" class="grid"/>
+<circle cx="533.3" cy="291.0" r="5" fill="#2980b9" fill-opacity="0.85"><title>Quarterly ROA, monthly, FF5: t = -0.02</title></circle>
+<circle cx="493.0" cy="291.0" r="5" fill="#c0392b" fill-opacity="0.85"><title>Quarterly ROA, monthly, FF5+UMD: t = -0.44</title></circle>
+<rect x="553.4" y="286.0" width="10" height="10" fill="#2980b9" fill-opacity="0.85"><title>Quarterly ROA, quarterly, FF5: t = 0.25</title></rect>
+<rect x="511.2" y="286.0" width="10" height="10" fill="#c0392b" fill-opacity="0.85"><title>Quarterly ROA, quarterly, FF5+UMD: t = -0.20</title></rect>
+<path d="M459.0,285.0 L465.0,296.0 L453.0,296.0 Z" fill="#2980b9" fill-opacity="0.85"><title>Quarterly ROA, annual, FF5: t = -0.80</title></path>
+<path d="M448.0,285.0 L454.0,296.0 L442.0,296.0 Z" fill="#c0392b" fill-opacity="0.85"><title>Quarterly ROA, annual, FF5+UMD: t = -0.91</title></path>
+<text x="220" y="325.0" class="lbl" text-anchor="end">Earnings surprise (SUE)</text>
+<line x1="230" y1="321.0" x2="840" y2="321.0" class="grid"/>
+<circle cx="435.5" cy="321.0" r="5" fill="#2980b9" fill-opacity="0.85"><title>Earnings surprise (SUE), monthly, FF5: t = -1.04</title></circle>
+<circle cx="358.3" cy="321.0" r="5" fill="#c0392b" fill-opacity="0.85"><title>Earnings surprise (SUE), monthly, FF5+UMD: t = -1.85</title></circle>
+<rect x="527.5" y="316.0" width="10" height="10" fill="#2980b9" fill-opacity="0.85"><title>Earnings surprise (SUE), quarterly, FF5: t = -0.03</title></rect>
+<rect x="472.6" y="316.0" width="10" height="10" fill="#c0392b" fill-opacity="0.85"><title>Earnings surprise (SUE), quarterly, FF5+UMD: t = -0.60</title></rect>
+<path d="M468.6,315.0 L474.6,326.0 L462.6,326.0 Z" fill="#2980b9" fill-opacity="0.85"><title>Earnings surprise (SUE), annual, FF5: t = -0.70</title></path>
+<path d="M459.1,315.0 L465.1,326.0 L453.1,326.0 Z" fill="#c0392b" fill-opacity="0.85"><title>Earnings surprise (SUE), annual, FF5+UMD: t = -0.80</title></path>
+<circle cx="236" cy="354" r="5" fill="#555"/><text x="246" y="358" class="lbl">monthly</text>
+<rect x="316" y="349" width="10" height="10" fill="#555"/><text x="332" y="358" class="lbl">quarterly</text>
+<path d="M416,348 L422,359 L410,359 Z" fill="#555"/><text x="428" y="358" class="lbl">annual</text>
+<text x="520" y="358" class="lbl" fill="#2980b9">■ FF5 alpha</text>
+<text x="630" y="358" class="lbl" fill="#c0392b">■ FF5 + UMD alpha</text>
+<text x="770" y="358" class="lbl">shaded: |t| &lt; 2</text>
+</svg>
+<figcaption>Alpha t-statistics for every sort. Everything but one point sits inside the shaded |t| &lt; 2 band.</figcaption></figure>
+
+<h2>2. What the buckets did</h2>
+<figure><svg viewBox="0 0 860 360" role="img" aria-label="Growth of one dollar by composite quintile">
+<line x1="56" y1="286.3" x2="844" y2="286.3" class="grid"/>
+<text x="48" y="290.3" class="axis" text-anchor="end">$1</text>
+<line x1="56" y1="118.0" x2="844" y2="118.0" class="grid"/>
+<text x="48" y="122.0" class="axis" text-anchor="end">$2</text>
+<text x="56.0" y="338" class="axis" text-anchor="middle">2018</text>
+<text x="187.3" y="338" class="axis" text-anchor="middle">2020</text>
+<text x="384.3" y="338" class="axis" text-anchor="middle">2022</text>
+<text x="581.3" y="338" class="axis" text-anchor="middle">2024</text>
+<text x="778.3" y="338" class="axis" text-anchor="middle">2026</text>
+<polyline points="56.0,289.5 64.2,303.8 72.4,300.4 80.6,321.2 88.8,301.7 97.0,293.8 105.2,297.8 113.5,290.5 121.7,304.8 129.9,292.1 138.1,290.4 146.3,302.3 154.5,292.2 162.7,288.8 170.9,282.5 179.1,275.3 187.3,285.6 195.5,304.7 203.8,343.8 212.0,324.3 220.2,320.3 228.4,315.3 236.6,314.5 244.8,304.0 253.0,311.9 261.2,306.1 269.4,267.2 277.6,251.0 285.8,242.5 294.0,213.8 302.2,207.0 310.5,201.7 318.7,197.2 326.9,195.6 335.1,207.0 343.3,204.2 351.5,205.3 359.7,197.0 367.9,212.8 376.1,200.8 384.3,209.9 392.5,204.2 400.8,199.7 409.0,221.9 417.2,220.2 425.4,246.5 433.6,225.4 441.8,233.1 450.0,260.3 458.2,233.4 466.4,222.0 474.6,237.7 482.8,209.2 491.0,216.2 499.2,230.3 507.5,235.4 515.7,243.1 523.9,224.5 532.1,210.2 540.3,223.9 548.5,240.9 556.7,257.8 564.9,235.9 573.1,203.9 581.3,216.5 589.5,211.1 597.8,200.7 606.0,217.8 614.2,208.1 622.4,212.3 630.6,184.0 638.8,186.7 647.0,185.8 655.2,189.7 663.4,162.9 671.6,185.1 679.8,176.3 688.0,186.7 696.2,205.9 704.5,218.0 712.7,206.0 720.9,191.1 729.1,189.3 737.3,167.3 745.5,163.1 753.7,162.9 761.9,158.1 770.1,153.9 778.3,137.8 786.5,133.0 794.8,147.7 803.0,111.1 811.2,99.5 819.4,79.3 827.6,84.1 835.8,78.8 844.0,98.3" fill="none" stroke="#c0392b" stroke-width="2.2"/>
+<text x="846" y="102.3" class="lbl" fill="#c0392b" text-anchor="start"></text>
+<polyline points="56.0,289.4 64.2,302.6 72.4,296.4 80.6,315.2 88.8,298.0 97.0,290.6 105.2,295.3 113.5,288.1 121.7,302.5 129.9,290.0 138.1,288.2 146.3,297.9 154.5,289.6 162.7,288.0 170.9,283.2 179.1,278.0 187.3,284.0 195.5,302.6 203.8,336.4 212.0,317.3 220.2,313.8 228.4,310.4 236.6,307.3 244.8,301.3 253.0,307.6 261.2,304.9 269.4,273.2 277.6,261.8 285.8,259.3 294.0,238.9 302.2,227.5 310.5,220.4 318.7,213.7 326.9,217.9 335.1,223.0 343.3,218.8 351.5,226.1 359.7,218.2 367.9,226.7 376.1,211.6 384.3,217.0 392.5,215.1 400.8,211.8 409.0,227.3 417.2,222.3 425.4,242.3 433.6,225.4 441.8,233.3 450.0,253.5 458.2,230.6 466.4,220.0 474.6,232.1 482.8,213.1 491.0,218.0 499.2,229.7 507.5,233.9 515.7,241.5 523.9,226.3 532.1,212.5 540.3,223.9 548.5,237.7 556.7,248.7 564.9,230.1 573.1,206.5 581.3,214.9 589.5,208.3 597.8,198.1 606.0,211.0 614.2,200.7 622.4,205.9 630.6,184.0 638.8,182.8 647.0,181.7 655.2,185.9 663.4,159.8 671.6,180.5 679.8,172.0 688.0,183.3 696.2,196.6 704.5,205.0 712.7,193.3 720.9,181.3 729.1,178.4 737.3,162.3 745.5,162.0 753.7,164.3 761.9,156.3 770.1,153.8 778.3,137.3 786.5,133.0 794.8,146.4 803.0,118.9 811.2,109.7 819.4,90.8 827.6,94.1 835.8,95.2 844.0,117.8" fill="none" stroke="#e67e22" stroke-width="1.4"/>
+<text x="846" y="121.8" class="lbl" fill="#e67e22" text-anchor="start"></text>
+<polyline points="56.0,288.5 64.2,301.5 72.4,296.2 80.6,312.9 88.8,297.9 97.0,292.1 105.2,291.8 113.5,285.2 121.7,296.7 129.9,285.1 138.1,284.2 146.3,290.8 154.5,284.2 162.7,281.4 170.9,276.4 179.1,272.7 187.3,277.6 195.5,295.0 203.8,330.2 212.0,312.5 220.2,306.2 228.4,303.3 236.6,296.9 244.8,289.8 253.0,296.4 261.2,295.2 269.4,267.1 277.6,257.3 285.8,254.1 294.0,237.0 302.2,222.6 310.5,213.9 318.7,210.3 326.9,214.8 335.1,216.0 343.3,209.3 351.5,218.3 359.7,207.4 367.9,213.9 376.1,199.2 384.3,213.1 392.5,211.9 400.8,207.8 409.0,225.5 417.2,219.5 425.4,236.1 433.6,219.3 441.8,228.1 450.0,250.3 458.2,224.9 466.4,212.2 474.6,223.6 482.8,204.5 491.0,211.7 499.2,221.7 507.5,225.1 515.7,229.2 523.9,213.4 532.1,202.5 540.3,212.1 548.5,223.8 556.7,234.1 564.9,217.0 573.1,195.5 581.3,203.5 589.5,194.5 597.8,183.6 606.0,196.9 614.2,185.9 622.4,191.1 630.6,173.5 638.8,175.2 647.0,170.8 655.2,179.6 663.4,157.1 671.6,177.3 679.8,171.3 688.0,182.5 696.2,192.2 704.5,200.7 712.7,189.3 720.9,177.9 729.1,175.4 737.3,161.8 745.5,163.2 753.7,169.3 761.9,160.8 770.1,164.1 778.3,150.1 786.5,141.0 794.8,156.7 803.0,131.6 811.2,129.2 819.4,111.7 827.6,109.7 835.8,108.9 844.0,125.2" fill="none" stroke="#7f8c8d" stroke-width="1.4"/>
+<text x="846" y="129.2" class="lbl" fill="#7f8c8d" text-anchor="start"></text>
+<polyline points="56.0,289.3 64.2,304.4 72.4,301.5 80.6,317.2 88.8,304.4 97.0,298.7 105.2,299.6 113.5,293.5 121.7,306.2 129.9,294.3 138.1,292.8 146.3,297.8 154.5,290.6 162.7,287.6 170.9,283.3 179.1,278.9 187.3,283.8 195.5,297.5 203.8,326.0 212.0,306.6 220.2,296.9 228.4,295.2 236.6,287.6 244.8,279.2 253.0,284.3 261.2,282.8 269.4,259.5 277.6,249.8 285.8,247.7 294.0,236.1 302.2,221.8 310.5,211.9 318.7,208.9 326.9,208.9 335.1,206.3 343.3,201.0 351.5,210.2 359.7,199.9 367.9,203.6 376.1,187.3 384.3,206.7 392.5,206.8 400.8,203.4 409.0,219.6 417.2,218.4 425.4,238.0 433.6,214.5 441.8,226.8 450.0,249.7 458.2,227.5 466.4,211.7 474.6,226.0 482.8,201.8 491.0,206.0 499.2,209.7 507.5,211.5 515.7,218.5 523.9,197.0 532.1,186.7 540.3,193.2 548.5,206.8 556.7,218.3 564.9,197.4 573.1,177.0 581.3,180.3 589.5,165.4 597.8,151.7 606.0,168.7 614.2,158.2 622.4,163.3 630.6,144.6 638.8,142.4 647.0,137.8 655.2,144.7 663.4,119.2 671.6,144.1 679.8,134.4 688.0,143.4 696.2,158.1 704.5,167.1 712.7,154.9 720.9,147.3 729.1,146.3 737.3,132.4 745.5,135.7 753.7,139.4 761.9,132.4 770.1,130.3 778.3,120.5 786.5,109.4 794.8,129.7 803.0,110.7 811.2,108.3 819.4,95.5 827.6,87.1 835.8,83.6 844.0,105.2" fill="none" stroke="#2980b9" stroke-width="1.4"/>
+<text x="846" y="109.2" class="lbl" fill="#2980b9" text-anchor="start"></text>
+<polyline points="56.0,287.9 64.2,302.0 72.4,296.1 80.6,310.6 88.8,298.8 97.0,290.8 105.2,289.1 113.5,283.2 121.7,297.8 129.9,286.0 138.1,283.2 146.3,285.7 154.5,282.7 162.7,278.2 170.9,272.8 179.1,267.6 187.3,270.2 195.5,286.0 203.8,311.2 212.0,290.1 220.2,276.5 228.4,272.8 236.6,262.6 244.8,255.8 253.0,259.8 261.2,261.5 269.4,240.7 277.6,230.8 285.8,230.0 294.0,222.3 302.2,209.4 310.5,198.4 318.7,194.5 326.9,190.4 335.1,184.1 343.3,177.9 351.5,193.6 359.7,178.0 367.9,178.8 376.1,162.3 384.3,189.7 392.5,195.6 400.8,193.3 409.0,211.2 417.2,209.6 425.4,230.8 433.6,203.8 441.8,215.3 450.0,235.9 458.2,213.7 466.4,194.7 474.6,207.6 482.8,187.3 491.0,192.4 499.2,190.3 507.5,192.3 515.7,198.0 523.9,174.3 532.1,163.1 540.3,168.1 548.5,182.0 556.7,195.4 564.9,172.8 573.1,149.8 581.3,151.0 589.5,135.4 597.8,124.1 606.0,145.1 614.2,134.5 622.4,135.0 630.6,116.8 638.8,114.2 647.0,106.3 655.2,114.9 663.4,90.5 671.6,113.6 679.8,102.1 688.0,113.4 696.2,127.4 704.5,132.5 712.7,112.7 720.9,103.9 729.1,98.0 737.3,86.5 745.5,86.4 753.7,95.6 761.9,90.3 770.1,90.4 778.3,77.3 786.5,67.7 794.8,90.7 803.0,69.0 811.2,67.2 819.4,54.5 827.6,45.9 835.8,40.7 844.0,58.9" fill="none" stroke="#1e8449" stroke-width="2.2"/>
+<text x="846" y="62.9" class="lbl" fill="#1e8449" text-anchor="start"></text>
+<polyline points="56.0,288.8 64.2,302.9 72.4,298.4 80.6,315.5 88.8,300.5 97.0,293.7 105.2,295.0 113.5,288.6 121.7,301.9 129.9,289.9 138.1,288.1 146.3,294.9 154.5,288.0 162.7,284.9 170.9,279.8 179.1,274.8 187.3,280.3 195.5,297.1 203.8,329.3 212.0,309.9 220.2,302.5 228.4,299.1 236.6,293.6 244.8,285.8 253.0,291.9 261.2,290.0 269.4,261.4 277.6,250.1 285.8,247.0 294.0,230.3 302.2,217.9 310.5,209.2 318.7,205.0 326.9,205.6 335.1,207.0 343.3,201.9 351.5,210.3 359.7,199.4 367.9,206.2 376.1,191.3 384.3,205.9 392.5,205.4 400.8,201.9 409.0,219.7 417.2,216.4 425.4,237.3 433.6,216.0 441.8,225.6 450.0,248.3 458.2,224.1 466.4,210.1 474.6,223.5 482.8,201.1 491.0,206.7 499.2,214.3 507.5,217.6 515.7,224.1 523.9,205.0 532.1,192.7 540.3,202.0 548.5,216.1 556.7,228.8 564.9,208.4 573.1,184.0 581.3,190.9 589.5,180.7 597.8,169.3 606.0,185.6 614.2,175.0 622.4,179.1 630.6,157.7 638.8,157.4 647.0,153.7 655.2,160.1 663.4,134.4 671.6,156.8 679.8,147.9 688.0,158.6 696.2,173.0 704.5,182.0 712.7,168.5 720.9,157.2 729.1,154.5 737.3,138.6 745.5,138.5 753.7,142.8 761.9,135.8 770.1,134.8 778.3,120.7 786.5,112.8 794.8,129.9 803.0,103.4 811.2,97.9 819.4,81.1 827.6,78.7 835.8,76.0 844.0,96.2" fill="none" stroke="#111111" stroke-width="2.2" stroke-dasharray="6 4"/>
+<text x="846" y="100.2" class="lbl" fill="#111111" text-anchor="start"></text>
+<line x1="66" y1="28" x2="88" y2="28" stroke="#1e8449" stroke-width="2.5"/>
+<text x="94" y="32" class="lbl">Q5 (top): $2.35</text>
+<line x1="66" y1="46" x2="88" y2="46" stroke="#2980b9" stroke-width="2.5"/>
+<text x="94" y="50" class="lbl">Q4: $2.08</text>
+<line x1="66" y1="64" x2="88" y2="64" stroke="#7f8c8d" stroke-width="2.5"/>
+<text x="94" y="68" class="lbl">Q3: $1.96</text>
+<line x1="66" y1="82" x2="88" y2="82" stroke="#e67e22" stroke-width="2.5"/>
+<text x="94" y="86" class="lbl">Q2: $2.00</text>
+<line x1="66" y1="100" x2="88" y2="100" stroke="#c0392b" stroke-width="2.5"/>
+<text x="94" y="104" class="lbl">Q1 (bottom): $2.12</text>
+<line x1="66" y1="118" x2="88" y2="118" stroke="#111111" stroke-width="2.5" stroke-dasharray="6 4"/>
+<text x="94" y="122" class="lbl">Equal-weight members: $2.13</text>
+</svg>
+<figcaption>Growth of one dollar in each composite quintile, monthly rebalancing, equal-weight within bucket, against the equal-weight return of every priced member (dashed). The top quintile ends highest and the bottom lowest, but the spread between them is not distinguishable from zero: -0.2% a year (t -0.03) over the first half of the sample, 2018-09 to 2022-08, and -0.6% a year (t -0.12) over the second, 2022-09 to 2026-09.</figcaption></figure>
+
+<h3>Monthly rebalancing</h3>
+<div class="wrap"><table>
+<thead><tr><th>Factor</th><th>Months</th><th>Q1 (bottom)</th><th>Q2</th><th>Q3</th><th>Q4</th><th>Q5 (top)</th><th>Spread</th><th>t</th><th>Sharpe</th><th>Hit rate</th></tr></thead>
+<tbody><tr><td>Composite</td><td>97</td><td>13.5%</td><td>11.6%</td><td>10.9%</td><td>11.6%</td><td>13.1%</td><td>-0.4%</td><td>-0.09</td><td>-0.03</td><td>55%</td></tr><tr><td>Gross profit / assets</td><td>97</td><td>12.6%</td><td>13.8%</td><td>12.3%</td><td>14.3%</td><td>9.8%</td><td>-2.5%</td><td>-0.76</td><td>-0.27</td><td>55%</td></tr><tr><td>Operating cash flow / assets</td><td>97</td><td>12.5%</td><td>11.8%</td><td>11.3%</td><td>12.8%</td><td>12.5%</td><td>0.0%</td><td>0.00</td><td>0.00</td><td>50%</td></tr><tr><td>Return on assets</td><td>97</td><td>14.1%</td><td>10.8%</td><td>11.2%</td><td>11.1%</td><td>13.7%</td><td>-0.4%</td><td>-0.09</td><td>-0.03</td><td>55%</td></tr><tr><td>Return on equity</td><td>97</td><td>14.1%</td><td>10.1%</td><td>11.1%</td><td>11.7%</td><td>13.7%</td><td>-0.3%</td><td>-0.09</td><td>-0.03</td><td>57%</td></tr><tr><td>Operating margin</td><td>97</td><td>15.9%</td><td>12.4%</td><td>10.7%</td><td>10.2%</td><td>12.4%</td><td>-3.1%</td><td>-0.67</td><td>-0.24</td><td>48%</td></tr><tr><td>Revenue growth (low is good)</td><td>97</td><td>13.8%</td><td>11.4%</td><td>12.6%</td><td>10.5%</td><td>12.9%</td><td>-0.8%</td><td>-0.24</td><td>-0.08</td><td>47%</td></tr><tr><td>Quarterly ROE</td><td>97</td><td>14.1%</td><td>9.2%</td><td>10.3%</td><td>12.8%</td><td>13.7%</td><td>-0.3%</td><td>-0.07</td><td>-0.03</td><td>57%</td></tr><tr><td>Quarterly ROA</td><td>97</td><td>14.3%</td><td>10.1%</td><td>10.3%</td><td>12.3%</td><td>13.7%</td><td>-0.6%</td><td>-0.12</td><td>-0.04</td><td>56%</td></tr><tr><td>Earnings surprise (SUE)</td><td>97</td><td>13.4%</td><td>13.4%</td><td>10.8%</td><td>11.6%</td><td>12.1%</td><td>-1.1%</td><td>-0.37</td><td>-0.13</td><td>55%</td></tr></tbody></table></div>
+<p class="note">Annualised equal-weight bucket returns; spread = Q5 − Q1. Equal-weight benchmark of every priced member on this schedule: 12.2% a year, t 1.58, Sharpe 0.56.</p>
+<h3>Quarterly rebalancing</h3>
+<div class="wrap"><table>
+<thead><tr><th>Factor</th><th>Months</th><th>Q1 (bottom)</th><th>Q2</th><th>Q3</th><th>Q4</th><th>Q5 (top)</th><th>Spread</th><th>t</th><th>Sharpe</th><th>Hit rate</th></tr></thead>
+<tbody><tr><td>Composite</td><td>96</td><td>14.3%</td><td>11.6%</td><td>11.2%</td><td>12.6%</td><td>12.9%</td><td>-1.2%</td><td>-0.27</td><td>-0.09</td><td>54%</td></tr><tr><td>Gross profit / assets</td><td>96</td><td>13.2%</td><td>13.9%</td><td>13.2%</td><td>14.6%</td><td>9.7%</td><td>-3.1%</td><td>-0.96</td><td>-0.34</td><td>54%</td></tr><tr><td>Operating cash flow / assets</td><td>96</td><td>13.4%</td><td>12.3%</td><td>11.3%</td><td>12.9%</td><td>12.8%</td><td>-0.5%</td><td>-0.13</td><td>-0.05</td><td>51%</td></tr><tr><td>Return on assets</td><td>96</td><td>15.1%</td><td>11.0%</td><td>11.4%</td><td>11.5%</td><td>13.7%</td><td>-1.2%</td><td>-0.28</td><td>-0.10</td><td>53%</td></tr><tr><td>Return on equity</td><td>96</td><td>14.8%</td><td>10.1%</td><td>11.5%</td><td>12.2%</td><td>13.8%</td><td>-0.9%</td><td>-0.23</td><td>-0.08</td><td>55%</td></tr><tr><td>Operating margin</td><td>96</td><td>16.6%</td><td>12.8%</td><td>11.1%</td><td>10.1%</td><td>12.7%</td><td>-3.4%</td><td>-0.74</td><td>-0.26</td><td>49%</td></tr><tr><td>Revenue growth (low is good)</td><td>96</td><td>14.2%</td><td>12.3%</td><td>13.3%</td><td>10.2%</td><td>12.9%</td><td>-1.1%</td><td>-0.33</td><td>-0.12</td><td>46%</td></tr><tr><td>Quarterly ROE</td><td>96</td><td>14.3%</td><td>10.4%</td><td>10.0%</td><td>13.2%</td><td>14.2%</td><td>-0.1%</td><td>-0.03</td><td>-0.01</td><td>53%</td></tr><tr><td>Quarterly ROA</td><td>96</td><td>14.1%</td><td>10.8%</td><td>12.3%</td><td>11.1%</td><td>14.1%</td><td>-0.0%</td><td>0.00</td><td>0.00</td><td>56%</td></tr><tr><td>Earnings surprise (SUE)</td><td>96</td><td>13.1%</td><td>12.6%</td><td>11.6%</td><td>12.1%</td><td>13.6%</td><td>0.4%</td><td>0.15</td><td>0.05</td><td>57%</td></tr></tbody></table></div>
+<p class="note">Annualised equal-weight bucket returns; spread = Q5 − Q1. Equal-weight benchmark of every priced member on this schedule: 12.5% a year, t 1.61, Sharpe 0.57.</p>
+<h3>Annual rebalancing</h3>
+<div class="wrap"><table>
+<thead><tr><th>Factor</th><th>Months</th><th>Q1 (bottom)</th><th>Q2</th><th>Q3</th><th>Q4</th><th>Q5 (top)</th><th>Spread</th><th>t</th><th>Sharpe</th><th>Hit rate</th></tr></thead>
+<tbody><tr><td>Composite</td><td>97</td><td>16.2%</td><td>11.7%</td><td>11.3%</td><td>11.7%</td><td>12.3%</td><td>-3.4%</td><td>-0.71</td><td>-0.25</td><td>57%</td></tr><tr><td>Gross profit / assets</td><td>97</td><td>14.3%</td><td>13.6%</td><td>13.5%</td><td>13.5%</td><td>11.9%</td><td>-2.2%</td><td>-0.59</td><td>-0.21</td><td>52%</td></tr><tr><td>Operating cash flow / assets</td><td>97</td><td>13.9%</td><td>12.0%</td><td>11.7%</td><td>11.8%</td><td>13.7%</td><td>-0.1%</td><td>-0.04</td><td>-0.01</td><td>56%</td></tr><tr><td>Return on assets</td><td>97</td><td>16.2%</td><td>11.3%</td><td>11.8%</td><td>11.2%</td><td>12.9%</td><td>-2.9%</td><td>-0.63</td><td>-0.22</td><td>48%</td></tr><tr><td>Return on equity</td><td>97</td><td>16.3%</td><td>9.7%</td><td>11.3%</td><td>13.0%</td><td>12.7%</td><td>-3.1%</td><td>-0.76</td><td>-0.27</td><td>50%</td></tr><tr><td>Operating margin</td><td>97</td><td>18.5%</td><td>14.2%</td><td>9.7%</td><td>10.2%</td><td>12.5%</td><td>-5.1%</td><td>-1.01</td><td>-0.36</td><td>47%</td></tr><tr><td>Revenue growth (low is good)</td><td>97</td><td>12.0%</td><td>14.1%</td><td>13.2%</td><td>10.2%</td><td>14.2%</td><td>2.0%</td><td>0.54</td><td>0.19</td><td>52%</td></tr><tr><td>Quarterly ROE</td><td>97</td><td>15.3%</td><td>10.4%</td><td>10.8%</td><td>12.8%</td><td>13.1%</td><td>-1.9%</td><td>-0.41</td><td>-0.14</td><td>59%</td></tr><tr><td>Quarterly ROA</td><td>97</td><td>15.9%</td><td>10.7%</td><td>11.9%</td><td>11.2%</td><td>13.5%</td><td>-2.1%</td><td>-0.43</td><td>-0.15</td><td>58%</td></tr><tr><td>Earnings surprise (SUE)</td><td>97</td><td>13.1%</td><td>13.9%</td><td>12.2%</td><td>11.9%</td><td>12.7%</td><td>-0.4%</td><td>-0.14</td><td>-0.05</td><td>48%</td></tr></tbody></table></div>
+<p class="note">Annualised equal-weight bucket returns; spread = Q5 − Q1. Equal-weight benchmark of every priced member on this schedule: 12.6% a year, t 1.63, Sharpe 0.57.</p>
+
+<h2>3. Against Fama-French: alphas and loadings</h2>
+<p>Two models: FF5 (Mkt-RF, SMB, HML, RMW, CMA) and FF5 plus momentum (UMD). Loadings shown are from the six-factor fit. A profitability sort inside the S&amp;P 500 is, to first order, a long position in RMW and a short in HML; once those are priced the residual is noise. The quarterly signals (quarterly ROE and ROA, earnings surprise) carry momentum exposure that the five-factor model does not remove, which is why their FF5 alphas shrink again under FF5+UMD.</p>
+<div class="wrap"><table>
+<thead><tr><th>Factor</th><th>Schedule</th><th>Months</th><th>Raw ann.</th><th>Raw t</th><th>FF5 α ann.</th><th>t</th><th>R²</th><th>FF5+UMD α ann.</th><th>t</th><th>R²</th><th>Mkt</th><th>SMB</th><th>HML</th><th>RMW</th><th>CMA</th><th>UMD</th></tr></thead>
+<tbody><tr><td>Composite</td><td>monthly</td><td>96</td><td>-0.5%</td><td>-0.11</td><td>-0.4%</td><td>-0.21</td><td>0.73</td><td>-1.0%</td><td>-0.51</td><td>0.77</td><td>-0.18</td><td>-0.35</td><td>-0.37</td><td>0.57</td><td>-0.09</td><td>0.22</td></tr><tr><td>Gross profit / assets</td><td>monthly</td><td>96</td><td>-2.5%</td><td>-0.77</td><td>-1.6%</td><td>-0.50</td><td>0.34</td><td>-1.6%</td><td>-0.51</td><td>0.34</td><td>-0.10</td><td>0.10</td><td>-0.34</td><td>0.33</td><td>-0.10</td><td>0.00</td></tr><tr><td>Operating cash flow / assets</td><td>monthly</td><td>96</td><td>0.0%</td><td>0.00</td><td>-1.2%</td><td>-0.55</td><td>0.75</td><td>-1.2%</td><td>-0.56</td><td>0.75</td><td>-0.04</td><td>-0.29</td><td>-0.53</td><td>0.42</td><td>0.08</td><td>0.00</td></tr><tr><td>Return on assets</td><td>monthly</td><td>96</td><td>-0.5%</td><td>-0.11</td><td>-0.6%</td><td>-0.28</td><td>0.69</td><td>-0.7%</td><td>-0.33</td><td>0.69</td><td>-0.16</td><td>-0.33</td><td>-0.39</td><td>0.52</td><td>-0.16</td><td>0.06</td></tr><tr><td>Return on equity</td><td>monthly</td><td>96</td><td>-0.1%</td><td>-0.02</td><td>-0.7%</td><td>-0.32</td><td>0.65</td><td>-0.9%</td><td>-0.39</td><td>0.65</td><td>-0.13</td><td>-0.29</td><td>-0.23</td><td>0.57</td><td>-0.16</td><td>0.07</td></tr><tr><td>Operating margin</td><td>monthly</td><td>96</td><td>-2.8%</td><td>-0.61</td><td>-2.3%</td><td>-1.17</td><td>0.67</td><td>-2.4%</td><td>-1.19</td><td>0.67</td><td>-0.26</td><td>-0.44</td><td>-0.21</td><td>0.57</td><td>-0.16</td><td>0.02</td></tr><tr><td>Revenue growth (low is good)</td><td>monthly</td><td>96</td><td>-0.7%</td><td>-0.21</td><td>1.0%</td><td>0.39</td><td>0.30</td><td>1.0%</td><td>0.37</td><td>0.30</td><td>-0.14</td><td>0.07</td><td>0.13</td><td>-0.03</td><td>0.29</td><td>0.01</td></tr><tr><td>Quarterly ROE</td><td>monthly</td><td>96</td><td>-0.4%</td><td>-0.08</td><td>-0.1%</td><td>-0.04</td><td>0.53</td><td>-0.9%</td><td>-0.34</td><td>0.60</td><td>-0.18</td><td>-0.38</td><td>-0.13</td><td>0.46</td><td>-0.17</td><td>0.28</td></tr><tr><td>Quarterly ROA</td><td>monthly</td><td>96</td><td>-1.0%</td><td>-0.19</td><td>-0.0%</td><td>-0.02</td><td>0.57</td><td>-0.9%</td><td>-0.44</td><td>0.65</td><td>-0.21</td><td>-0.31</td><td>-0.27</td><td>0.48</td><td>-0.19</td><td>0.31</td></tr><tr><td>Earnings surprise (SUE)</td><td>monthly</td><td>96</td><td>-1.6%</td><td>-0.53</td><td>-2.1%</td><td>-1.04</td><td>0.32</td><td>-2.9%</td><td class="weak">-1.85</td><td>0.52</td><td>-0.01</td><td>-0.24</td><td>0.03</td><td>0.13</td><td>-0.16</td><td>0.31</td></tr><tr><td>Composite</td><td>quarterly</td><td>95</td><td>-1.2%</td><td>-0.26</td><td>-0.9%</td><td>-0.51</td><td>0.72</td><td>-1.6%</td><td>-0.84</td><td>0.77</td><td>-0.18</td><td>-0.34</td><td>-0.34</td><td>0.59</td><td>-0.13</td><td>0.23</td></tr><tr><td>Gross profit / assets</td><td>quarterly</td><td>95</td><td>-3.1%</td><td>-0.93</td><td>-2.2%</td><td>-0.64</td><td>0.32</td><td>-2.2%</td><td>-0.66</td><td>0.32</td><td>-0.09</td><td>0.10</td><td>-0.33</td><td>0.32</td><td>-0.10</td><td>-0.00</td></tr><tr><td>Operating cash flow / assets</td><td>quarterly</td><td>95</td><td>-0.5%</td><td>-0.12</td><td>-1.3%</td><td>-0.58</td><td>0.77</td><td>-1.3%</td><td>-0.59</td><td>0.77</td><td>-0.05</td><td>-0.28</td><td>-0.54</td><td>0.42</td><td>0.08</td><td>0.01</td></tr><tr><td>Return on assets</td><td>quarterly</td><td>95</td><td>-1.3%</td><td>-0.30</td><td>-1.2%</td><td>-0.59</td><td>0.69</td><td>-1.4%</td><td>-0.63</td><td>0.69</td><td>-0.16</td><td>-0.32</td><td>-0.38</td><td>0.52</td><td>-0.18</td><td>0.06</td></tr><tr><td>Return on equity</td><td>quarterly</td><td>95</td><td>-0.6%</td><td>-0.16</td><td>-1.1%</td><td>-0.55</td><td>0.64</td><td>-1.3%</td><td>-0.63</td><td>0.64</td><td>-0.12</td><td>-0.29</td><td>-0.22</td><td>0.56</td><td>-0.17</td><td>0.07</td></tr><tr><td>Operating margin</td><td>quarterly</td><td>95</td><td>-3.1%</td><td>-0.68</td><td>-2.4%</td><td>-1.21</td><td>0.66</td><td>-2.5%</td><td>-1.23</td><td>0.66</td><td>-0.26</td><td>-0.44</td><td>-0.19</td><td>0.56</td><td>-0.19</td><td>0.02</td></tr><tr><td>Revenue growth (low is good)</td><td>quarterly</td><td>95</td><td>-1.0%</td><td>-0.31</td><td>1.1%</td><td>0.42</td><td>0.34</td><td>1.0%</td><td>0.38</td><td>0.34</td><td>-0.16</td><td>0.10</td><td>0.12</td><td>-0.05</td><td>0.32</td><td>0.03</td></tr><tr><td>Quarterly ROE</td><td>quarterly</td><td>95</td><td>-0.1%</td><td>-0.01</td><td>-0.2%</td><td>-0.07</td><td>0.50</td><td>-1.0%</td><td>-0.41</td><td>0.57</td><td>-0.14</td><td>-0.36</td><td>-0.09</td><td>0.49</td><td>-0.21</td><td>0.27</td></tr><tr><td>Quarterly ROA</td><td>quarterly</td><td>95</td><td>-0.2%</td><td>-0.03</td><td>0.5%</td><td>0.25</td><td>0.57</td><td>-0.4%</td><td>-0.20</td><td>0.64</td><td>-0.17</td><td>-0.32</td><td>-0.24</td><td>0.47</td><td>-0.21</td><td>0.29</td></tr><tr><td>Earnings surprise (SUE)</td><td>quarterly</td><td>95</td><td>0.1%</td><td>0.04</td><td>-0.0%</td><td>-0.03</td><td>0.35</td><td>-0.9%</td><td>-0.60</td><td>0.53</td><td>-0.02</td><td>-0.23</td><td>-0.01</td><td>0.10</td><td>-0.12</td><td>0.28</td></tr><tr><td>Composite</td><td>annual</td><td>96</td><td>-3.6%</td><td>-0.73</td><td>-4.0%</td><td>-1.49</td><td>0.75</td><td>-4.3%</td><td>-1.58</td><td>0.76</td><td>-0.18</td><td>-0.42</td><td>-0.35</td><td>0.67</td><td>-0.27</td><td>0.13</td></tr><tr><td>Gross profit / assets</td><td>annual</td><td>96</td><td>-2.2%</td><td>-0.60</td><td>-0.8%</td><td>-0.22</td><td>0.23</td><td>-1.0%</td><td>-0.29</td><td>0.23</td><td>-0.09</td><td>0.30</td><td>-0.42</td><td>0.34</td><td>0.09</td><td>0.07</td></tr><tr><td>Operating cash flow / assets</td><td>annual</td><td>96</td><td>-0.1%</td><td>-0.03</td><td>-1.6%</td><td>-0.64</td><td>0.73</td><td>-1.5%</td><td>-0.61</td><td>0.73</td><td>-0.05</td><td>-0.38</td><td>-0.48</td><td>0.42</td><td>-0.02</td><td>-0.03</td></tr><tr><td>Return on assets</td><td>annual</td><td>96</td><td>-3.0%</td><td>-0.65</td><td>-3.1%</td><td>-1.02</td><td>0.65</td><td>-3.2%</td><td>-1.06</td><td>0.65</td><td>-0.16</td><td>-0.37</td><td>-0.36</td><td>0.51</td><td>-0.25</td><td>0.04</td></tr><tr><td>Return on equity</td><td>annual</td><td>96</td><td>-2.9%</td><td>-0.70</td><td>-3.6%</td><td>-1.23</td><td>0.58</td><td>-3.6%</td><td>-1.24</td><td>0.58</td><td>-0.13</td><td>-0.36</td><td>-0.21</td><td>0.55</td><td>-0.27</td><td>-0.01</td></tr><tr><td>Operating margin</td><td>annual</td><td>96</td><td>-4.9%</td><td>-0.96</td><td>-4.9%</td><td>-1.40</td><td>0.59</td><td>-4.9%</td><td>-1.42</td><td>0.59</td><td>-0.25</td><td>-0.57</td><td>-0.14</td><td>0.56</td><td>-0.29</td><td>-0.02</td></tr><tr><td>Revenue growth (low is good)</td><td>annual</td><td>96</td><td>2.1%</td><td>0.57</td><td>3.5%</td><td>0.99</td><td>0.33</td><td>3.2%</td><td>0.90</td><td>0.36</td><td>-0.07</td><td>-0.00</td><td>0.17</td><td>-0.25</td><td>0.37</td><td>0.13</td></tr><tr><td>Quarterly ROE</td><td>annual</td><td>96</td><td>-2.0%</td><td>-0.42</td><td>-2.8%</td><td>-0.80</td><td>0.57</td><td>-3.3%</td><td>-0.90</td><td>0.60</td><td>-0.13</td><td>-0.40</td><td>-0.16</td><td>0.64</td><td>-0.34</td><td>0.17</td></tr><tr><td>Quarterly ROA</td><td>annual</td><td>96</td><td>-2.5%</td><td>-0.50</td><td>-2.4%</td><td>-0.80</td><td>0.64</td><td>-2.9%</td><td>-0.91</td><td>0.66</td><td>-0.19</td><td>-0.37</td><td>-0.30</td><td>0.61</td><td>-0.33</td><td>0.18</td></tr><tr><td>Earnings surprise (SUE)</td><td>annual</td><td>96</td><td>-0.9%</td><td>-0.31</td><td>-1.5%</td><td>-0.70</td><td>0.34</td><td>-1.9%</td><td>-0.80</td><td>0.38</td><td>-0.02</td><td>-0.20</td><td>-0.02</td><td>0.25</td><td>-0.27</td><td>0.12</td></tr></tbody></table></div>
+<h3>The benchmark on the same models</h3>
+<div class="wrap"><table>
+<thead><tr><th>Schedule</th><th>Months</th><th>Raw ann. (minus RF)</th><th>t</th><th>FF5 α ann.</th><th>t</th><th>R²</th><th>FF5+UMD α ann.</th><th>t</th><th>Mkt</th><th>SMB</th><th>HML</th><th>RMW</th><th>CMA</th><th>UMD</th></tr></thead>
+<tbody><tr><td>monthly</td><td>96</td><td>10.1%</td><td>1.32</td><td>-1.2%</td><td>-1.17</td><td>0.98</td><td>-1.1%</td><td>-1.11</td><td>0.99</td><td>0.55</td><td>0.21</td><td>0.13</td><td>0.09</td><td>-0.04</td></tr><tr><td>quarterly</td><td>95</td><td>10.5%</td><td>1.35</td><td>-1.2%</td><td>-1.14</td><td>0.98</td><td>-1.1%</td><td>-1.06</td><td>0.99</td><td>0.55</td><td>0.21</td><td>0.13</td><td>0.09</td><td>-0.04</td></tr><tr><td>annual</td><td>96</td><td>10.5%</td><td>1.37</td><td>-0.8%</td><td>-0.80</td><td>0.98</td><td>-0.7%</td><td>-0.72</td><td>0.99</td><td>0.58</td><td>0.21</td><td>0.13</td><td>0.11</td><td>-0.04</td></tr></tbody></table></div>
+<p class="note">Equal-weight return of every priced member on each schedule, minus the one-month bill rate. Beta near one, alpha near zero, R² near 0.96: the returns and the French series agree.</p>
+
+<h2>4. Why the spreads are biased down, not up</h2>
+<ul>
+<li><b>Survivors only.</b> Yahoo returns nothing for a delisted ticker, so 718 of the 2,417 companies ever in the S&amp;P 1500 have no prices. Failures and takeovers leave the index from the bottom quintile more than the top; their missing returns flatter Q1 and shrink the measured spread. The share of panel members with a price the following month rises from 74.2% in 2018 to 95.2% by 2025.</li>
+<li><b>All three indexes re-ranked together.</b> The percentiles are over the whole 1,500, so a sort now spans sizes; without a size control, part of any spread is a bet on small versus large.</li>
+<li><b>The first year is thinner.</b> The composite covers 1374 of 1486 members in 2018 (the surprise factor needs eight quarters of history and DERA begins in 2009) and 1451 or more a date from 2021.</li>
+<li><b>30 tests.</b> Ten sorts on three schedules; at the 5% level one or two |t| &gt; 2 are expected from noise alone.</li>
+</ul>
+
+<h2>5. Coverage</h2>
+<div class="wrap"><table>
+<thead><tr><th>Year</th><th>Dates</th><th>Members</th><th>Composite</th><th>gp_at</th><th>ocf_at</th><th>roa</th><th>roe</th><th>op. margin</th><th>rev. growth</th><th>roe_q</th><th>roa_q</th><th>sue</th></tr></thead>
+<tbody><tr><td>2018</td><td>5</td><td>1486</td><td>1374</td><td>834</td><td>1384</td><td>1347</td><td>1300</td><td>1018</td><td>1329</td><td>1348</td><td>1401</td><td>1349</td></tr><tr><td>2019</td><td>12</td><td>1447</td><td>1377</td><td>870</td><td>1383</td><td>1350</td><td>1298</td><td>1041</td><td>1363</td><td>1309</td><td>1363</td><td>1316</td></tr><tr><td>2020</td><td>12</td><td>1334</td><td>1303</td><td>817</td><td>1311</td><td>1278</td><td>1228</td><td>976</td><td>1302</td><td>1229</td><td>1282</td><td>1237</td></tr><tr><td>2021</td><td>12</td><td>1472</td><td>1451</td><td>878</td><td>1457</td><td>1427</td><td>1380</td><td>1072</td><td>1447</td><td>1373</td><td>1421</td><td>1381</td></tr><tr><td>2022</td><td>12</td><td>1498</td><td>1473</td><td>878</td><td>1483</td><td>1446</td><td>1389</td><td>1091</td><td>1473</td><td>1385</td><td>1442</td><td>1394</td></tr><tr><td>2023</td><td>12</td><td>1499</td><td>1474</td><td>863</td><td>1484</td><td>1447</td><td>1388</td><td>1090</td><td>1472</td><td>1386</td><td>1445</td><td>1392</td></tr><tr><td>2024</td><td>12</td><td>1500</td><td>1477</td><td>858</td><td>1487</td><td>1455</td><td>1397</td><td>1094</td><td>1478</td><td>1391</td><td>1448</td><td>1393</td></tr><tr><td>2025</td><td>12</td><td>1499</td><td>1476</td><td>855</td><td>1488</td><td>1451</td><td>1398</td><td>1099</td><td>1481</td><td>1389</td><td>1444</td><td>1391</td></tr><tr><td>2026</td><td>9</td><td>1499</td><td>1473</td><td>852</td><td>1486</td><td>1448</td><td>1386</td><td>1107</td><td>1479</td><td>1384</td><td>1447</td><td>1398</td></tr></tbody></table></div>
+<p class="note">Average members per date with each factor. Gross profit is undefined for financials (no gross profit line); operating margin requires a tagged operating income; the quarterly signals need the quarter and the prior quarter-end balance.</p>
+<h3>Members with a price the following month</h3>
+<div class="wrap"><table><thead><tr><th>Year</th><th>Priced</th></tr></thead><tbody><tr><td>2018</td><td>74.2%</td></tr><tr><td>2019</td><td>76.1%</td></tr><tr><td>2020</td><td>82.8%</td></tr><tr><td>2021</td><td>84.1%</td></tr><tr><td>2022</td><td>86.6%</td></tr><tr><td>2023</td><td>89.5%</td></tr><tr><td>2024</td><td>92.4%</td></tr><tr><td>2025</td><td>95.2%</td></tr><tr><td>2026</td><td>87.3%</td></tr></tbody></table></div>
+<p class="note">The final year is understated: the last panel date has no following month of prices yet.</p>
+
+<h2>6. Method, exactly</h2>
+<ul>
+<li><b>Universe.</b> <code>sec_reference.index_members('SP1500', date)</code>: the constituents on each month end from the replayed index history, one row per company (a seat whose ticker the crosswalk still assigns to its previous holder cannot count a company twice; check 71).</li>
+<li><b>Factors.</b> <code>sec_gold.factor_sheet_asof</code>, stored per month end in <code>sec_market.factor_panel</code>. Annual factors come from the newest fiscal year filed by the date (not older than 550 days), quarterly ones from the newest quarter filed by the date (not older than 200 days). Every input is keyed on <code>tradable_from</code>, the first session a filing could be traded on, never the filing date; 57% of filings are accepted after the close. The panel's CHECK constraints refuse any row whose period end or availability is after its own knowledge date.</li>
+<li><b>Suspect facts.</b> 5,546 facts whose period ends after their own filing date and 87 balance-sheet lines printed in thousands or millions without saying so are refused by every gold table (<code>sec_gold.suspect_fact</code>), decided from the filing and earlier filings only.</li>
+<li><b>Prices.</b> Yahoo Finance month-end closes for the primary ticker of each surviving member (<code>sec_market.monthly_price</code>; 1864 of 1868 symbols answered on 2026-10-12). Returns use the dividend-and-split-adjusted close; a month is skipped across a gap of more than 35 days, when either month did not trade, or when the prior as-traded close was under a dollar.</li>
+<li><b>Sort and hold.</b> <code>sec_market.backtest</code>: on each rebalance date, NTILE(5) over the signed percentile among members that have the factor; equal weight within bucket; held through every month end up to and including the next rebalance; a member without a price that month drops out of its bucket for that month.</li>
+<li><b>Statistics.</b> <code>sec_market.backtest_summary</code> for means, t, Sharpe and hit rates; <code>tools/ff_baseline.py</code> for the regressions (Newey-West, six lags) on Ken French's monthly five factors and momentum, percent returns read as decimals.</li>
+</ul>
+<pre>uv run dera load-prices
+uv run dera build-factor-panel --index SP1500
+uv run python tools/ff_baseline.py SP1500 --download
+uv run python tools/factor_report.py SP1500</pre>
+
+<h2>7. What the build caught along the way</h2>
+<ul>
+<li><b>A company counted twice.</b> The panel's primary key refused 2020-03-31: the S&amp;P 500's IR and TT seats both resolved to Trane Technologies, because the ticker IR passed to Ingersoll Rand Inc on 2020-03-03 and the crosswalk moves a ticker at its next capture (2020-06-28). Three month ends, one company, the only such case since 2010; the sheet is now one row per company and check 71 pins the count.</li>
+<li><b>A planner pathology.</b> The gold layer is rebuilt in one transaction, so a freshly built matview has no statistics until commit. The peer-statistics build costed a correlated EXISTS as free and ran it as a per-row index scan for eleven hours before it was cancelled. The predicate is now a join, every matview is analysed as soon as it is indexed, and the rebuild takes 48 minutes.</li>
+<li><b>Look-ahead by mis-dating.</b> Catalent's 10-Q of 2024-02-14 dates a nine-month net income to 2024-03-31; the panel's CHECK caught it, and such facts are now refused at the source.</li>
+<li><b>A scale error at the top of every sort.</b> Hill-Rom's FY2021 10-K carries total assets of 4,999.1 dollars against 4,671.1 million for FY2020 in the same filing; it had produced a return on assets of 49,709.</li>
+</ul>
+
+<h2>8. Open</h2>
+<ul>
+<li>Delisted members have no prices; Polygon's flat files (or CRSP) are the source that closes the survivorship gap. Four open symbols Yahoo lacked: CUK, HCIIP, SATS, TDDWW.</li>
+<li>S&amp;P 400 and 600 panels (<code>dera build-factor-panel --index SP400</code>), where the published premia are larger.</li>
+<li>Value-weighted buckets and a size control; the backtest is equal-weight only.</li>
+<li>Ticker handoffs dated from the filings that announce them rather than the crosswalk's next capture.</li>
+</ul>
+<p class="small">Report generated 2026-10-13 by <code>tools/factor_report.py</code> from PostgreSQL; French data vintage 202608 (<code>data/external/french</code>, not stored in the repository).</p>
+</main>
+</body>
+</html>

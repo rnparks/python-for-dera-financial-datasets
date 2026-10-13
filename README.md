@@ -82,7 +82,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 72 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 73 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -350,7 +350,7 @@ data/
 tests/               # pytest, pure functions only
 docs/                # architecture, schema, data sources, SEC references
 ├── audits/         # generated audit tables
-└── reports/        # generated reports (docs/reports/factor_backtest_2026-10-13.html: the first backtest)
+└── reports/        # generated reports: factor_backtest_<index>_<date>.html for SP500, SP400, SP600 and SP1500 (2026-10-13)
 tools/               # standalone utilities, verify_pit.sql, the pre-commit hook
 notebooks/
 ├── sec_examples/   # original SEC DERA tutorials (upstream)

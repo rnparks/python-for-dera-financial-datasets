@@ -199,7 +199,7 @@ S&P 500 revenue coverage by fiscal year, members of the time: 457 companies in F
 | `index_name` | text | Index the company belonged to when the fact became actionable |
 | `gics_sector` | text | GICS sector as of the fact (11 values) |
 | `gics_sub_industry` | text | GICS sub-industry as of the fact |
-| `peer_level` | text | `sector` or `sub_industry` — **which grouping this row scores against** |
+| `peer_level` | text | `sector` or `sub_industry` — **which grouping this row scores against**; sector labels are canonical GICS names since 2026-10-13 (`sec_reference.gics_sector_canonical`), so a page's spelling is not its own group |
 | `peer_group` | text | The actual group value `peer_level` selects; the composite indexes are keyed on it |
 | `tradable_from` | date | Availability of the **vintage carried**, which is the latest restatement — for 97% of FY2024 revenue rows (1,388 of 1,438) that is the comparative reprinted in the following year's 10-K, so Apple's FY2024 revenue shows 2025-10-31 although it was first disclosed 2024-11-01. **Do not lag on this column**; first disclosure lives in `fact_asof` |
 | `concept` | text | Canonical concept (FK to `canonical_concepts`) |

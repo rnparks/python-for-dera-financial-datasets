@@ -3,7 +3,7 @@
 Reads the database (sec_market.factor_panel, sec_market.backtest and
 backtest_summary, sec_market.monthly_price, sec_gold.suspect_fact) and
 the Fama-French baseline table that tools/ff_baseline.py wrote, and
-writes docs/reports/factor_backtest_<date>.html: methodology, coverage,
+writes docs/reports/factor_backtest_<index>_<date>.html: methodology, coverage,
 every bucket at every rebalancing frequency, the FF5 and FF5+UMD alphas
 and loadings, two inline SVG charts (cumulative composite quintiles; the
 alpha t-statistics), the defects the build caught, and what remains open.
@@ -13,7 +13,7 @@ Usage:
   uv run python tools/ff_baseline.py SP500 --download          # first
   uv run python tools/factor_report.py SP500                   # then this
 Options: --from 2010-01-01, --ff-csv data/external/french/ff_baseline_SP500.csv,
-         --out docs/reports/factor_backtest_<today>.html
+         --out docs/reports/factor_backtest_<index>_<today>.html
 """
 from __future__ import annotations
 
@@ -359,6 +359,48 @@ def build_html(index: str, frm: dt.date, d: dict, ff: pd.DataFrame, today: dt.da
     best = ff[ff.series == "spread"].copy()
     best["abs"] = best["FF5 t_alpha"].abs()
     top = best.sort_values("abs", ascending=False).iloc[0]
+    n_tests = len(best)
+    max_raw_t = float(best["raw_t"].abs().max())
+    raw_sig = best[best["raw_t"].abs() >= 2]
+    ff5_sig = best[best["FF5 t_alpha"].abs() >= 2]
+    ff6_sig = best[best["FF5+UMD t_alpha"].abs() >= 2]
+
+    def listing(rows, col):
+        return "; ".join(f"{esc(names[r.factor])} at {r.freq} rebalancing, {pct(r[col.replace('t_alpha', 'alpha_ann')] if 'alpha' in col else r['raw_ann'])} a year, t {float(r[col]):.2f}"
+                         for _, r in rows.iterrows())
+    prof = best[best.factor.isin(["composite", "gp_at", "ocf_at", "roa", "roe", "operating_margin", "roe_q", "roa_q"])]
+    rmw = prof["FF5+UMD b_RMW"]
+    hml = prof["FF5+UMD b_HML"]
+    umd_q = best[best.factor.isin(["roe_q", "roa_q", "sue"])]["FF5+UMD b_UMD"]
+    by_chance = max(1, round(0.05 * n_tests))   # expected |t| > 2 hits from noise at the 5% level
+    if len(ff6_sig) == 0 and len(raw_sig) == 0:
+        verdict_head = "Verdict: nothing pays."
+    elif len(ff6_sig) == 0:
+        verdict_head = f"Verdict: {len(raw_sig)} of {n_tests} sorts pay before the factor models and none after."
+    elif len(ff6_sig) <= by_chance:
+        verdict_head = (f"Verdict: nothing pays beyond chance. {len(ff6_sig)} of {n_tests} sorts clear t 2 after the five factors "
+                        f"and momentum, which is what {n_tests} tests produce from noise.")
+    else:
+        verdict_head = f"Verdict: {len(ff6_sig)} of {n_tests} sorts keep an alpha after the five factors and momentum."
+    verdict_body = ("Across the composite and nine factors at three rebalancing frequencies, "
+                    + (f"no top-minus-bottom spread has a raw t-statistic above {max_raw_t:.1f}. " if len(raw_sig) == 0
+                       else f"{len(raw_sig)} of {n_tests} raw spreads clear t 2 ({listing(raw_sig, 'raw_t')}). ")
+                    + f"After the five-factor model the profitability sorts are largely their factor loadings: {rmw.min():.2f} to {rmw.max():.2f} on profitability (RMW), "
+                    + f"{hml.min():.2f} to {hml.max():.2f} on value (HML), and {umd_q.min():.2f} to {umd_q.max():.2f} on momentum for the quarterly signals. "
+                    + (f"{len(ff5_sig)} of {n_tests} tests clear t 2 on FF5"
+                       + (f" ({listing(ff5_sig, 'FF5 t_alpha')})" if len(ff5_sig) else "")
+                       + f" and {len(ff6_sig)} on FF5 plus momentum"
+                       + (f" ({listing(ff6_sig, 'FF5+UMD t_alpha')})" if len(ff6_sig) else "") + ". "
+                       if len(ff5_sig) or len(ff6_sig) else f"No test clears t 2 on either model; the strongest is {esc(names[top.factor])} at {top.freq} rebalancing, FF5 alpha t {float(top['FF5 t_alpha']):.2f}. ")
+                    + f"With {n_tests} tests, one or two |t| above 2 are what chance delivers at the 5% level.")
+    universe_note = {
+        "SP500": "<li><b>Large caps, equal-weighted.</b> The published profitability premium is smallest among the largest stocks; an equal-weight sort within the S&amp;P 500 is one of the harder tests to pass.</li>",
+        "SP400": "<li><b>Mid caps.</b> The published premia are larger here than in the S&amp;P 500, and so is the share of members that have since been acquired or delisted, which is where the survivorship bias bites.</li>",
+        "SP600": "<li><b>Small caps.</b> Where the published premia are largest, and where survivorship bias is largest too: small companies fail and get bought far more often, and every one that did is missing from these returns. Treat the bottom-bucket returns here with the most suspicion.</li>",
+        "SP1500": "<li><b>All three indexes re-ranked together.</b> The percentiles are over the whole 1,500, so a sort now spans sizes; without a size control, part of any spread is a bet on small versus large.</li>",
+    }.get(index, "")
+    cov = d["coverage"]
+    later = [int(r[3]) for r in cov[3:]] or [int(cov[-1][3])]
 
     return f"""<!doctype html>
 <html lang="en">
@@ -374,7 +416,7 @@ def build_html(index: str, frm: dt.date, d: dict, ff: pd.DataFrame, today: dt.da
 <p class="sub">Point-in-time fundamentals from SEC DERA, month-end prices, equal-weight quintile sorts rebalanced monthly, quarterly and annually, measured raw and against the Fama-French five factors and momentum. Generated {today.isoformat()} from the database by <code>tools/factor_report.py</code>.</p>
 
 <div class="verdict">
-<p><b>Verdict: nothing pays.</b> Across the composite and nine factors at three rebalancing frequencies, no top-minus-bottom spread has a raw t-statistic above 1.6. After the five-factor model the spreads are their factor loadings: 0.3 to 0.56 on profitability (RMW), −0.2 to −0.7 on value (HML), and 0.25 to 0.30 on momentum for the quarterly signals. One test in thirty, {esc(names[top.factor])} at {top.freq} rebalancing, reaches an FF5 alpha t of {float(top['FF5 t_alpha']):.2f}; one hit in thirty is what chance delivers, and that sort loads 0.4 on the investment factor (CMA).</p>
+<p><b>{verdict_head}</b> {verdict_body}</p>
 <p>The machinery checks out: the equal-weight benchmark of all members earns {pct(bench['monthly']['raw_ann']) if bench['monthly'] is not None else ''} a year with an FF5 alpha of {pct(bench['monthly']['FF5 alpha_ann']) if bench['monthly'] is not None else ''}, market beta {num(bench['monthly']['FF5+UMD b_Mkt-RF']) if bench['monthly'] is not None else ''} and R² {num(bench['monthly']['FF5 r2']) if bench['monthly'] is not None else ''}. The Yahoo returns and the French series line up.</p>
 </div>
 
@@ -416,9 +458,9 @@ def build_html(index: str, frm: dt.date, d: dict, ff: pd.DataFrame, today: dt.da
 <h2>4. Why the spreads are biased down, not up</h2>
 <ul>
 <li><b>Survivors only.</b> Yahoo returns nothing for a delisted ticker, so {no_listing} of the {d['members_ever']:,} companies ever in the S&amp;P 1500 have no prices. Failures and takeovers leave the index from the bottom quintile more than the top; their missing returns flatter Q1 and shrink the measured spread. The share of panel members with a price the following month rises from {priced.get(min(priced))}% in {min(priced)} to {max(v for k, v in priced.items() if k < today.year)}% by {today.year - 1}.</li>
-<li><b>Large caps, equal-weighted.</b> The published profitability premium is smallest among the largest stocks; an equal-weight sort within the S&amp;P 500 is one of the harder tests to pass.</li>
-<li><b>Thin first year.</b> The composite covers {int(d['coverage'][0][3])} of {int(d['coverage'][0][2])} members in {d['coverage'][0][0]} (the surprise factor needs eight quarters of history and DERA begins in 2009) and 480 or more from 2013.</li>
-<li><b>Thirty tests.</b> Ten sorts on three schedules; at the 5% level one or two |t| &gt; 2 are expected from noise alone.</li>
+{universe_note}
+<li><b>The first year is thinner.</b> The composite covers {int(cov[0][3])} of {int(cov[0][2])} members in {cov[0][0]} (the surprise factor needs eight quarters of history and DERA begins in 2009) and {min(later)} or more a date from {cov[min(3, len(cov) - 1)][0]}.</li>
+<li><b>{n_tests} tests.</b> Ten sorts on three schedules; at the 5% level one or two |t| &gt; 2 are expected from noise alone.</li>
 </ul>
 
 <h2>5. Coverage</h2>
@@ -475,7 +517,7 @@ def main() -> int:
     args = ap.parse_args()
     today = dt.date.today()
     ff_csv = Path(args.ff_csv) if args.ff_csv else config.PROJECT_ROOT / "data" / "external" / "french" / f"ff_baseline_{args.index}.csv"
-    out = Path(args.out) if args.out else config.PROJECT_ROOT / "docs" / "reports" / f"factor_backtest_{today.isoformat()}.html"
+    out = Path(args.out) if args.out else config.PROJECT_ROOT / "docs" / "reports" / f"factor_backtest_{args.index}_{today.isoformat()}.html"
     ff = pd.read_csv(ff_csv)
     frm = dt.date.fromisoformat(args.frm)
     with db.get_conn() as conn:

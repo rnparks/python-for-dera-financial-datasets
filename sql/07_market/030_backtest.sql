@@ -91,12 +91,22 @@ BEGIN
             FROM dates d
         ),
         -- Each member's bucket on each rebalance date.
-        sorted AS (
-            SELECT w.rebalance_date, w.next_rebalance, fp.cik,
-                   NTILE($6) OVER (PARTITION BY fp.asof ORDER BY fp.%I, fp.cik) AS bucket
+        -- Every member on each rebalance date, with the ticker the spine
+        -- assigns it that day, resolved ONCE per member and date here:
+        -- inside a join condition the planner evaluated ticker_at per
+        -- candidate pair, and the S&P 1500 panel (1,468 names a date)
+        -- ran a single backtest past thirteen minutes (2026-10-13).
+        members AS MATERIALIZED (
+            SELECT w.rebalance_date, w.next_rebalance, fp.cik, fp.%I AS signal,
+                   sec_reference.ticker_at(fp.cik, w.rebalance_date) AS ticker_then
             FROM windows w
             JOIN sec_market.factor_panel fp ON fp.index_name = $1 AND fp.asof = w.rebalance_date
-            WHERE fp.%I IS NOT NULL
+        ),
+        sorted AS (
+            SELECT m.rebalance_date, m.next_rebalance, m.cik, m.ticker_then,
+                   NTILE($6) OVER (PARTITION BY m.rebalance_date ORDER BY m.signal, m.cik) AS bucket
+            FROM members m
+            WHERE m.signal IS NOT NULL
         ),
         -- The holding months: every month end after the rebalance date
         -- up to and including the next rebalance date (or the last
@@ -108,20 +118,19 @@ BEGIN
               ON r.cik = s.cik
              AND r.month_end > s.rebalance_date
              AND r.month_end <= COALESCE(s.next_rebalance, s.rebalance_date + 400)
-             AND r.ticker = COALESCE(sec_reference.ticker_at(s.cik, s.rebalance_date), r.ticker)
+             AND r.ticker = COALESCE(s.ticker_then, r.ticker)
         ),
         -- Everyone in the panel that month, for the benchmark.
         bench AS (
-            SELECT w.rebalance_date, r.month_end, AVG(r.ret_1m) AS benchmark_ret
-            FROM windows w
-            JOIN sec_market.factor_panel fp ON fp.index_name = $1 AND fp.asof = w.rebalance_date
+            SELECT m.rebalance_date, r.month_end, AVG(r.ret_1m) AS benchmark_ret
+            FROM members m
             JOIN sec_market.monthly_return r
-              ON r.cik = fp.cik
-             AND r.month_end > w.rebalance_date
-             AND r.month_end <= COALESCE(w.next_rebalance, w.rebalance_date + 400)
-             AND r.ticker = COALESCE(sec_reference.ticker_at(fp.cik, w.rebalance_date), r.ticker)
+              ON r.cik = m.cik
+             AND r.month_end > m.rebalance_date
+             AND r.month_end <= COALESCE(m.next_rebalance, m.rebalance_date + 400)
+             AND r.ticker = COALESCE(m.ticker_then, r.ticker)
             WHERE r.ret_1m IS NOT NULL
-            GROUP BY w.rebalance_date, r.month_end
+            GROUP BY m.rebalance_date, r.month_end
         ),
         per_bucket AS (
             SELECT h.rebalance_date, h.month_end, h.bucket,
@@ -143,7 +152,7 @@ BEGIN
         LEFT JOIN bench b ON b.rebalance_date = pb.rebalance_date AND b.month_end = pb.month_end
         LEFT JOIN spread sp ON sp.rebalance_date = pb.rebalance_date AND sp.month_end = pb.month_end
         ORDER BY pb.month_end, pb.bucket
-    $q$, v_col, v_col)
+    $q$, v_col)
     USING p_index, p_factor, p_freq, p_from, p_to, p_buckets;
 END;
 $$;

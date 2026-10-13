@@ -1338,9 +1338,12 @@ FROM (
                                  AND m.concept LIKE '%debt%')) AS zeros_without_face,
            (SELECT COUNT(*) FROM sec_gold.peer_stats p JOIN sec_reference.company c ON c.cik = p.cik
              WHERE p.concept = 'total_debt' AND p.value = 0 AND p.peer_level = 'sector'
-               AND c.sic_latest BETWEEN 6000 AND 6299
+               -- the filing's own SIC, as 037 judges it: MicroStrategy's FY2018 and
+               -- FY2019 10-Ks carry 7372 and a debt-free face; its sic_latest is
+               -- 6199 since 2025 (2026-10-13)
                AND EXISTS (SELECT 1 FROM sec_gold.debt_face df
-                           WHERE df.cik = p.cik AND df.period_date = p.value_date AND df.zero_by_face)) AS bank_zeros,
+                           WHERE df.cik = p.cik AND df.period_date = p.value_date AND df.zero_by_face
+                             AND df.sic BETWEEN 6000 AND 6299)) AS bank_zeros,
            (SELECT COUNT(DISTINCT p.cik) FROM sec_gold.peer_stats p
              WHERE p.concept = 'total_debt' AND p.value = 0 AND p.peer_level = 'sector' AND p.fiscal_year = 2024) AS zero_members_2024,
            (SELECT ROUND(value/1e6) FROM sec_gold.peer_stats WHERE cik = 1289460 AND fiscal_year = 2024 AND concept = 'total_debt' AND peer_level = 'sector') AS txrh,
@@ -1718,4 +1721,31 @@ FROM (
                (coalesce(gp_at_pct, 0) + coalesce(ocf_at_pct, 0) + coalesce(roa_pct, 0) + coalesce(roe_pct, 0)
                 + coalesce(operating_margin_pct, 0) + coalesce(revenue_growth_pct, 0) + coalesce(roe_q_pct, 0)
                 + coalesce(roa_q_pct, 0) + coalesce(sue_pct, 0)) / n_factors, 4)) > 0.0001) AS composite_mismatch
+) t;
+
+\echo ''
+\echo '=== 73. Every sector label in the timeline is a GICS sector, and the unclassified intervals are counted ==='
+-- The index pages spell the sectors several ways and left the column
+-- blank for the S&P 400 (2013-10 to 2019-08) and the S&P 600 (before
+-- 2021-03-31); sec_reference.gics_sector_canonical maps each label to a
+-- GICS sector or nothing, and 05_spine/020 fills a blank from the
+-- sub-industry's nearest-dated sector, then the company's own. The
+-- labels are pinned to the eleven sectors plus the pre-2018
+-- Telecommunication Services; the intervals no rule reaches are pinned
+-- at their count (138 on 2026-10-13, from 1,805) so a regression in
+-- either direction is seen; the S&P 400 of 2017-06-30 (400 of 400) and
+-- the S&P 600 of 2019-06-28 (553 of 597) are the dates that had none.
+SELECT CASE WHEN foreign_labels = 0 AND unclassified BETWEEN 100 AND 138
+             AND sp400_2017_with_sector >= 390 AND sp600_2019_with_sector >= 540
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       foreign_labels, unclassified, sp400_2017_with_sector, sp600_2019_with_sector
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_reference.index_membership_timeline
+             WHERE gics_sector IS NOT NULL AND gics_sector NOT IN
+                   ('Communication Services', 'Consumer Discretionary', 'Consumer Staples', 'Energy', 'Financials',
+                    'Health Care', 'Industrials', 'Information Technology', 'Materials', 'Real Estate', 'Utilities',
+                    'Telecommunication Services')) AS foreign_labels,
+           (SELECT COUNT(*) FROM sec_reference.index_membership_timeline WHERE gics_sector IS NULL) AS unclassified,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP400', DATE '2017-06-30') WHERE gics_sector IS NOT NULL) AS sp400_2017_with_sector,
+           (SELECT COUNT(*) FROM sec_reference.index_members('SP600', DATE '2019-06-28') WHERE gics_sector IS NOT NULL) AS sp600_2019_with_sector
 ) t;

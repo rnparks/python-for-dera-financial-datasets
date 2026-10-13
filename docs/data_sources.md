@@ -177,6 +177,43 @@ undersized; the same 85%-of-window rule as the crosswalk stands guard anyway).
 Because the page carried GICS sector on every revision and sub-industry from
 2016, the classification is **as of** for the first time.
 
+**The sector, where a page had none (2026-10-13).** The S&P 400 page from
+2013-10 to 2019-08 and the S&P 600 page before 2021-03-31 carry a sub-industry
+and no sector column (9,091 and 5,968 sightings), and the sector level is what
+the as-of cross-sections rank in: the S&P 400 had no annual factor at all in
+2017 and the S&P 600 none before 2021. The spine now fills a sighting's sector
+by rule, in `sql/05_spine/020_index_membership.sql`: first the sector its
+sub-industry carries in the nearest-dated sighting of any index that has one
+(nearest in time, because the 2018 reclassification moved Advertising,
+Broadcasting and Cable & Satellite to Communication Services; among equally
+near, the sector that sub-industry carries most often, so one page's error
+does not win), failing that the sector the company itself carries in its
+nearest-dated sighting, failing that nothing. 63 S&P 400 and 484 S&P 600
+sightings stay unclassified. The pages also spell the sectors several ways
+("Healthcare", "Utilites", "FInancials", "Information Technologies",
+"Communications Services") and sometimes put an industry group in the column
+("Capital Goods", "Consumer Services"); `sec_reference.gics_sector_canonical`
+maps every label to one of the GICS sectors (the eleven, plus the pre-2018
+Telecommunication Services) or to nothing, so a spelling is no longer its own
+peer group. Check 73 pins the labels and the count of unclassified intervals.
+
+**The fill is a label, not a boundary.** Intervals are still segmented by the
+label the page gave (spelling and blanks included); the filled sector is what
+the interval says. Merging the segments a missing sector had split was tried
+first and moved the CIK-succession cuts (section 3c) across seats a registrant
+absorbed, re-keying 192 member-months of seven S&P 400 seats, so it was
+withdrawn. What that exposed is a defect of the cuts themselves, open as of
+2026-10-13: a registrant that absorbed another index member and kept the seat
+(BancorpSouth's charter 1299939 took Cadence Bancorporation 1614184 and its
+ticker CADE in 2021-11) collapses both seats into one from the capture both
+appear under, so BancorpSouth is absent from the S&P 400 between 2018-10-19 and
+2021-11-02; the SEC file's succession row for BKR (Michael Baker 9263 to Baker
+Hughes 1701605, 2019-12-03) is a recycled ticker, not a succession, and gives
+Michael Baker the S&P 500 seat from 2017-07-07; Ashland LLC 1305014 reappears for
+2018-10-19 to 2019-10-02 between two Ashland Inc 1674862 intervals. The fix is a
+seat keyed by ticker, not by registrant, before the cut; it is not in this
+commit.
+
 **CIK resolution, per run.** A ticker present in consecutive captures is one
 company for that whole run, and the run gets one CIK from five sources, in
 order, recorded in `cik_source`. The **page**'s CIK column — where it exists
