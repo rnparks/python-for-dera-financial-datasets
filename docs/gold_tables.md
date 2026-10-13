@@ -250,7 +250,7 @@ Two earlier rules were wrong in opposite directions: "exactly one ticker current
 
 ### `canonical_concepts`
 
-The research taxonomy: **26 concepts** that mean the same thing across companies regardless of which XBRL tag each company files. Three of them (`cost_of_revenue`, `debt_current`, `debt_noncurrent`) exist mainly as operands for `concept_formula`. `fact_type` drives the `qtrs` branching in `latest_annual()` (`flow` → `qtrs = 4`, `balance` → `qtrs = 0`). Derived concepts are computed in the database through `concept_formula`; see [How a derived concept is resolved](#how-a-derived-concept-is-resolved).
+The research taxonomy: **28 concepts** that mean the same thing across companies regardless of which XBRL tag each company files. Three of them (`cost_of_revenue`, `debt_current`, `debt_noncurrent`) exist mainly as operands for `concept_formula`. `fact_type` drives the `qtrs` branching in `latest_annual()` (`flow` → `qtrs = 4`, `balance` → `qtrs = 0`). Derived concepts are computed in the database through `concept_formula`; see [How a derived concept is resolved](#how-a-derived-concept-is-resolved).
 
 | Concept | Display name | Fact type | UoM | Description |
 |---|---|---|---|---|
@@ -273,6 +273,8 @@ The research taxonomy: **26 concepts** that mean the same thing across companies
 | `debt_secured`, `debt_unsecured`, `debt_senior_notes`, `debt_line_of_credit`, `debt_notes_payable`, `debt_loans_payable`, `debt_convertible`, `debt_other_long_term`, `debt_subordinated`, `debt_junior_subordinated`, `debt_fhlb_advances`, `debt_other_borrowings`, `debt_short_term_borrowings`, `debt_warehouse`, `debt_surplus_notes`, and the `_current` split forms of secured, line of credit, loans payable and FHLB advances | Instrument lines | balance | USD | The balance-sheet lines a bank, REIT or insurer files instead of a split; operands of `total_debt`'s second variant. **Not scored**: absent from `peer_stats` and the snapshots (`canonical_concepts.scored`) |
 | `gross_margin`, `operating_margin`, `net_margin`, `fcf_margin` | … | ratio | ratio | Gross profit, operating income, net income, free cash flow over revenue, same period |
 | `roe`, `roa` | Return on Equity / Assets | ratio | ratio | Net income over fiscal year-end equity / assets; NULL when equity is not positive |
+| `gross_profit_to_assets` | Gross Profit to Assets | ratio | ratio | `gross_profit` over fiscal year-end `total_assets` (Novy-Marx 2013 gross profitability; JKP `gp_at`); no row where no gross profit resolves, so none for banks, REITs and insurers |
+| `ocf_to_assets` | Operating Cash Flow to Assets | ratio | ratio | `operating_cash_flow` over fiscal year-end `total_assets` (Bouchaud, Krueger, Landier and Thesmar 2019; JKP `ocf_at`); banks included, they file cash flows |
 | `debt_to_equity` | Debt to Equity | ratio | ratio | `total_debt` over `total_equity`; NULL when equity is not positive |
 | `revenue_growth`, `net_income_growth`, `eps_growth`, `operating_cash_flow_growth` | … | growth | ratio | Change over the company's own prior fiscal year; NULL from a non-positive base |
 
@@ -515,6 +517,77 @@ SELECT * FROM sec_gold.as_of_trailing('AAPL', DATE '2024-08-15');
 SELECT * FROM sec_gold.trailing(320193);
 ```
 
+### `as_of_surprise()` and `surprise_asof()`
+
+```sql
+sec_gold.as_of_surprise(p_cik INTEGER, p_asof DATE, p_concept TEXT DEFAULT 'net_income',
+                        p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (concept TEXT, quarter_end DATE, fiscal_quarter INTEGER, tradable_from DATE,
+                 q_value NUMERIC, q_source TEXT, q_yoy_end DATE, q_yoy_value NUMERIC,
+                 yoy_change NUMERIC, prior_changes INTEGER, sigma NUMERIC, sue NUMERIC)
+sec_gold.surprise_asof(p_index TEXT, p_asof DATE, p_concept TEXT DEFAULT 'net_income',
+                       p_max_age_days INTEGER DEFAULT 200, p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (cik INTEGER, ticker TEXT, index_name TEXT, gics_sector TEXT, concept TEXT,
+                 quarter_end DATE, fiscal_quarter INTEGER, tradable_from DATE, days_stale INTEGER,
+                 q_value NUMERIC, q_yoy_value NUMERIC, yoy_change NUMERIC, prior_changes INTEGER,
+                 sigma NUMERIC, sue NUMERIC, sue_rank BIGINT, sue_percentile NUMERIC)
+```
+
+**Standardized unexpected earnings** in the Foster, Olsen and Shevlin (1984) form: the change in a quarter's earnings against the same quarter a year earlier, divided by the sample standard deviation of the eight prior such changes. `sue = (q_value − q_yoy_value) / sigma`, where `sigma` is `STDDEV_SAMP` over the changes of the eight quarters before this one. The eight-quarter window is the one JKP's `niq_su` uses; JKP also subtract the mean of those eight changes (the Jegadeesh and Livnat 2006 drift), which this does not. Every input comes from [`as_of_quarterly()`](#as_of_quarterly) at the vintage knowable on `p_asof`, so `q_yoy_value` is the comparative as the market knew it then and the newest quarter is the one whose filing had landed. `p_concept` is any flow concept; the default is net income, as in JKP (Foster, Olsen and Shevlin used earnings per share, which is `'eps_diluted'` here).
+
+**Nothing over something plausible.** The eight prior changes must all be there and come from eight consecutive quarters (the eighth-previous quarter-end 700–760 days back, which tolerates 52/53-week years and DERA's month-end rounding); otherwise `sue` and `sigma` are NULL and `prior_changes` says how many changes were knowable. A `sigma` of zero is NULL too. Apple on 2024-07-15: the quarter to 2024-03-31 earned 23.636B against 24.160B a year earlier, the eight prior changes have a standard deviation of 2.671B, so `sue` is −0.20; the quarter to 2023-12-31 is +1.25 (33.916B against 29.998B over 3.127B). Its first eight quarters in the data carry NULL (check 66).
+
+**The index form** takes every constituent of `p_index` on `p_asof` (membership and ticker as of the date, as `peer_stats_asof()`), keeps each member's newest quarter knowable then if it ended within `p_max_age_days` (default 200: a quarter, the 10-K deadline and room for a late filer), and ranks: `sue_rank` 1 is the largest surprise, `sue_percentile` runs from 0 at the smallest to 1 at the largest over the members that have one. A member without a SUE keeps its row with `sue` NULL so the reason is visible, and is neither ranked nor in the percentile base. S&P 500 on 2024-07-15, as knowable that day (2026-10-12): 501 constituents, 491 with a quarter within 200 days, 472 with a SUE; 17 had fewer than eight prior changes knowable, 2 had eight that did not come from consecutive quarters, none had a zero sigma. About 10 s warm for the S&P 500, the cost of one `as_of_quarterly()` call per member; **nothing is stored**.
+
+```sql
+-- One company, every quarter
+SELECT quarter_end, q_value, q_yoy_value, prior_changes, sigma, sue
+FROM sec_gold.as_of_surprise(320193, DATE '2024-07-15')
+WHERE quarter_end >= DATE '2022-01-01';
+
+-- An index sorted by surprise, as it was knowable on the date
+SELECT ticker, quarter_end, days_stale, sue, sue_rank, sue_percentile
+FROM sec_gold.surprise_asof('SP500', DATE '2024-07-15')
+WHERE sue IS NOT NULL
+ORDER BY sue_rank;
+```
+
+### `as_of_profitability()` and `profitability_asof()`
+
+```sql
+sec_gold.as_of_profitability(p_cik INTEGER, p_asof DATE, p_since DATE DEFAULT NULL,
+                             p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (quarter_end DATE, fiscal_quarter INTEGER, tradable_from DATE,
+                 net_income NUMERIC, net_income_source TEXT, balance_end DATE,
+                 total_equity NUMERIC, total_assets NUMERIC, roe_q NUMERIC, roa_q NUMERIC)
+sec_gold.profitability_asof(p_index TEXT, p_asof DATE, p_max_age_days INTEGER DEFAULT 200,
+                            p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (cik INTEGER, ticker TEXT, index_name TEXT, gics_sector TEXT,
+                 quarter_end DATE, fiscal_quarter INTEGER, tradable_from DATE, days_stale INTEGER,
+                 net_income NUMERIC, balance_end DATE, total_equity NUMERIC, total_assets NUMERIC,
+                 roe_q NUMERIC, roa_q NUMERIC, roe_rank BIGINT, roe_percentile NUMERIC,
+                 roa_rank BIGINT, roa_percentile NUMERIC)
+```
+
+**Quarterly return on equity and on assets**, JKP's `niq_be` and `niq_at` (Hou, Xue and Zhang 2015; Balakrishnan, Bartov and Faurel 2010): the quarter's net income over the book equity, and over the total assets, at the **end of the prior quarter**. JKP scale by the balance three months before the quarter end, the capital the quarter was earned on before its own earnings and buybacks moved it; the annual `roe` and `roa` in `concept_ratio` use the fiscal year-end balance instead. The prior quarter end is the month end three months back (DERA rounds every period end to a month end, so a 52/53-week quarter ending 2024-02-03 is dated 2024-01-31 and its balance 2023-10-31); for a first fiscal quarter that is the fiscal year-end balance from the 10-K. The quarter comes from [`as_of_quarterly()`](#as_of_quarterly), the balances from `as_of_canonical_at()`, all bounded by the one knowledge date; `tradable_from` is the later of the income's and the balances' availability. `p_since` keeps only quarters ending on or after it.
+
+**Nothing over something plausible.** A balance that did not resolve at that date, or is not positive, gives NULL, never the quarter's own balance and never an older one. Apple on 2024-07-15: the quarter to 2024-03-31 earned 23.636B on equity of 74.100B at 2023-12-31, `roe_q` 0.3190, and on assets of 353.514B, `roa_q` 0.0669; its first fiscal quarter (to 2023-12-31) stands on the FY2023 10-K balance of 62.146B, `roe_q` 0.5457. 60 of its 64 quarters carry a value, the first four having no prior balance in the data (check 67).
+
+**The index form** takes every constituent of `p_index` on `p_asof` (as `surprise_asof()`), keeps each member's newest quarter knowable then if it ended within `p_max_age_days` (default 200), and ranks each measure over the members that have it: `roe_rank` 1 is the highest, `roe_percentile` runs from 0 at the lowest to 1 at the highest; the same for `roa_rank` and `roa_percentile`. A member without a positive balance keeps its row with the measure NULL, neither ranked nor in the base. S&P 500 on 2024-07-15, as knowable that day (2026-10-12): 501 constituents, 491 with a quarter within 200 days, 454 with an ROE (37 had no positive equity knowable, the buyback-depleted balance sheets), 488 with an ROA. Quarterly ROE rewards a small positive equity, so GoDaddy (6.46) and Home Depot (3.45) top that sort while the ROA sort is led by operating businesses; a screen that wants the cleaner measure takes `roa_rank`. About 40 s warm for the S&P 500; **nothing is stored**.
+
+```sql
+-- One company, every quarter
+SELECT quarter_end, net_income, balance_end, total_equity, roe_q, roa_q
+FROM sec_gold.as_of_profitability(320193, DATE '2024-07-15')
+WHERE quarter_end >= DATE '2022-01-01';
+
+-- An index sorted by quarterly return on assets, as it was knowable on the date
+SELECT ticker, quarter_end, days_stale, roa_q, roa_rank, roa_percentile
+FROM sec_gold.profitability_asof('SP500', DATE '2024-07-15')
+WHERE roa_q IS NOT NULL
+ORDER BY roa_rank;
+```
+
 ### `peer_stats_asof()`
 
 ```sql
@@ -645,10 +718,12 @@ The guard exempts the premium and discount elements themselves but not a line na
 |---|---|
 | `gross_margin`, `operating_margin`, `net_margin`, `fcf_margin` | numerator / `revenue` |
 | `roe`, `roa` | `net_income` / fiscal year-end `total_equity`, `total_assets` (year-end, not an average) |
+| `gross_profit_to_assets` | `gross_profit` / fiscal year-end `total_assets`: Novy-Marx (2013) gross profitability, JKP's `gp_at` (added 2026-10-12). Computed wherever gross profit resolves; Novy-Marx drops SIC 6xxx, and the health insurers (SIC 6324) top the S&P 500 sort, so a screen that wants his universe filters by SIC |
+| `ocf_to_assets` | `operating_cash_flow` / fiscal year-end `total_assets`: the cash-flow counterpart of `roa`, JKP's `ocf_at` (Bouchaud, Krueger, Landier and Thesmar 2019; added 2026-10-12). Banks have one (they file cash flows), so JPMorgan ranks here where it has no `gross_profit_to_assets` |
 | `debt_to_equity` | `total_debt` / `total_equity` (`total_debt` requires its noncurrent component, so this is never current debt alone) |
 | `*_growth` | (this year − prior year) / prior year |
 
-**A non-positive denominator or base is NULL, not a number.** A return on negative equity or growth from a loss is not something to rank on, so Boeing's FY2024 `roe` and `net_income_growth` are absent (check 55). In `peer_stats` growth also requires the prior fiscal year to be exactly one year back (300–430 days between period ends), so a fiscal-year change or a gap in filings does not read as growth. In `latest_annual()` and `as_of_latest_annual()` the ratio is taken at the numerator's newest period and the denominator resolved at that same period; growth looks one year back from it (DERA rounds period ends to month end, so this lands on the prior fiscal year-end). The as-of form bounds every operand by the one knowledge date and reports `tradable_from` as the later of the two. `company_snapshot()` and `as_of_snapshot()` therefore carry all 26 concepts. Coverage, FY2024 (2026-09-11): `net_margin` 1,447 companies, `roe` 1,399, `revenue_growth` 1,406, `gross_margin` 865 (the gross-profit ceiling below), `debt_to_equity` 1,292 (1,078 before the instrument sum, 1,174 before the zero from the face).
+**A non-positive denominator or base is NULL, not a number.** A return on negative equity or growth from a loss is not something to rank on, so Boeing's FY2024 `roe` and `net_income_growth` are absent (check 55). In `peer_stats` growth also requires the prior fiscal year to be exactly one year back (300–430 days between period ends), so a fiscal-year change or a gap in filings does not read as growth. In `latest_annual()` and `as_of_latest_annual()` the ratio is taken at the numerator's newest period and the denominator resolved at that same period; growth looks one year back from it (DERA rounds period ends to month end, so this lands on the prior fiscal year-end). The as-of form bounds every operand by the one knowledge date and reports `tradable_from` as the later of the two. `company_snapshot()` and `as_of_snapshot()` therefore carry all 28 concepts. `gross_profit_to_assets` on 2024-11-15, as knowable: 297 S&P 500 constituents (Apple FY2024 180.683 / 364.980 = 0.4950, actionable 2024-11-01; measured 2026-10-12); `ocf_to_assets` the same day: 497 (Apple 118.254 / 364.980 = 0.3240). Coverage, FY2024 (2026-09-11): `net_margin` 1,447 companies, `roe` 1,399, `revenue_growth` 1,406, `gross_margin` 865 (the gross-profit ceiling below), `debt_to_equity` 1,292 (1,078 before the instrument sum, 1,174 before the zero from the face).
 
 ### Coverage ceilings are sometimes structural
 
@@ -703,6 +778,8 @@ Every mapping row carries `source` and `source_note`. Filing-sourced and vendor-
 | `060_canonical_function.sql` | `resolve_direct()`, `get_canonical()`, `get_canonical_by_ticker()` |
 | `065_asof_functions.sql` | the `as_of_*` functions, including both `as_of_snapshot` overloads and `as_of_canonical_at()` |
 | `067_trailing.sql` | `as_of_quarterly()`, `as_of_trailing()` (CIK and ticker forms), `quarterly()`, `trailing()`: quarterly flows and trailing twelve months, computed on demand |
+| `068_surprise.sql` | `as_of_surprise()`, `surprise_asof()`: standardized unexpected earnings, computed on demand |
+| `069_profitability.sql` | `as_of_profitability()`, `profitability_asof()`: quarterly return on equity and on assets over the prior quarter's balance, computed on demand |
 | `070_fiscal_year_views.sql` | `latest_annual()`, `latest_annual_by_ticker()`, `company_snapshot()` |
 | `080_peer_stats.sql` | `peer_stats` (resolves derived, ratio and growth concepts too) |
 | `085_peer_stats_asof.sql` | `peer_stats_asof()` |

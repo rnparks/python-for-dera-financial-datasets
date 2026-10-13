@@ -164,6 +164,26 @@ SELECT * FROM sec_gold.as_of_snapshot(1326801, DATE '2015-06-30');
 SELECT concept, quarter_end, q_value, qoq_growth, yoy_growth, ttm_value, ttm_growth
 FROM sec_gold.as_of_trailing('AAPL', DATE '2024-08-15');
 
+-- An accounting factor sort as it was knowable on a date: gross profit over
+-- total assets (Novy-Marx 2013), S&P 500 constituents of 2024-11-15
+SELECT ticker, value_date, days_stale, value AS gross_profit_to_assets
+FROM sec_gold.peer_stats_asof('SP500', DATE '2024-11-15')
+WHERE concept = 'gross_profit_to_assets' AND peer_level = 'sector'
+ORDER BY value DESC LIMIT 10;
+
+-- Standardized unexpected earnings (Foster, Olsen and Shevlin 1984): the
+-- newest quarter of every constituent, ranked; computed on demand
+SELECT ticker, quarter_end, sue, sue_rank, sue_percentile
+FROM sec_gold.surprise_asof('SP500', DATE '2024-07-15')
+WHERE sue IS NOT NULL ORDER BY sue_rank LIMIT 10;
+
+-- Quarterly return on assets and on equity (JKP niq_at, niq_be): the newest
+-- quarter of every constituent over the balance at the end of the prior
+-- quarter, ranked; computed on demand
+SELECT ticker, quarter_end, roa_q, roa_rank, roe_q, roe_rank
+FROM sec_gold.profitability_asof('SP500', DATE '2024-07-15')
+WHERE roa_q IS NOT NULL ORDER BY roa_rank LIMIT 10;
+
 -- Who was actually investable then, delisted companies included
 SELECT * FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30');
 

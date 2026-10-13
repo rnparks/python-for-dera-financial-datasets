@@ -190,11 +190,11 @@ full reference including every function signature.
 | `debt_face` | matview | 401.1K | 136 MB | Every 10-K and 10-Q balance sheet read for borrowing lines by the labels the filer printed; `zero_by_face` (82,342 filings) is the only source of a `total_debt` of zero and `reason` says why every other face is not one |
 | `peer_stats` | matview | 655.0K | 168 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the day for all three indexes; scored concepts only |
 | `share_class_shares` | matview | 777.5K | 218 MB | Per-class share counts for 9,654 companies, delisted included — the market-cap denominator |
-| `canonical_concepts` | table | 45 | — | Research taxonomy: 26 scored concepts (revenue, total_debt, net_margin, revenue_growth, …) and 19 unscored instrument lines that only serve as operands |
+| `canonical_concepts` | table | 49 | — | Research taxonomy: 28 scored concepts (revenue, total_debt, net_margin, gross_profit_to_assets, ocf_to_assets, revenue_growth, …) and 21 unscored operands (19 instrument lines, the two cost components) |
 | `concept_tag_map` | table | 112 | — | Priority-ordered XBRL tag resolution; dollar facts only |
 | `concept_formula_variant` | table | 4 | — | The variants of a derived concept, in order, with an industry scope and a custom-line guard |
 | `concept_formula` | table | 25 | — | Derived concepts as linear combinations, per variant |
-| `concept_ratio` | table | 11 | — | Margins, returns, leverage and year-over-year growth as ratios of concepts |
+| `concept_ratio` | table | 13 | — | Margins, returns, gross profit and operating cash flow to assets, leverage and year-over-year growth as ratios of concepts |
 | `metric_aliases` | table | 4 | — | Legacy display-name remap |
 
 Plus roughly twenty functions — `get_canonical()`, `latest_annual()`,
@@ -204,7 +204,11 @@ knowable on a date, computed on demand), `as_of_quarterly()` and
 `as_of_trailing()` (every fiscal quarter of every flow concept with its
 trailing twelve months and quarter-over-quarter, year-over-year and
 trailing growth, as knowable on a date; `quarterly()` and `trailing()` as of
-today; nothing stored), `shares_outstanding_at()`,
+today; nothing stored), `as_of_surprise()` and `surprise_asof()` (standardized
+unexpected earnings per company and ranked across an index, as knowable on a
+date; nothing stored), `as_of_profitability()` and `profitability_asof()`
+(quarterly return on equity and on assets over the prior quarter's balance,
+per company and ranked across an index; nothing stored), `shares_outstanding_at()`,
 `share_classes_at()`. All documented in `docs/gold_tables.md`.
 
 ---

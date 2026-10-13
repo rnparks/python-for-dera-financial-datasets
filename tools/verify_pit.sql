@@ -1019,7 +1019,7 @@ FROM (
 -- re-keyed membership runs to the registrant that was filing, three
 -- until the seat's "date added" stopped back-dating Paramount Skydance
 -- to 1994 and Exxon Mobil's history was returned to 34088 (2026-09-11).
-SELECT CASE WHEN future_rows = 0 AND companies >= members - 1 AND concepts = 26 AND max_stale <= 550
+SELECT CASE WHEN future_rows = 0 AND companies >= members - 1 AND concepts = 28 AND max_stale <= 550
              AND aapl_oct = DATE '2023-09-30' AND aapl_nov = DATE '2024-09-30'
             THEN 'PASS' ELSE 'FAIL' END AS status,
        rows AS rows_2020_06_30, companies, members AS constituents_that_day, future_rows, concepts, max_stale,
@@ -1261,14 +1261,15 @@ FROM (
 -- it files no undimensioned dollar total, so it resolves to nothing (or,
 -- should one appear, to a figure in the 100-200B range).
 -- The instrument lines resolve as operands and are not scored: none in
--- peer_stats, and a snapshot still lists 26 concepts.
+-- peer_stats, and a snapshot still lists 28 concepts (gross_profit_to_assets
+-- and ocf_to_assets joined them 2026-10-12).
 SELECT CASE WHEN acadia BETWEEN 1500 AND 1600 AND wintrust BETWEEN 4200 AND 4300 AND pinnacle BETWEEN 2250 AND 2350
              AND ffin BETWEEN 100 AND 200
              AND home IS NULL AND omega IS NULL AND cno IS NULL AND caleres IS NULL AND avista IS NULL AND stifel IS NULL
              AND (deere IS NULL OR deere > 40000) AND (brk_2023 IS NULL OR brk_2023 BETWEEN 100000 AND 200000)
              AND moelis BETWEEN 1100 AND 1300 AND one_gas BETWEEN 2000 AND 2200 AND universal BETWEEN 2800 AND 3100
              AND sp400_debt >= 320 AND sp600_debt >= 445 AND sp400_rev >= 396 AND sp600_rev >= 584
-             AND unscored_rows = 0 AND snapshot_rows = 26
+             AND unscored_rows = 0 AND snapshot_rows = 28
             THEN 'PASS' ELSE 'FAIL' END AS status,
        acadia AS acadia_musd, wintrust AS wintrust_musd, pinnacle AS pinnacle_musd, ffin AS first_financial_musd,
        home AS home_bancshares, omega, cno, caleres, avista, stifel, deere AS deere_musd_or_null, brk_2023 AS berkshire_fy2023_musd,
@@ -1427,4 +1428,108 @@ FROM (
            sec_gold.as_of_canonical(1341439, 'gross_profit', DATE '2018-05-31', 4, DATE '2019-06-30') AS oracle_gp_asof,
            (SELECT count(*) FROM sec_gold.peer_stats
              WHERE cik = 1341439 AND concept = 'gross_profit' AND value_date = DATE '2018-05-31') AS oracle_peer_rows
+) t;
+
+\echo ''
+\echo '=== 66. Two accounting factors, no price in sight: gross profit to assets as a ratio concept, SUE on demand ==='
+-- gross_profit_to_assets (Novy-Marx 2013; JKP gp_at) is a concept_ratio
+-- row, so it resolves in the as-of accessors and the knowledge-date
+-- cross-section like any ratio: Apple FY2024 180.683 / 364.980 = 0.4950,
+-- actionable 2024-11-01; a bank files no gross profit line and has no
+-- row. SUE (Foster, Olsen and Shevlin 1984) is as_of_surprise (068) over
+-- as_of_quarterly: Apple's quarter to 2024-03-31 on 2024-07-15 is
+-- (23.636 - 24.160) / 2.671 = -0.20 and the quarter before +1.25; a
+-- quarter without eight consecutive prior changes is NULL, never a
+-- number. The index form ranks the newest quarter of every constituent:
+-- S&P 500 on 2024-07-15, 491 of 501 with a quarter within 200 days, 472
+-- with a SUE (measured 2026-10-12).
+SELECT CASE WHEN aapl_gp_at = 0.4950 AND aapl_gp_at_period = DATE '2024-09-30' AND aapl_gp_at_tf = DATE '2024-11-01'
+             AND jpm_gp_at_rows = 0 AND sp500_gp_at >= 280
+             AND aapl_sue = -0.20 AND aapl_sue_prior = 1.25 AND aapl_prior_changes = 8 AND aapl_sue_without_eight = 0
+             AND sp500_rows >= 450 AND sp500_rows <= sp500_members AND sp500_with_sue >= 450 AND sp500_max_stale <= 200
+             AND percentile_out_of_range = 0 AND aapl_xs_sue = -0.20
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       aapl_gp_at AS apple_gp_to_assets_asof_2024_11_15, aapl_gp_at_period AS apple_period, aapl_gp_at_tf AS apple_tradable_from,
+       jpm_gp_at_rows, sp500_gp_at AS sp500_members_with_gp_to_assets,
+       aapl_sue AS apple_sue_2024_03_31, aapl_sue_prior AS apple_sue_2023_12_31, aapl_prior_changes, aapl_sue_without_eight,
+       sp500_members, sp500_rows AS sp500_with_a_fresh_quarter, sp500_with_sue, sp500_max_stale, percentile_out_of_range, aapl_xs_sue
+FROM (
+    SELECT (SELECT ROUND(value, 4)   FROM sec_gold.as_of_latest_annual(320193, 'gross_profit_to_assets', DATE '2024-11-15') LIMIT 1) AS aapl_gp_at,
+           (SELECT value_date        FROM sec_gold.as_of_latest_annual(320193, 'gross_profit_to_assets', DATE '2024-11-15') LIMIT 1) AS aapl_gp_at_period,
+           (SELECT tradable_from     FROM sec_gold.as_of_latest_annual(320193, 'gross_profit_to_assets', DATE '2024-11-15') LIMIT 1) AS aapl_gp_at_tf,
+           (SELECT COUNT(*)          FROM sec_gold.as_of_latest_annual(19617,  'gross_profit_to_assets', DATE '2024-11-15')) AS jpm_gp_at_rows,
+           (SELECT COUNT(DISTINCT cik) FROM sec_gold.peer_stats_asof('SP500', DATE '2024-11-15') WHERE concept = 'gross_profit_to_assets') AS sp500_gp_at,
+           (SELECT ROUND(sue, 2)     FROM sec_gold.as_of_surprise(320193, DATE '2024-07-15') WHERE quarter_end = DATE '2024-03-31') AS aapl_sue,
+           (SELECT ROUND(sue, 2)     FROM sec_gold.as_of_surprise(320193, DATE '2024-07-15') WHERE quarter_end = DATE '2023-12-31') AS aapl_sue_prior,
+           (SELECT prior_changes     FROM sec_gold.as_of_surprise(320193, DATE '2024-07-15') WHERE quarter_end = DATE '2024-03-31') AS aapl_prior_changes,
+           (SELECT COUNT(*)          FROM sec_gold.as_of_surprise(320193, DATE '2024-07-15') WHERE sue IS NOT NULL AND prior_changes <> 8) AS aapl_sue_without_eight,
+           (SELECT COUNT(*)          FROM sec_reference.index_members('SP500', DATE '2024-07-15')) AS sp500_members,
+           x.*
+    FROM (
+        SELECT COUNT(*) AS sp500_rows, COUNT(sue) AS sp500_with_sue, MAX(days_stale) AS sp500_max_stale,
+               COUNT(*) FILTER (WHERE sue_percentile NOT BETWEEN 0 AND 1 OR (sue IS NOT NULL AND sue_percentile IS NULL)) AS percentile_out_of_range,
+               ROUND(MAX(sue) FILTER (WHERE cik = 320193), 2) AS aapl_xs_sue
+        FROM sec_gold.surprise_asof('SP500', DATE '2024-07-15')
+    ) x
+) t;
+
+\echo ''
+\echo '=== 67. Two more accounting factors: operating cash flow to assets as a ratio concept, quarterly ROE and ROA on demand ==='
+-- ocf_to_assets (JKP ocf_at; Bouchaud, Krueger, Landier and Thesmar 2019)
+-- is a concept_ratio row: Apple FY2024 118.254 / 364.980 = 0.3240,
+-- actionable 2024-11-01; unlike gross profit, a bank has one (JPMorgan's
+-- FY2023 figure on 2024-11-15, its FY2024 10-K not yet filed). Quarterly
+-- return on equity and on assets (JKP niq_be, niq_at) are
+-- as_of_profitability (069): the quarter's net income over the balance at
+-- the END OF THE PRIOR QUARTER, so Apple's quarter to 2024-03-31 on
+-- 2024-07-15 is 23.636 / 74.100 (equity at 2023-12-31) = 0.3190 and
+-- 23.636 / 353.514 = 0.0669; its first fiscal quarter (to 2023-12-31)
+-- stands on the FY2023 10-K balance (2023-09-30, 62.146B). A missing or
+-- non-positive balance gives NULL, never the quarter's own balance. The
+-- index form ranks every constituent's newest quarter: S&P 500 on
+-- 2024-07-15, 491 of 501 with a quarter within 200 days, 454 with an ROE
+-- (37 have no positive equity), 488 with an ROA (measured 2026-10-12).
+SELECT CASE WHEN aapl_ocf_at = 0.3240 AND aapl_ocf_at_period = DATE '2024-09-30' AND aapl_ocf_at_tf = DATE '2024-11-01'
+             AND jpm_ocf_at_rows = 1 AND jpm_ocf_at_period = DATE '2023-12-31' AND sp500_ocf_at >= 480
+             AND aapl_roe = 0.3190 AND aapl_roa = 0.0669 AND aapl_balance_end = DATE '2023-12-31'
+             AND aapl_q1_balance_end = DATE '2023-09-30' AND aapl_q1_equity = 62146000000
+             AND aapl_quarters = 64 AND aapl_with_roe = 60 AND aapl_roe_without_balance = 0
+             AND sp500_rows >= 450 AND sp500_rows <= sp500_members AND sp500_with_roe >= 430 AND sp500_with_roa >= 470
+             AND sp500_max_stale <= 200 AND percentile_out_of_range = 0 AND roe_without_positive_equity = 0
+             AND aapl_xs_roe = 0.3190 AND aapl_xs_rank <= 20
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       aapl_ocf_at AS apple_ocf_to_assets_asof_2024_11_15, aapl_ocf_at_period AS apple_period, aapl_ocf_at_tf AS apple_tradable_from,
+       jpm_ocf_at_rows, jpm_ocf_at_period, sp500_ocf_at AS sp500_members_with_ocf_to_assets,
+       aapl_roe AS apple_roe_q_2024_03_31, aapl_roa AS apple_roa_q_2024_03_31, aapl_balance_end, aapl_q1_balance_end, aapl_q1_equity,
+       aapl_quarters, aapl_with_roe, aapl_roe_without_balance,
+       sp500_members, sp500_rows AS sp500_with_a_fresh_quarter, sp500_with_roe, sp500_with_roa, sp500_max_stale,
+       percentile_out_of_range, roe_without_positive_equity, aapl_xs_roe, aapl_xs_rank
+FROM (
+    SELECT (SELECT ROUND(value, 4)   FROM sec_gold.as_of_latest_annual(320193, 'ocf_to_assets', DATE '2024-11-15') LIMIT 1) AS aapl_ocf_at,
+           (SELECT value_date        FROM sec_gold.as_of_latest_annual(320193, 'ocf_to_assets', DATE '2024-11-15') LIMIT 1) AS aapl_ocf_at_period,
+           (SELECT tradable_from     FROM sec_gold.as_of_latest_annual(320193, 'ocf_to_assets', DATE '2024-11-15') LIMIT 1) AS aapl_ocf_at_tf,
+           (SELECT COUNT(*)          FROM sec_gold.as_of_latest_annual(19617,  'ocf_to_assets', DATE '2024-11-15')) AS jpm_ocf_at_rows,
+           (SELECT value_date        FROM sec_gold.as_of_latest_annual(19617,  'ocf_to_assets', DATE '2024-11-15') LIMIT 1) AS jpm_ocf_at_period,
+           (SELECT COUNT(DISTINCT cik) FROM sec_gold.peer_stats_asof('SP500', DATE '2024-11-15') WHERE concept = 'ocf_to_assets') AS sp500_ocf_at,
+           (SELECT COUNT(*)          FROM sec_reference.index_members('SP500', DATE '2024-07-15')) AS sp500_members,
+           a.*, x.*
+    FROM (
+        SELECT ROUND(MAX(roe_q) FILTER (WHERE quarter_end = DATE '2024-03-31'), 4) AS aapl_roe,
+               ROUND(MAX(roa_q) FILTER (WHERE quarter_end = DATE '2024-03-31'), 4) AS aapl_roa,
+               MAX(balance_end)   FILTER (WHERE quarter_end = DATE '2024-03-31') AS aapl_balance_end,
+               MAX(balance_end)   FILTER (WHERE quarter_end = DATE '2023-12-31') AS aapl_q1_balance_end,
+               MAX(total_equity)  FILTER (WHERE quarter_end = DATE '2023-12-31') AS aapl_q1_equity,
+               COUNT(*) AS aapl_quarters, COUNT(roe_q) AS aapl_with_roe,
+               COUNT(*) FILTER (WHERE roe_q IS NOT NULL AND (total_equity IS NULL OR total_equity <= 0)) AS aapl_roe_without_balance
+        FROM sec_gold.as_of_profitability(320193, DATE '2024-07-15')
+    ) a
+    CROSS JOIN (
+        SELECT COUNT(*) AS sp500_rows, COUNT(roe_q) AS sp500_with_roe, COUNT(roa_q) AS sp500_with_roa, MAX(days_stale) AS sp500_max_stale,
+               COUNT(*) FILTER (WHERE roe_percentile NOT BETWEEN 0 AND 1 OR roa_percentile NOT BETWEEN 0 AND 1
+                                   OR (roe_q IS NOT NULL AND roe_rank IS NULL) OR (roa_q IS NOT NULL AND roa_rank IS NULL)) AS percentile_out_of_range,
+               COUNT(*) FILTER (WHERE roe_q IS NOT NULL AND (total_equity IS NULL OR total_equity <= 0)) AS roe_without_positive_equity,
+               ROUND(MAX(roe_q) FILTER (WHERE cik = 320193), 4) AS aapl_xs_roe,
+               MAX(roe_rank) FILTER (WHERE cik = 320193) AS aapl_xs_rank
+        FROM sec_gold.profitability_asof('SP500', DATE '2024-07-15')
+    ) x
 ) t;
