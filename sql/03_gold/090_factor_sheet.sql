@@ -90,11 +90,23 @@ RETURNS TABLE (
 )
 LANGUAGE sql STABLE AS $$
 WITH members AS (
-    -- Constituents ON the knowledge date, ticker as of it (as 085).
-    SELECT m.cik,
+    -- Constituents ON the knowledge date, ticker as of it (as 085). ONE
+    -- ROW PER COMPANY: the sheet is per registrant, and a company can
+    -- hold two seats on a date when the crosswalk still assigns a seat's
+    -- ticker to its previous holder (IR was Ingersoll-Rand plc until
+    -- 2020-03-02 and Ingersoll Rand Inc from 2020-03-03; the crosswalk
+    -- moves it at its next capture, 2020-06-28, so for three month ends
+    -- the S&P 500's IR and TT seats both resolve to Trane Technologies,
+    -- 1466258). Counted twice the company would rank twice and the panel's
+    -- key would refuse the date; the seat whose ticker the spine assigns
+    -- the company on the date wins, then the first ticker. Check 71 pins
+    -- the count of such dates so growth is seen, not absorbed.
+    SELECT DISTINCT ON (m.cik)
+           m.cik,
            COALESCE(sec_reference.ticker_at(m.cik, p_asof), m.ticker) AS ticker,
            p_index AS index_name, m.gics_sector
     FROM sec_reference.index_members(p_index, p_asof) m
+    ORDER BY m.cik, (m.ticker = sec_reference.ticker_at(m.cik, p_asof)) DESC, m.ticker
 ),
 -- The annual factors: one row per member and concept from the
 -- knowledge-date cross-section (sector level carries the value; the

@@ -42,3 +42,6 @@ data/edgar/
 
 # Research exports from the database (regenerable; tools/export_compustat.py)
 data/exports/
+
+# Downloaded reference series (Ken French factors), fetched on demand by tools/ff_baseline.py --download
+data/external/

@@ -516,6 +516,14 @@ dollar or that did not trade.
 - Yahoo's data carry no licence for redistribution; this is a personal
   research copy.
 
+## 9. Ken French data library (Fama-French factors and momentum)
+
+**What:** the monthly five factors (`Mkt-RF`, `SMB`, `HML`, `RMW`, `CMA`, `RF`) and the momentum factor (`UMD`), the baseline a factor spread is measured against.
+
+**Where:** `F-F_Research_Data_5_Factors_2x3_CSV.zip` and `F-F_Momentum_Factor_CSV.zip` at https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/ , fetched by `uv run python tools/ff_baseline.py --download` into `data/external/french/` (gitignored, so nothing of it is in the repository; the file carries its own CRSP vintage on line one, 202608 on 2026-10-13). Percent returns are read as decimals; the monthly block runs from the header line to the first blank line and the annual block below it is ignored.
+
+**Not in the database.** The series are joined to `sec_market.backtest` output in the tool and nowhere else; a refresh is a re-download.
+
 ## Manual inputs
 
 | File | Rows | What it is |
@@ -576,6 +584,14 @@ Honest gaps, all at the acquisition boundary:
   for the 718 companies ever in the S&P 1500 whose ticker is no longer listed
   (section 8); a delisted company's returns are not in any backtest here.
 
+- **A ticker handoff is dated at the crosswalk's next capture**, up to a quarter
+  after the fact (section 3). For the three month ends of March to May 2020 the
+  S&P 500's IR seat still resolves to Ingersoll-Rand plc (now Trane Technologies,
+  which also holds the TT seat), not to Ingersoll Rand Inc, which took the ticker
+  on 2020-03-03. The only index-months since 2010 where two seats resolve to one
+  company (check 71); the factor sheet takes one row per company, and Ingersoll
+  Rand Inc is absent from the S&P 500 panel for those months. Dating handoffs
+  from the filings that announce them would close it.
 - **`sp1500_universe.csv` records no Wikipedia revision id and no capture date.**
   There is no way to reproduce the scrape that produced a given file, or to tell
   how stale it is.

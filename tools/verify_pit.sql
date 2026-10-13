@@ -1650,3 +1650,35 @@ FROM (
                ON x.adsh = f.adsh AND x.tag = f.tag AND x.value_date = f.value_date AND x.qtrs = f.qtrs) AS tradable_suspects,
            (SELECT COUNT(*) FROM sec_gold.fact_asof WHERE value_date > filed_date AND uom = 'USD') AS fact_asof_after_filing
 ) t;
+
+\echo ''
+\echo '=== 71. A company holds one seat per index and date; the known exception is pinned ==='
+-- sec_reference.index_members resolves each seat's ticker to a company
+-- through the dated crosswalk, and the crosswalk moves a ticker at its
+-- next capture, up to a quarter after the handoff. When the ticker's
+-- previous holder is itself still in the index under its new ticker,
+-- both seats resolve to one company for those months: IR passed from
+-- Ingersoll-Rand plc (now Trane Technologies, 1466258) to Ingersoll Rand
+-- Inc (1699150) on 2020-03-03 and the crosswalk moved it on 2020-06-28,
+-- so the S&P 500's IR and TT seats are both 1466258 at 2020-03-31,
+-- 2020-04-30 and 2020-05-31. Those are the only such index-months over
+-- every month end of the three indexes since 2010 (2026-10-13). The
+-- factor sheet (090) takes one row per company, so a duplicate seat
+-- cannot rank a company twice or break the panel's key; this check
+-- pins the count so a new case is seen rather than absorbed.
+SELECT CASE WHEN duplicate_index_months = 3 AND companies = 1 AND the_company = 1466258
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       duplicate_index_months, companies, the_company, first_month, last_month
+FROM (
+    SELECT COUNT(*) AS duplicate_index_months, COUNT(DISTINCT cik) AS companies,
+           MIN(cik) AS the_company, MIN(asof) AS first_month, MAX(asof) AS last_month
+    FROM (
+        SELECT ix.index_name, d.asof, m.cik
+        FROM (SELECT (date_trunc('month', g)::date + INTERVAL '1 month - 1 day')::date AS asof
+              FROM generate_series(DATE '2010-01-01', CURRENT_DATE - INTERVAL '1 month', INTERVAL '1 month') g) d
+        CROSS JOIN (SELECT unnest(ARRAY['SP500', 'SP400', 'SP600']) AS index_name) ix
+        CROSS JOIN LATERAL sec_reference.index_members(ix.index_name, d.asof) m
+        GROUP BY ix.index_name, d.asof, m.cik
+        HAVING COUNT(*) > 1
+    ) dup
+) t;

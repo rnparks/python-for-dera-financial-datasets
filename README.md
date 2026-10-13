@@ -82,7 +82,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 70 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 71 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -277,6 +277,7 @@ uv run python tools/fetch_cover_page_classes.py --sp500 # share-class mappings f
 uv run python tools/build_calendar.py                   # NYSE trading calendar, two years ahead
 uv run python tools/fetch_usgaap_cost_elements.py       # FASB taxonomy: cost-of-revenue element years and calc tree
 uv run python tools/fetch_usgaap_element_docs.py        # FASB taxonomy: definitions and calc context of elements
+uv run python tools/ff_baseline.py SP500 --download     # factor spreads vs Fama-French 5 factors and momentum (data/external/french)
 ```
 
 ## Keeping the documentation current
