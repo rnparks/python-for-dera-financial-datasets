@@ -691,3 +691,85 @@ def test_revenues_including_other_income_is_detected():
     comps = {"IncomeLossFromEquityMethodInvestments", "OtherNonoperatingIncomeExpense"}
     # XOM-like: sales + equity income + other income = Revenues; Apple-like and zero-component rows are not
     assert compustat.revenues_include_nonoperating(f, comps).tolist() == [True, False, False]
+
+
+# ---------------------------------------------------------------------------
+# prices: the month-end price loader's pure parts (no network, no database)
+# ---------------------------------------------------------------------------
+
+from dera_pipeline import prices  # noqa: E402
+
+
+def test_yahoo_symbol_turns_class_dot_into_dash():
+    assert prices.yahoo_symbol("BRK.B") == "BRK-B"
+    assert prices.yahoo_symbol(" brk-b ") == "BRK-B"
+    assert prices.yahoo_symbol("AAPL") == "AAPL"
+
+
+def test_is_common_ticker_rejects_units_warrants_and_preferreds():
+    assert prices.is_common_ticker("BRK-B")
+    assert prices.is_common_ticker("META")
+    assert not prices.is_common_ticker("AAC-UN")
+    assert not prices.is_common_ticker("AAC-WT")
+    assert not prices.is_common_ticker("ABR-PA")
+    assert not prices.is_common_ticker("XYZ-RT")
+
+
+def test_month_end_sessions_keeps_the_last_session_of_each_month():
+    sessions = [dt.date(2024, 7, 1), dt.date(2024, 7, 31), dt.date(2024, 8, 30),
+                dt.date(2024, 8, 1), dt.date(2024, 9, 30)]
+    ends = prices.month_end_sessions(sessions)
+    assert ends == {(2024, 7): dt.date(2024, 7, 31), (2024, 8): dt.date(2024, 8, 30),
+                    (2024, 9): dt.date(2024, 9, 30)}
+
+
+def test_complete_month_ends_drops_the_month_in_progress():
+    ends = {(2024, 8): dt.date(2024, 8, 30), (2024, 9): dt.date(2024, 9, 30)}
+    # On the last session itself the close is not in yet.
+    assert prices.complete_month_ends(ends, dt.date(2024, 9, 30)) == {(2024, 8): dt.date(2024, 8, 30)}
+    assert prices.complete_month_ends(ends, dt.date(2024, 10, 1)) == ends
+
+
+def test_reconstruct_raw_close_undoes_later_splits_only():
+    # Apple around its 4-for-1 split of August 2020: Yahoo's restated
+    # closes 91.20 (June), 106.26 (July), 129.04 (August, already
+    # post-split); as traded 364.80, 425.04, 129.04.
+    closes = [(dt.date(2020, 6, 30), 91.20), (dt.date(2020, 7, 31), 106.26),
+              (dt.date(2020, 8, 31), 129.04)]
+    splits = [(dt.date(2020, 8, 31), 4.0)]
+    out = prices.reconstruct_raw_close(closes, splits)
+    assert [round(r, 2) for _, r, _ in out] == [364.80, 425.04, 129.04]
+    assert [f for _, _, f in out] == [4.0, 4.0, 1.0]
+
+
+def test_reconstruct_raw_close_compounds_two_splits():
+    # A 7-for-1 in June 2014 and a 4-for-1 in August 2020: a May 2014
+    # close carries both, a July 2014 close only the later one.
+    closes = [(dt.date(2014, 5, 30), 22.61), (dt.date(2014, 7, 31), 24.00)]
+    splits = [(dt.date(2014, 6, 30), 7.0), (dt.date(2020, 8, 31), 4.0)]
+    out = prices.reconstruct_raw_close(closes, splits)
+    assert [f for _, _, f in out] == [28.0, 4.0]
+    assert round(out[0][1], 2) == 633.08
+
+
+def test_build_rows_maps_months_to_last_session_and_clips_before_first_trade():
+    listing = prices.Listing(cik=1, ticker="ABC", valid_from=dt.date(2020, 1, 1),
+                             first_trade_date=dt.date(2020, 7, 15))
+    bars = [{"ym": (2020, 6), "close": 10.0, "adj": 9.0, "volume": 5, "split": 0.0},
+            {"ym": (2020, 7), "close": 12.0, "adj": 11.0, "volume": 6, "split": 0.0},
+            {"ym": (2020, 8), "close": 6.5, "adj": 6.0, "volume": 7, "split": 2.0},
+            {"ym": (2020, 9), "close": 7.0, "adj": 6.5, "volume": None, "split": 0.0}]
+    ends = {(2020, 6): dt.date(2020, 6, 30), (2020, 7): dt.date(2020, 7, 31),
+            (2020, 8): dt.date(2020, 8, 31)}          # September not complete yet
+    rows = prices.build_rows(listing, "ABC", bars, ends)
+    assert [r.month_end for r in rows] == [dt.date(2020, 7, 31), dt.date(2020, 8, 31)]
+    assert rows[0].close_raw == 24.0 and rows[0].split_factor_after == 2.0
+    assert rows[1].close_raw == 6.5 and rows[1].split_factor_after == 1.0
+    assert rows[0].adj_close == 11.0 and rows[1].volume == 7
+
+
+def test_panel_dates_puts_quarter_ends_first_within_range():
+    ends = [dt.date(2024, 1, 31), dt.date(2024, 2, 29), dt.date(2024, 3, 28),
+            dt.date(2024, 4, 30), dt.date(2024, 6, 28), dt.date(2024, 7, 31)]
+    out = prices.panel_dates(ends, since=dt.date(2024, 2, 1), until=dt.date(2024, 6, 30))
+    assert out == [dt.date(2024, 3, 28), dt.date(2024, 6, 28), dt.date(2024, 2, 29), dt.date(2024, 4, 30)]

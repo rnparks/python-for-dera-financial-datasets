@@ -82,7 +82,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 65 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 70 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -104,6 +104,13 @@ uv run dera load --quarter 2026q3            # --force replaces a quarter alread
 uv run dera build-silver --quarter 2026q3    # recomputes only the fact partitions the quarter touches (~18 min; the full build is 39)
 uv run dera rebuild-reference                # spine, security model, then the gold matviews whose inputs changed (a new quarter changes them all: ~27 min)
 uv run dera verify                           # the correctness suite
+```
+
+Prices and the backtest (`sec_market`, a vendor, not SEC data; see `docs/data_sources.md` section 8):
+
+```bash
+uv run dera load-prices                      # month-end closes for the primary ticker of every company ever in the S&P 1500 (Yahoo, ~10 min)
+uv run dera build-factor-panel --index SP500 # the factor sheet at every month end since 2010, stored for the backtest (~100 s per date)
 ```
 
 Rehearsed end to end on 2026-09-10 by reloading 2026q2 under `--force`: 52
@@ -183,6 +190,22 @@ WHERE sue IS NOT NULL ORDER BY sue_rank LIMIT 10;
 SELECT ticker, quarter_end, roa_q, roa_rank, roe_q, roe_rank
 FROM sec_gold.profitability_asof('SP500', DATE '2024-07-15')
 WHERE roa_q IS NOT NULL ORDER BY roa_rank LIMIT 10;
+
+-- The factor sheet: every factor per constituent as a value, an index
+-- percentile and a sector percentile, signed so higher is better, with
+-- an equal-weight composite; all as knowable on the date
+SELECT ticker, gics_sector, n_factors, composite, gp_at_pct, ocf_at_pct, roe_q_pct, sue_pct
+FROM sec_gold.factor_sheet_asof('SP500', DATE '2024-07-15')
+ORDER BY composite DESC NULLS LAST LIMIT 10;
+
+-- Does it pay? Sort the stored panel into quintiles on a factor at every
+-- quarter end, hold equal-weighted to the next, and summarise: per bucket,
+-- the top-minus-bottom spread and the equal-weight benchmark
+SELECT * FROM sec_market.backtest_summary('SP500', 'ocf_at', 'quarterly', DATE '2010-01-01', NULL, 5);
+
+-- Apple's market cap as knowable on a date: the as-traded month-end close
+-- before it times the cover-page shares knowable on it
+SELECT * FROM sec_market.market_cap_at(320193, DATE '2024-11-15');
 
 -- Who was actually investable then, delisted companies included
 SELECT * FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30');

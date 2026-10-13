@@ -463,6 +463,59 @@ segment and customer files (`data/exports/compustat/pensions.parquet`,
 `segments.parquet`, `customers.parquet`), by the rules in
 `docs/compustat_items.md` ("Footnote items").
 
+## 8. Yahoo Finance month-end prices (index members)
+
+**What**: the month's last close, Yahoo's dividend-and-split-adjusted close
+and the split ratios, monthly bars from 2009, for the primary ticker of every
+company that was ever an S&P 1500 member and whose ticker is still listed.
+Fetched by `uv run dera load-prices` through the `yfinance` package (no key,
+no account) into `sec_market.monthly_price`; the as-traded close is
+reconstructed from the split ratios (`dera_pipeline.prices.reconstruct_raw_close`,
+unit-tested: Apple's July 2020 close 106.26 restated, 425.04 as traded).
+
+**Why this source**: it is the smallest version of a price layer that makes
+the fundamentals testable, and it needs nothing you have to buy. The
+roadmap's recommended source for a full daily history, Polygon flat files, is
+unchanged; this is the stopgap it will replace, keyed the same way.
+
+**Capture quality** (2026-10-12): 1,868 primary tickers requested, 1,864
+answered; 303,761 company-months, 2009-01-30 to 2026-09-30, 1,693 companies.
+The equal-weight monthly return of the priced companies correlates with the
+Fama-French market factor at 0.93 over 2010-2026 (beta 1.14). Eight
+company-months show a one-month return above 300%, each a real event or one
+known artifact (InvenTrust, September 2021, a pre-listing series Yahoo carries
+badly); the return view already drops any month whose prior close was under a
+dollar or that did not trade.
+
+**Rules**:
+- Only OPEN listings are requested. Yahoo returns nothing for a delisted
+  ticker and re-keys a reused ticker to its current holder, so a closed
+  listing's series, if any came back, would belong to the wrong company.
+- Only the PRIMARY ticker of a company (`sec_reference.company_ticker.is_primary`):
+  the listing table also carries preferred series, baby bonds, rights and
+  second share classes under plain tickers, whose Yahoo series are sparse or
+  priced in another unit.
+- A month is written only once its last NYSE session has passed, so a partial
+  month never masquerades as a close; `month_end` is the month's last session
+  from `sec_reference.trading_calendar`.
+- Point in time: `sec_market.price_at(cik, asof)` returns the newest month end
+  strictly before the knowledge date; `market_cap_at` multiplies it by the
+  cover-page shares knowable on the date (`sec_gold.shares_outstanding_at`),
+  as-traded price times as-filed count.
+
+**Known limits**:
+- **Survivorship.** 718 of the 2,417 companies ever in the S&P 1500 have no
+  listed security today (acquired, taken private, failed) and no prices here.
+  A backtest on this table holds survivors only. The spread between a
+  factor's top and bottom buckets is less exposed than either bucket's level,
+  because both legs lose the same kind of company, but a bucket that collects
+  future failures loses them from the measurement.
+- One price per company: a dual-class issuer's second class is valued at the
+  primary class's price in `market_cap_at`; `sec_gold.share_class_shares` is
+  the place to refine that.
+- Yahoo's data carry no licence for redistribution; this is a personal
+  research copy.
+
 ## Manual inputs
 
 | File | Rows | What it is |
@@ -518,6 +571,10 @@ universe is late-but-proven, the base one early-but-inclusive.
 ### Where provenance is currently missing
 
 Honest gaps, all at the acquisition boundary:
+
+- **Prices stop at the survivors.** `sec_market.monthly_price` has no series
+  for the 718 companies ever in the S&P 1500 whose ticker is no longer listed
+  (section 8); a delisted company's returns are not in any backtest here.
 
 - **`sp1500_universe.csv` records no Wikipedia revision id and no capture date.**
   There is no way to reproduce the scrape that produced a given file, or to tell

@@ -9,13 +9,14 @@ document is the map.
 
 ---
 
-## The four schemas
+## The five schemas
 
 ```
 sec_raw          bronze    37 GB   raw SEC text, all TEXT, no constraints
    └─ sec_silver silver    62 GB   typed, deduplicated, bitemporal facts
         └─ sec_gold  gold  40 GB   query-facing views, concepts, peer stats
    sec_reference  spine   269 MB   companies, securities, universes, calendar
+   sec_market     prices   <100 MB  month-end closes (Yahoo), the factor panel, the backtest
 ```
 
 `sec_reference` deliberately sits **outside** the bronze→silver→gold chain.
@@ -208,10 +209,49 @@ today; nothing stored), `as_of_surprise()` and `surprise_asof()` (standardized
 unexpected earnings per company and ranked across an index, as knowable on a
 date; nothing stored), `as_of_profitability()` and `profitability_asof()`
 (quarterly return on equity and on assets over the prior quarter's balance,
-per company and ranked across an index; nothing stored), `shares_outstanding_at()`,
+per company and ranked across an index; nothing stored), `factor_sheet_asof()`
+(the nine factors per constituent with index and sector percentiles and a
+composite; nothing stored), `shares_outstanding_at()`,
 `share_classes_at()`. All documented in `docs/gold_tables.md`.
 
 ---
+
+## `sec_market` — prices, the factor panel and the backtest
+
+Not SEC data: month-end prices from a vendor, and the two objects that turn
+the factor sheet into a test of returns. Its own schema so that nothing in
+`sec_gold` depends on it and a reader always knows which numbers came from a
+filing and which from Yahoo. Loaded by `uv run dera load-prices` and
+`uv run dera build-factor-panel`; DDL in `sql/07_market/`. As of 2026-10-12.
+
+| Object | Kind | Rows | What it is |
+|---|---|---|---|
+| `monthly_price` | table | 303.8K | One row per company, primary ticker and month end, 2009-01 to the last complete month, for the 1,693 companies ever in the S&P 1500 whose primary ticker is still listed. `close_split_adj` is Yahoo's split-restated close, `adj_close` its total-return index, `close_raw` the as-traded close reconstructed from the split ratios (Apple July 2020: 106.26, 102.80, 425.04) |
+| `price_load` | table | 1 per load | When the vendor was asked, how many symbols answered, how many members have no open listing |
+| `monthly_return` | view | — | `ret_1m` per company and month from `adj_close`; NULL across a gap, when either month did not trade, or when the prior close was under a dollar |
+| `factor_panel` | table | 500 per date | `sec_gold.factor_sheet_asof` stored per (index, knowledge date, company); CHECKs refuse any row whose period or availability is after its own knowledge date |
+
+Functions: `price_at(cik, asof)` (the newest month-end close strictly before
+the date, within 45 days), `market_cap_at(cik, asof)` (that close times the
+cover-page shares knowable on the date, from `sec_gold.shares_outstanding_at`),
+`build_factor_panel(index, asof)` (one knowledge date of the panel),
+`backtest(index, factor, freq, from, to, buckets)` (sort the panel into equal
+buckets on each rebalance date, monthly, quarterly or annual, hold
+equal-weighted to the next, and return each bucket's monthly total return,
+the equal-weight benchmark and the top-minus-bottom spread) and
+`backtest_summary(...)` (per bucket and for the spread: months, mean monthly
+return, t-statistic, annualised return, Sharpe ratio, hit rate).
+
+**Survivorship.** Yahoo returns nothing for a delisted ticker and re-keys a
+reused one to its current holder, so only open listings are loaded: 718 of the
+2,417 companies ever in the S&P 1500 have no listed security today (acquired,
+taken private, failed) and no prices here. Every bucket in a backtest holds
+survivors only; the spread between buckets is less exposed than a bucket's
+level, not immune. The paid source the roadmap names (Polygon flat files) is
+what closes this. The equal-weight return of the priced companies tracks the
+Fama-French market at a correlation of 0.93 over 2010-2026 (beta 1.14, the
+equal-weight tilt), which is the sanity check that the series are the right
+companies in the right units.
 
 ## Which table should I read?
 

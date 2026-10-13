@@ -3,7 +3,7 @@
 Run via ``uv run dera ...`` once the package is installed; the
 ``dera`` script is registered in ``pyproject.toml``.
 
-Eleven subcommands. The medallion pipeline, in order::
+Thirteen subcommands. The medallion pipeline, in order::
 
     uv run dera download
     uv run dera init-db
@@ -43,9 +43,16 @@ them (``sql/00_reference/040_*`` and ``041_*``) is skipped too, so a
 silver rebuild without the archive cannot empty a model it will not
 refill.
 
+Prices (a vendor, not SEC data; schema ``sec_market``)::
+
+    uv run dera load-prices          # month-end closes for the primary ticker of every
+                                     # company that was ever an S&P 1500 member (Yahoo)
+    uv run dera build-factor-panel   # the factor sheet at every month end, stored
+                                     # for the backtest (sec_market.factor_panel)
+
 Verification::
 
-    uv run dera verify        # 67 data-correctness checks
+    uv run dera verify        # 69 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 
@@ -53,11 +60,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime as dt
 import subprocess
 import sys
 import time
 
-from . import config, db, downloader, filings, loader, reference
+from . import config, db, downloader, filings, loader, prices, reference
 
 
 def _add_range_args(p: argparse.ArgumentParser) -> None:
@@ -512,6 +520,49 @@ def cmd_rebuild_reference(args: argparse.Namespace) -> int:
     return rc
 
 
+def cmd_load_prices(args: argparse.Namespace) -> int:
+    """Load month-end prices for index members from Yahoo Finance.
+
+    Runs the sec_market DDL (idempotent), then fetches monthly bars for
+    every open listing of every company that was ever an S&P 1500
+    member, reconstructs the as-traded close from the split ratios, and
+    upserts into sec_market.monthly_price. Prints how many symbols
+    answered and how many members have no open listing, which is the
+    survivorship gap no free source closes.
+    """
+    since = dt.date.fromisoformat(args.since) if args.since else prices.DEFAULT_SINCE
+    tickers = [t for t in (args.tickers or "").split(",") if t.strip()] or None
+    with db.get_conn() as conn:
+        db.run_sql_file(conn, prices.ddl_path())
+        conn.commit()
+        summary = prices.load_prices(
+            conn, since=since, tickers=tickers, chunk=args.chunk)
+    prices.print_summary(summary)
+    return 0 if summary["symbols_returned"] else 1
+
+
+def cmd_build_factor_panel(args: argparse.Namespace) -> int:
+    """Store sec_gold.factor_sheet_asof for an index at every month end.
+
+    One call of the sheet per date (about 100 s for the S&P 500), quarter
+    ends first so a quarterly backtest is possible before the monthly
+    panel is complete, each date committed as it lands so an interrupted
+    run keeps what it built. Dates already in the panel are skipped
+    unless --rebuild.
+    """
+    from . import prices as pr
+    with db.get_conn() as conn:
+        db.run_sql_file(conn, config.SQL_DIR / "07_market" / "020_factor_panel.sql")
+        conn.commit()
+        n = pr.build_factor_panel(
+            conn, index=args.index,
+            since=dt.date.fromisoformat(args.since) if args.since else dt.date(2010, 1, 1),
+            until=dt.date.fromisoformat(args.until) if args.until else None,
+            rebuild=args.rebuild)
+    print(f"{n} dates built for {args.index}")
+    return 0
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     r"""Run the point-in-time verification suite.
 
@@ -700,6 +751,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="REFRESH all five gold matviews regardless of what changed",
     )
     p_rref.set_defaults(func=cmd_rebuild_reference)
+
+    p_prices = sub.add_parser(
+        "load-prices",
+        help="month-end prices for index members from Yahoo Finance (sec_market)")
+    p_prices.add_argument(
+        "--since", default=None, metavar="YYYY-MM-DD",
+        help=f"first month to fetch (default {prices.DEFAULT_SINCE})")
+    p_prices.add_argument(
+        "--tickers", default=None,
+        help="comma-separated subset of listing tickers (default: every open listing)")
+    p_prices.add_argument(
+        "--chunk", type=int, default=prices.DEFAULT_CHUNK,
+        help="symbols per vendor request")
+    p_prices.set_defaults(func=cmd_load_prices)
+
+    p_panel = sub.add_parser(
+        "build-factor-panel",
+        help="store the factor sheet at every month end for the backtest (sec_market.factor_panel)")
+    p_panel.add_argument("--index", default="SP500", help="SP500, SP400 or SP600 (default SP500)")
+    p_panel.add_argument("--since", default=None, metavar="YYYY-MM-DD", help="first month end (default 2010-01-01)")
+    p_panel.add_argument("--until", default=None, metavar="YYYY-MM-DD", help="last month end (default: the last complete month)")
+    p_panel.add_argument("--rebuild", action="store_true", default=False, help="rebuild dates already in the panel")
+    p_panel.set_defaults(func=cmd_build_factor_panel)
 
     p_verify = sub.add_parser(
         "verify", help="run the point-in-time verification suite")

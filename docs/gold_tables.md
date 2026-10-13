@@ -486,7 +486,7 @@ sec_gold.as_of_quarterly(p_cik INTEGER, p_asof DATE, p_buffer_sessions INTEGER D
 
 Every fiscal quarter of every **flow** concept (`revenue`, `net_income`, `eps_diluted`, `operating_cash_flow`, `operating_income`, `gross_profit`, `cost_of_revenue`, `cost_of_goods`, `cost_of_services`, `capex`, `free_cash_flow`) for one company, as it was knowable on `p_asof`, computed from `fact_asof` on every call and **stored nowhere** — the database does not grow by a row for this (a choice made 2026-09-11: a slower answer over a bigger table). About 60 ms a company.
 
-**A quarter.** DERA has three-month income-statement figures at Q1, Q2 and Q3 (`qtrs = 1`) and year-to-date figures at Q2 and Q3 (`qtrs = 2, 3`); the 10-K carries the year (`qtrs = 4`) and never a fourth quarter; cash-flow statements come year-to-date only, so a three-month operating cash flow exists at Q1 alone (S&P 500, 2024 quarter-ends: 1,421 three-month `NetIncomeLoss` company-quarters, 521 for operating cash flow). `q_value` is the filed three-month figure where the filer printed one (`q_source = 'reported'`), else this period's year-to-date less the year-to-date one quarter shorter that ended a quarter earlier (`'ytd_difference'`): Apple's Q4 FY2024 revenue is 391.035 − 296.105 = 94.930B, its Q3 operating cash flow 91.443 − 62.585 = 28.858B. A filed figure beats the difference at the same date, as a filed value beats a reconstruction everywhere in gold. Each period's value is resolved by the same tag walk as the annual functions (industry rule, then priority) and `gross_profit` / `free_cash_flow` fall back to their formula from operands that share the period. `fiscal_quarter` is the longest period the company reported ending on that date.
+**A quarter.** DERA has three-month income-statement figures at Q1, Q2 and Q3 (`qtrs = 1`) and year-to-date figures at Q2 and Q3 (`qtrs = 2, 3`); the 10-K carries the year (`qtrs = 4`) and never a fourth quarter; cash-flow statements come year-to-date only, so a three-month operating cash flow exists at Q1 alone (S&P 500, 2024 quarter-ends: 1,421 three-month `NetIncomeLoss` company-quarters, 521 for operating cash flow). `q_value` is the filed three-month figure where the filer printed one (`q_source = 'reported'`), else this period's year-to-date less the year-to-date one quarter shorter that ended a quarter earlier (`'ytd_difference'`): Apple's Q4 FY2024 revenue is 391.035 − 296.105 = 94.930B, its Q3 operating cash flow 91.443 − 62.585 = 28.858B. A filed figure beats the difference at the same date, as a filed value beats a reconstruction everywhere in gold. Each period's value is resolved by the same tag walk as the annual functions (industry rule, then priority) and `gross_profit` / `free_cash_flow` fall back to their formula from operands that share the period. `fiscal_quarter` is the longest period the company reported ending on that date. Where two candidates have equal standing the pick is a rule, never the plan: among period facts, the newest vintage, then the tag, then the value; among year-to-date pairs for one quarter, the pair whose shorter period ends nearest a quarter back, then the shorter longer period (after a fiscal-year change a quarter can be a six-month less a three-month and a twelve-month less a nine-month, and the recast figures can disagree), then the newest vintage, then the value; among trailing candidates the newest vintage, then the value (2026-10-12; before this, 29 of the S&P 1500 of 2024-07-15 came out either way between runs).
 
 **Trailing twelve months.** The annual figure at a fiscal year-end (`ttm_source = 'annual'`); else the prior fiscal year plus the current year-to-date less the prior year's year-to-date to the same quarter, which the 10-Q carries as a comparative (`'annual_plus_ytd'`: Apple at 2024-06-30 is 383.285 + 296.105 − 293.787 = 385.603B); else the sum of four consecutive quarters (`'four_quarters'`). Diluted EPS follows the same arithmetic, the market convention for a trailing EPS, not a recomputation from trailing shares.
 
@@ -586,6 +586,41 @@ SELECT ticker, quarter_end, days_stale, roa_q, roa_rank, roa_percentile
 FROM sec_gold.profitability_asof('SP500', DATE '2024-07-15')
 WHERE roa_q IS NOT NULL
 ORDER BY roa_rank;
+```
+
+### `factor_sheet_asof()`
+
+```sql
+sec_gold.factor_sheet_asof(p_index TEXT, p_asof DATE, p_max_age_days INTEGER DEFAULT 550,
+                           p_quarter_max_age INTEGER DEFAULT 200, p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (cik INTEGER, ticker TEXT, index_name TEXT, gics_sector TEXT,
+                 annual_period DATE, annual_tradable_from DATE, quarter_end DATE, quarter_tradable_from DATE,
+                 gp_at, gp_at_pct, gp_at_sector_pct, ocf_at, ocf_at_pct, ocf_at_sector_pct,
+                 roa, roa_pct, roa_sector_pct, roe, roe_pct, roe_sector_pct,
+                 operating_margin, operating_margin_pct, operating_margin_sector_pct,
+                 revenue_growth, revenue_growth_pct, revenue_growth_sector_pct,
+                 roe_q, roe_q_pct, roe_q_sector_pct, roa_q, roa_q_pct, roa_q_sector_pct,
+                 sue, sue_pct, sue_sector_pct   (all NUMERIC),
+                 n_factors INTEGER, composite NUMERIC)
+```
+
+**The stock-picking entry point**: one row per constituent of `p_index` on `p_asof`, nine accounting factors side by side, each as its value, its percentile over the members that have it, and its percentile within the member's GICS sector. The percentiles are **signed the way the literature found the factor to pay**, so a higher number always means the higher expected return: `gp_at` (Novy-Marx 2013), `ocf_at` (Bouchaud et al. 2019), `roa`, `roe` (Haugen and Baker 1996), `operating_margin` (Soliman 2008), `roe_q` and `roa_q` (Hou, Xue and Zhang 2015; Balakrishnan et al. 2010) and `sue` (Foster, Olsen and Shevlin 1984) rank high-is-good; `revenue_growth` ranks **low-is-good** (Lakonishok, Shleifer and Vishny 1994; JKP's `sale_gr1` carries a negative sign), so the fastest grower has `revenue_growth_pct` 0. `composite` is the plain mean of a member's index percentiles when it has at least four, `n_factors` how many it has; equal weights are a starting point, not a finding. Nothing is weighted by what any of this earned here, because prices are a separate layer (`sec_market`, see `docs/data_sources.md`) and the backtest is the step that follows.
+
+**Point in time.** The six annual factors come from [`peer_stats_asof()`](#peer_stats_asof) (the newest fiscal year filed by the date, not older than `p_max_age_days`), the quarterly ones from [`profitability_asof()`](#as_of_profitability-and-profitability_asof) and [`surprise_asof()`](#as_of_surprise-and-surprise_asof) (the newest quarter filed by the date, not older than `p_quarter_max_age`); membership and ticker are as of the date. `annual_period` / `quarter_end` and their `tradable_from` say which filings the row stands on. Nothing in the sheet can see past `p_asof`, because nothing it reads can.
+
+S&P 500 on 2024-07-15, as knowable that day (2026-10-12): 501 rows, 496 with a composite; `ocf_at` for 499, `revenue_growth` 498, `roa` 489, `roa_q` 488, `sue` 472, `roe` 456, `roe_q` 454, `operating_margin` 377 (where operating income is tagged), `gp_at` 299 (no gross profit line for financials). Apple carries all nine (composite 0.85), JPMorgan seven (0.28). About 100 s warm for the S&P 500, the cost of the three cross-sections it composes; **nothing is stored**.
+
+```sql
+-- The sheet, best composite first
+SELECT ticker, gics_sector, n_factors, composite, gp_at_pct, ocf_at_pct, roe_q_pct, sue_pct
+FROM sec_gold.factor_sheet_asof('SP500', DATE '2024-07-15')
+ORDER BY composite DESC NULLS LAST;
+
+-- A sector-neutral sort on one factor
+SELECT ticker, gics_sector, ocf_at, ocf_at_sector_pct
+FROM sec_gold.factor_sheet_asof('SP500', DATE '2024-07-15')
+WHERE ocf_at IS NOT NULL
+ORDER BY ocf_at_sector_pct DESC;
 ```
 
 ### `peer_stats_asof()`
@@ -780,6 +815,7 @@ Every mapping row carries `source` and `source_note`. Filing-sourced and vendor-
 | `067_trailing.sql` | `as_of_quarterly()`, `as_of_trailing()` (CIK and ticker forms), `quarterly()`, `trailing()`: quarterly flows and trailing twelve months, computed on demand |
 | `068_surprise.sql` | `as_of_surprise()`, `surprise_asof()`: standardized unexpected earnings, computed on demand |
 | `069_profitability.sql` | `as_of_profitability()`, `profitability_asof()`: quarterly return on equity and on assets over the prior quarter's balance, computed on demand |
+| `090_factor_sheet.sql` | `factor_sheet_asof()`: every factor per constituent with index and sector percentiles, computed on demand |
 | `070_fiscal_year_views.sql` | `latest_annual()`, `latest_annual_by_ticker()`, `company_snapshot()` |
 | `080_peer_stats.sql` | `peer_stats` (resolves derived, ratio and growth concepts too) |
 | `085_peer_stats_asof.sql` | `peer_stats_asof()` |

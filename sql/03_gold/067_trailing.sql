@@ -94,7 +94,7 @@ LANGUAGE sql STABLE AS $$
     -- Those under the tags the concept map knows for a flow concept.
     facts AS (
         SELECT m.concept, f.value_date, f.qtrs, f.value * m.sign_multiplier AS value,
-               f.tradable_from, m.sic_prefix, m.priority
+               f.tradable_from, m.sic_prefix, m.priority, f.tag
         FROM sec_gold.concept_tag_map m
         JOIN sec_gold.canonical_concepts cc ON cc.concept = m.concept AND cc.fact_type = 'flow'
         JOIN company_facts f ON f.tag = m.tag
@@ -103,11 +103,16 @@ LANGUAGE sql STABLE AS $$
     ),
     -- One value per (concept, period end, period length): the industry
     -- rule first, then priority, exactly as the direct resolvers walk.
+    -- Then, between rows of equal standing, the newest vintage
+    -- (tradable_from DESC), the tag and the value, so the pick never
+    -- depends on the plan: before these keys two live rows of one tag at
+    -- one period (a 10-K/A alongside its 10-K, say) came out either way.
     direct AS (
         SELECT DISTINCT ON (concept, value_date, qtrs)
                concept, value_date, qtrs, value, tradable_from
         FROM facts
-        ORDER BY concept, value_date, qtrs, sic_prefix <> '' DESC, priority ASC
+        ORDER BY concept, value_date, qtrs, sic_prefix <> '' DESC, priority ASC,
+                 tradable_from DESC, tag ASC, value DESC
     ),
     -- A formula concept (gross_profit, free_cash_flow) at a period where
     -- no tag resolved it, from operands that share the period; a
@@ -174,11 +179,19 @@ LANGUAGE sql STABLE AS $$
     -- a quarter earlier.
     quarter_candidates AS (
         SELECT p.concept, p.value_date AS quarter_end, p.value AS q_value, 'reported'::TEXT AS q_source,
-               p.tradable_from, 0 AS pref
+               p.tradable_from, 0 AS pref, 0 AS gap_error, 1 AS ytd_qtrs
         FROM period p
         WHERE p.qtrs = 1
         UNION ALL
-        SELECT p.concept, p.value_date, p.value - q.value, 'ytd_difference', GREATEST(p.tradable_from, q.tradable_from), 1
+        -- gap_error: how far the shorter period's end sits from one
+        -- quarter (91 days) before this one; when two shorter periods
+        -- fall inside the window, the more quarter-like pair wins.
+        -- ytd_qtrs: the longer period's length; after a fiscal-year
+        -- change a quarter can be both a six-month less a three-month
+        -- and a twelve-month less a nine-month, and the shorter pair
+        -- (fewer months of recast accumulation) wins.
+        SELECT p.concept, p.value_date, p.value - q.value, 'ytd_difference', GREATEST(p.tradable_from, q.tradable_from), 1,
+               ABS((p.value_date - q.value_date) - 91), p.qtrs
         FROM period p
         JOIN period q ON q.concept = p.concept AND q.qtrs = p.qtrs - 1
                      AND q.value_date BETWEEN p.value_date - 110 AND p.value_date - 70
@@ -188,7 +201,7 @@ LANGUAGE sql STABLE AS $$
         SELECT DISTINCT ON (concept, quarter_end)
                concept, quarter_end, q_value, q_source, tradable_from
         FROM quarter_candidates
-        ORDER BY concept, quarter_end, pref
+        ORDER BY concept, quarter_end, pref, gap_error, ytd_qtrs, tradable_from DESC, q_value DESC
     ),
     -- Trailing twelve months: the annual figure at a fiscal year-end;
     -- else prior year + year-to-date - prior year's year-to-date to the
@@ -244,7 +257,7 @@ LANGUAGE sql STABLE AS $$
         SELECT DISTINCT ON (concept, quarter_end)
                concept, quarter_end, ttm_value, ttm_source, tradable_from
         FROM ttm_candidates
-        ORDER BY concept, quarter_end, pref
+        ORDER BY concept, quarter_end, pref, tradable_from DESC, ttm_value DESC
     ),
     -- The comparisons: the row before (a quarter earlier if it is 70 to
     -- 110 days back), the fourth row before (a year earlier if 345 to 385

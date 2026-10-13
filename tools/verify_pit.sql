@@ -1533,3 +1533,83 @@ FROM (
         FROM sec_gold.profitability_asof('SP500', DATE '2024-07-15')
     ) x
 ) t;
+
+\echo ''
+\echo '=== 68. The factor sheet: nine factors per constituent, percentiles signed so higher is better, nothing past the date ==='
+-- factor_sheet_asof (090) composes peer_stats_asof, profitability_asof
+-- and surprise_asof: S&P 500 on 2024-07-15, 501 rows, 496 with a
+-- composite (four or more factors), Apple all nine. revenue_growth is
+-- signed low-is-good (JKP sale_gr1), so the fastest grower has
+-- percentile 0 and the slowest 1; every other factor's top value has
+-- percentile 1. No annual period or quarter ends after the date, and no
+-- tradable_from is past it (measured 2026-10-12). One call of the sheet
+-- (about 100 s), read through a materialized CTE.
+WITH fs AS MATERIALIZED (
+    SELECT * FROM sec_gold.factor_sheet_asof('SP500', DATE '2024-07-15')
+),
+extremes AS (
+    SELECT MAX(revenue_growth) AS max_rg, MIN(revenue_growth) AS min_rg,
+           MAX(ocf_at) AS max_ocf, MAX(sue) AS max_sue
+    FROM fs
+)
+SELECT CASE WHEN rows_ >= 450 AND rows_ <= members AND with_composite >= 450
+             AND aapl_factors = 9 AND aapl_composite BETWEEN 0.7 AND 1
+             AND fastest_grower_pct = 0 AND slowest_grower_pct = 1 AND top_ocf_pct = 1 AND top_sue_pct = 1
+             AND pct_out_of_range = 0 AND future_rows = 0 AND composite_without_four = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       members, rows_ AS sheet_rows, with_composite, aapl_factors, aapl_composite,
+       fastest_grower_pct, slowest_grower_pct, top_ocf_pct, top_sue_pct, pct_out_of_range, future_rows, composite_without_four
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_reference.index_members('SP500', DATE '2024-07-15')) AS members,
+           COUNT(*) AS rows_, COUNT(fs.composite) AS with_composite,
+           MAX(fs.n_factors) FILTER (WHERE fs.cik = 320193) AS aapl_factors,
+           MAX(fs.composite) FILTER (WHERE fs.cik = 320193) AS aapl_composite,
+           MIN(fs.revenue_growth_pct) FILTER (WHERE fs.revenue_growth = e.max_rg) AS fastest_grower_pct,
+           MAX(fs.revenue_growth_pct) FILTER (WHERE fs.revenue_growth = e.min_rg) AS slowest_grower_pct,
+           MAX(fs.ocf_at_pct) FILTER (WHERE fs.ocf_at = e.max_ocf) AS top_ocf_pct,
+           MAX(fs.sue_pct) FILTER (WHERE fs.sue = e.max_sue) AS top_sue_pct,
+           COUNT(*) FILTER (WHERE fs.gp_at_pct NOT BETWEEN 0 AND 1 OR fs.ocf_at_pct NOT BETWEEN 0 AND 1 OR fs.roa_pct NOT BETWEEN 0 AND 1
+                               OR fs.roe_pct NOT BETWEEN 0 AND 1 OR fs.operating_margin_pct NOT BETWEEN 0 AND 1
+                               OR fs.revenue_growth_pct NOT BETWEEN 0 AND 1 OR fs.roe_q_pct NOT BETWEEN 0 AND 1
+                               OR fs.roa_q_pct NOT BETWEEN 0 AND 1 OR fs.sue_pct NOT BETWEEN 0 AND 1
+                               OR fs.gp_at_sector_pct NOT BETWEEN 0 AND 1 OR fs.sue_sector_pct NOT BETWEEN 0 AND 1
+                               OR fs.composite NOT BETWEEN 0 AND 1) AS pct_out_of_range,
+           COUNT(*) FILTER (WHERE fs.annual_period > DATE '2024-07-15' OR fs.quarter_end > DATE '2024-07-15'
+                               OR fs.annual_tradable_from > DATE '2024-07-15' OR fs.quarter_tradable_from > DATE '2024-07-15') AS future_rows,
+           COUNT(*) FILTER (WHERE fs.composite IS NOT NULL AND fs.n_factors < 4) AS composite_without_four
+    FROM fs CROSS JOIN extremes e
+) t;
+
+\echo ''
+\echo '=== 69. Month-end prices: as traded, one primary ticker per company, nothing from a month still open ==='
+-- sec_market.monthly_price (dera load-prices, Yahoo): close_raw is the
+-- as-traded close reconstructed from the split ratios, so Apple's July
+-- 2020 close is 425.04 (Yahoo restates it to 106.26 after the 4-for-1)
+-- and its May 2014 close 633.00 (7-for-1 then 4-for-1 later). One
+-- series per company, the primary ticker; every month_end is the
+-- month's last NYSE session and none is today or later. The monthly
+-- return screen leaves nothing over 3,000% (GameStop's January 2021
+-- is 1,625%). market_cap_at multiplies the as-traded close by the
+-- cover-page shares knowable on the date: Apple on 2024-11-15 about
+-- 3.4 trillion (measured 2026-10-12).
+SELECT CASE WHEN aapl_2020_07 BETWEEN 423 AND 427 AND aapl_2014_05 BETWEEN 630 AND 636
+             AND rows_ >= 250000 AND companies >= 1500 AND tickers_per_company = 1
+             AND not_a_session = 0 AND future_rows = 0 AND over_3000pct = 0
+             AND aapl_mcap BETWEEN 3.2e12 AND 3.6e12
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       aapl_2020_07 AS apple_close_raw_2020_07_31, aapl_2014_05 AS apple_close_raw_2014_05_30,
+       rows_ AS price_rows, companies, tickers_per_company, not_a_session, future_rows, over_3000pct,
+       ROUND(aapl_mcap / 1e12, 3) AS apple_market_cap_trn_2024_11_15
+FROM (
+    SELECT (SELECT ROUND(close_raw, 2) FROM sec_market.monthly_price WHERE cik = 320193 AND month_end = DATE '2020-07-31') AS aapl_2020_07,
+           (SELECT ROUND(close_raw, 2) FROM sec_market.monthly_price WHERE cik = 320193 AND month_end = DATE '2014-05-30') AS aapl_2014_05,
+           (SELECT COUNT(*) FROM sec_market.monthly_price) AS rows_,
+           (SELECT COUNT(DISTINCT cik) FROM sec_market.monthly_price) AS companies,
+           (SELECT MAX(n) FROM (SELECT COUNT(DISTINCT ticker) AS n FROM sec_market.monthly_price GROUP BY cik) t) AS tickers_per_company,
+           (SELECT COUNT(*) FROM sec_market.monthly_price p
+             WHERE NOT EXISTS (SELECT 1 FROM sec_reference.trading_calendar c WHERE c.session_date = p.month_end)) AS not_a_session,
+           (SELECT COUNT(*) FROM sec_market.monthly_price WHERE month_end >= CURRENT_DATE) AS future_rows,
+           (SELECT COUNT(*) FROM sec_market.monthly_return WHERE ret_1m > 30) AS over_3000pct,
+           (SELECT market_cap FROM sec_market.market_cap_at(320193, DATE '2024-11-15')) AS aapl_mcap
+) t;
+
