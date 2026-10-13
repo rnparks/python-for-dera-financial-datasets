@@ -278,6 +278,7 @@ uv run python tools/build_calendar.py                   # NYSE trading calendar,
 uv run python tools/fetch_usgaap_cost_elements.py       # FASB taxonomy: cost-of-revenue element years and calc tree
 uv run python tools/fetch_usgaap_element_docs.py        # FASB taxonomy: definitions and calc context of elements
 uv run python tools/ff_baseline.py SP500 --download     # factor spreads vs Fama-French 5 factors and momentum (data/external/french)
+uv run python tools/factor_report.py SP500              # the backtest report as one HTML file -> docs/reports/
 ```
 
 ## Keeping the documentation current
@@ -345,6 +346,8 @@ data/
 
 tests/               # pytest, pure functions only
 docs/                # architecture, schema, data sources, SEC references
+├── audits/         # generated audit tables
+└── reports/        # generated reports (docs/reports/factor_backtest_2026-10-13.html: the first backtest)
 tools/               # standalone utilities, verify_pit.sql, the pre-commit hook
 notebooks/
 ├── sec_examples/   # original SEC DERA tutorials (upstream)
