@@ -1613,3 +1613,40 @@ FROM (
            (SELECT market_cap FROM sec_market.market_cap_at(320193, DATE '2024-11-15')) AS aapl_mcap
 ) t;
 
+\echo ''
+\echo '=== 70. Suspect facts stay out of gold: a period after its filing date, a column printed in thousands or millions ==='
+-- sec_gold.suspect_fact (028) lists the silver rows the gold layer
+-- refuses; 030, 035, 060 and 070 anti-join it. Hill-Rom's FY2021 10-K
+-- (0000047518-21-000084) carries 34 balance lines a million times too
+-- small (total assets 4,999.1 dollars): they are listed with reason
+-- 'scale' (87 facts of 8 filers in all; a rule that caught real
+-- post-impairment income lines was rejected on measurement), so the
+-- newest total_assets knowable on 2021-12-31 is the June 2021 10-Q
+-- balance (4,572.7 million), not the 10-K's 4,999.1, and the FY2021 return
+-- on assets is absent rather than 49,709. Catalent's 10-Q of 2024-02-14 dates a nine-month net income
+-- to 2024-03-31: listed as 'period_after_filing', so no quarter ending
+-- after the knowledge date appears on 2024-03-28. Neither fact table
+-- holds a listed fact or a fact dated after its filing (2026-10-12).
+SELECT CASE WHEN scale_rows BETWEEN 50 AND 1000 AND after_filing_rows >= 5000
+             AND hillrom_scale_tags >= 5 AND hillrom_assets_period = DATE '2021-06-30'
+             AND hillrom_assets_value BETWEEN 1e9 AND 1e10 AND hillrom_fy2021_roa IS NULL
+             AND catalent_future_quarters = 0
+             AND fact_asof_suspects = 0 AND tradable_suspects = 0 AND fact_asof_after_filing = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       scale_rows, after_filing_rows, hillrom_scale_tags, hillrom_assets_period, hillrom_assets_value, hillrom_fy2021_roa,
+       catalent_future_quarters, fact_asof_suspects, tradable_suspects, fact_asof_after_filing
+FROM (
+    SELECT (SELECT COUNT(*) FROM sec_gold.suspect_fact WHERE reason = 'scale') AS scale_rows,
+           (SELECT COUNT(*) FROM sec_gold.suspect_fact WHERE reason = 'period_after_filing') AS after_filing_rows,
+           (SELECT COUNT(*) FROM sec_gold.suspect_fact WHERE cik = 47518 AND adsh = '0000047518-21-000084'
+               AND value_date = DATE '2021-09-30' AND reason = 'scale') AS hillrom_scale_tags,
+           (SELECT value_date FROM sec_gold.as_of_latest_annual(47518, 'total_assets', DATE '2021-12-31') LIMIT 1) AS hillrom_assets_period,
+           (SELECT value FROM sec_gold.as_of_latest_annual(47518, 'total_assets', DATE '2021-12-31') LIMIT 1) AS hillrom_assets_value,
+           (SELECT value FROM sec_gold.as_of_latest_annual(47518, 'roa', DATE '2021-12-31') WHERE value_date = DATE '2021-09-30' LIMIT 1) AS hillrom_fy2021_roa,
+           (SELECT COUNT(*) FROM sec_gold.as_of_quarterly(1596783, DATE '2024-03-28') WHERE quarter_end > DATE '2024-03-28') AS catalent_future_quarters,
+           (SELECT COUNT(*) FROM sec_gold.fact_asof f JOIN sec_gold.suspect_fact x
+               ON x.adsh = f.adsh AND x.tag = f.tag AND x.value_date = f.value_date AND x.qtrs = f.qtrs) AS fact_asof_suspects,
+           (SELECT COUNT(*) FROM sec_gold.tradable_financials f JOIN sec_gold.suspect_fact x
+               ON x.adsh = f.adsh AND x.tag = f.tag AND x.value_date = f.value_date AND x.qtrs = f.qtrs) AS tradable_suspects,
+           (SELECT COUNT(*) FROM sec_gold.fact_asof WHERE value_date > filed_date AND uom = 'USD') AS fact_asof_after_filing
+) t;

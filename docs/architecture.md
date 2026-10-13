@@ -8,7 +8,7 @@ A bronze/silver/gold medallion pipeline in Postgres. Python is responsible for d
 |---|---|---|---|
 | Bronze | `sec_raw` | `sub_raw`, `tag_raw`, `num_raw`, `pre_raw` — all `TEXT`, no constraints | `dera_pipeline.loader` via `COPY FROM STDIN` |
 | Silver | `sec_silver` | `sub_silver`, `tag_silver`, `num_silver`, `pre_silver` — typed, deduplicated and **bitemporal** (`pre_silver` is the statements' layout: every line with the label the filer printed); `financials(mode)` function | `sql/02_silver/*.sql` |
-| Gold | `sec_gold` | `fact_asof` (every vintage), `tradable_financials(_pit)`, `canonical_concepts` + `concept_tag_map` + `concept_formula` + `concept_ratio`, `peer_stats`, `share_class_shares`, the `as_of_*` accessor family, `peer_stats_asof()` and the quarterly/trailing functions (`as_of_quarterly()`, `as_of_trailing()`) the earnings-surprise functions (`as_of_surprise()`, `surprise_asof()`) the quarterly-profitability functions (`as_of_profitability()`, `profitability_asof()`) and the factor sheet (`factor_sheet_asof()`), all computed on demand | `sql/03_gold/*.sql` |
+| Gold | `sec_gold` | `suspect_fact` (the silver rows gold refuses), `fact_asof` (every vintage), `tradable_financials(_pit)`, `canonical_concepts` + `concept_tag_map` + `concept_formula` + `concept_ratio`, `peer_stats`, `share_class_shares`, the `as_of_*` accessor family, `peer_stats_asof()` and the quarterly/trailing functions (`as_of_quarterly()`, `as_of_trailing()`) the earnings-surprise functions (`as_of_surprise()`, `surprise_asof()`) the quarterly-profitability functions (`as_of_profitability()`, `profitability_asof()`) and the factor sheet (`factor_sheet_asof()`), all computed on demand | `sql/03_gold/*.sql` |
 | Spine | `sec_reference` | `company`, `company_ticker`, `security`, `listing`, `eligibility`, `delisting_event`, `trading_calendar`, `share_class` | `sql/00_reference`, `05_spine`, `06_security` + `dera_pipeline.{reference,filings}` |
 | Market | `sec_market` | `monthly_price` (Yahoo month-end closes for the primary ticker of every company ever in the S&P 1500; split-restated, total-return and reconstructed as-traded), `monthly_return`, `price_at()`, `market_cap_at()`, `factor_panel` (the factor sheet stored per knowledge date), `backtest()` and `backtest_summary()` | `sql/07_market/*.sql` + `dera_pipeline.prices` (`dera load-prices`, `dera build-factor-panel`) |
 
@@ -35,6 +35,7 @@ SEC DERA URLs
                            └─ sec_silver.num_silver                  SILVER
                                 └─ sec_silver.financials('pit')
                                 └─ sec_silver.financials('latest')
+                                     └─ sql/03_gold/028_suspect_fact.sql        (the rows gold refuses; anti-joined below)
                                      └─ sql/03_gold/030_tradable_financials.sql
                                           └─ sec_gold.tradable_financials
                                           └─ sec_gold.tradable_financials_pit  GOLD
@@ -191,14 +192,20 @@ change.
 
 ```bash
 uv run dera build-gold                 # full DDL rebuild
-uv run dera build-gold --refresh-only  # REFRESH the six matviews instead
+uv run dera build-gold --refresh-only  # REFRESH the seven matviews instead (suspect_fact first)
 uv run dera rebuild-reference          # REFRESH only the matviews whose spine inputs changed
 ```
 
 A plain `build-gold` re-runs the DDL, and `CREATE MATERIALIZED VIEW ... AS
 SELECT` populates as it goes — there is no separate REFRESH step to skip.
 `--no-refresh` exists only as an accepted alias for that default and is a
-no-op; `--refresh-only` is the flag that changes behaviour.
+no-op; `--refresh-only` is the flag that changes behaviour. The full
+build is one transaction, so an interrupted build rolls back to the gold
+layer it started from, and each matview is `ANALYZE`d by its own DDL as
+soon as its indexes exist: nothing else can gather statistics inside the
+transaction, and the file after it plans against those rows at once
+(`peer_stats` once ran eleven hours against an unanalysed
+`tradable_financials`; see docs/gold_tables.md's build notes).
 
 or manually:
 

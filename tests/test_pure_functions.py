@@ -404,7 +404,10 @@ def test_refresh_plan_mapping_change_refreshes_only_share_classes():
 
 def test_refresh_plan_everything_changed_is_the_full_list_in_order():
     from dera_pipeline import cli
-    assert cli.gold_refresh_plan(set(cli.SPINE_TABLES)) == list(cli.GOLD_MATVIEWS)
+    # suspect_fact (028) reads silver only, so a spine change never
+    # puts it in the plan; every other matview follows.
+    assert cli.gold_refresh_plan(set(cli.SPINE_TABLES)) == [
+        m for m in cli.GOLD_MATVIEWS if m != "sec_gold.suspect_fact"]
 
 
 def test_every_gold_matview_declares_its_inputs():

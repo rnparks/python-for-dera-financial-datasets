@@ -324,6 +324,7 @@ dera_pipeline/       # the Python package
 ├── downloader.py   # async retry+semaphore fetcher
 ├── filings.py      # EDGAR bulk submissions → security lifecycle events
 ├── loader.py       # bronze COPY-from-STDIN loader
+├── prices.py       # Yahoo month-end prices and the factor panel (sec_market)
 └── reference.py    # CSV → reference table loader
 
 sql/                 # executed in lexical order by directory
@@ -333,7 +334,8 @@ sql/                 # executed in lexical order by directory
 ├── 03_gold/        # matviews, canonical concepts, as-of accessors
 ├── 04_reference/   # universe_sp1500, ticker_map
 ├── 05_spine/       # company spine and dated crosswalk (needs 04 to be loaded first)
-└── 06_security/    # security model (needs the filing index loaded first)
+├── 06_security/    # security model (needs the filing index loaded first)
+└── 07_market/      # sec_market: month-end prices, the factor panel, the backtest (run by load-prices / build-factor-panel)
 
 data/
 ├── raw/            # DERA quarterly dumps      (gitignored, 29 GB)

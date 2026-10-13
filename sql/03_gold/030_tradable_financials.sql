@@ -89,7 +89,11 @@ LEFT JOIN sec_reference.index_membership_timeline asof
 JOIN sec_reference.index_membership_latest latest ON latest.cik = n.cik
 WHERE n.rank_latest = 1
   AND n.segments IS NULL
-  AND n.coreg    IS NULL;
+  AND n.coreg    IS NULL
+  -- Not a fact the gold layer refuses (028: mis-dated period, mis-scaled column).
+  AND NOT EXISTS (SELECT 1 FROM sec_gold.suspect_fact x
+                  WHERE x.adsh = n.adsh AND x.tag = n.tag
+                    AND x.value_date = n.value_date AND x.qtrs = n.qtrs);
 
 CREATE INDEX idx_tradable_ticker ON sec_gold.tradable_financials (ticker);
 CREATE INDEX idx_tradable_date   ON sec_gold.tradable_financials (value_date);
@@ -97,6 +101,11 @@ CREATE INDEX idx_tradable_tag    ON sec_gold.tradable_financials (tag);
 CREATE INDEX idx_tradable_cik    ON sec_gold.tradable_financials (cik);
 CREATE INDEX idx_tradable_avail  ON sec_gold.tradable_financials (tradable_from);
 CREATE INDEX idx_tradable_sector ON sec_gold.tradable_financials (gics_sector);
+
+-- Statistics now, not at commit: the gold build is one transaction, so
+-- autovacuum cannot see this matview until every file after it has
+-- already planned against it blind.
+ANALYZE sec_gold.tradable_financials;
 
 CREATE MATERIALIZED VIEW sec_gold.tradable_financials_pit AS
 SELECT
@@ -134,7 +143,10 @@ LEFT JOIN sec_reference.index_membership_timeline asof
 JOIN sec_reference.index_membership_latest latest ON latest.cik = n.cik
 WHERE n.rank_pit = 1
   AND n.segments IS NULL
-  AND n.coreg    IS NULL;
+  AND n.coreg    IS NULL
+  AND NOT EXISTS (SELECT 1 FROM sec_gold.suspect_fact x
+                  WHERE x.adsh = n.adsh AND x.tag = n.tag
+                    AND x.value_date = n.value_date AND x.qtrs = n.qtrs);
 
 CREATE INDEX idx_tradable_pit_ticker ON sec_gold.tradable_financials_pit (ticker);
 CREATE INDEX idx_tradable_pit_date   ON sec_gold.tradable_financials_pit (value_date);
@@ -142,6 +154,11 @@ CREATE INDEX idx_tradable_pit_tag    ON sec_gold.tradable_financials_pit (tag);
 CREATE INDEX idx_tradable_pit_cik    ON sec_gold.tradable_financials_pit (cik);
 CREATE INDEX idx_tradable_pit_avail  ON sec_gold.tradable_financials_pit (tradable_from);
 CREATE INDEX idx_tradable_pit_sector ON sec_gold.tradable_financials_pit (gics_sector);
+
+-- Statistics now, not at commit: the gold build is one transaction, so
+-- autovacuum cannot see this matview until every file after it has
+-- already planned against it blind.
+ANALYZE sec_gold.tradable_financials_pit;
 
 COMMENT ON MATERIALIZED VIEW sec_gold.tradable_financials_pit IS
     'Earliest-sighting value per fact. NOT availability-correct on its '

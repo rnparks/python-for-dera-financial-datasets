@@ -151,6 +151,11 @@ LEFT JOIN money  m  ON m.adsh = f.adsh;
 CREATE UNIQUE INDEX idx_debt_face_adsh ON sec_gold.debt_face (adsh);
 CREATE INDEX idx_debt_face_cik_date  ON sec_gold.debt_face (cik, period_date);
 
+-- Statistics now, not at commit: the gold build is one transaction, so
+-- autovacuum cannot see this matview until every file after it has
+-- already planned against it blind.
+ANALYZE sec_gold.debt_face;
+
 COMMENT ON MATERIALIZED VIEW sec_gold.debt_face IS
     'The balance-sheet face of every 10-K and 10-Q, read for borrowing '
     'lines by the labels the filer printed. zero_by_face is TRUE when the '

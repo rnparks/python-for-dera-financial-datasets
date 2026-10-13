@@ -117,6 +117,10 @@ LANGUAGE sql STABLE AS $$
               m.sic_prefix = ''
            OR s.sic::TEXT LIKE m.sic_prefix || '%'
           )
+          -- Not a fact the gold layer refuses (028).
+          AND NOT EXISTS (SELECT 1 FROM sec_gold.suspect_fact x
+                  WHERE x.adsh = n.adsh AND x.tag = n.tag
+                    AND x.value_date = n.value_date AND x.qtrs = n.qtrs)
         ORDER BY
           n.value_date   DESC,        -- most recent fiscal year first
           m.sic_prefix <> '' DESC,    -- industry-specific beats generic
@@ -160,6 +164,9 @@ LANGUAGE sql STABLE AS $$
                    OR (p_mode = 'pit'    AND n.rank_pit    = 1)
                   )
                   AND (m.sic_prefix = '' OR s.sic::TEXT LIKE m.sic_prefix || '%')
+                  AND NOT EXISTS (SELECT 1 FROM sec_gold.suspect_fact x
+                  WHERE x.adsh = n.adsh AND x.tag = n.tag
+                    AND x.value_date = n.value_date AND x.qtrs = n.qtrs)
                 GROUP BY n.value_date
                 ORDER BY n.value_date DESC
                 LIMIT 12

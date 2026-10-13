@@ -93,6 +93,22 @@ Rule 3 matters: before it, Apple's `total_debt` resolved to a 2015 `LongTermDebt
 
 ## Materialized views
 
+### `suspect_fact`
+
+The silver rows the gold layer **refuses to read**, with the reason: anti-joined by `tradable_financials`, `tradable_financials_pit`, `fact_asof`, `get_canonical()` / `resolve_direct()` and `latest_annual()`, so every function above them inherits the exclusion without knowing it. Each flag is decided from the filing itself and from filings already public when it landed, so a fact is suspect, or not, from the day it is filed and the flag never changes with later data (no look-ahead enters a value, and no later restatement un-flags one). Two reasons (2026-10-12):
+
+| Reason | What it catches | Rows |
+|---|---|---|
+| `period_after_filing` | The period ends after the filing date: a mis-dated XBRL context. Catalent's 10-Q of 2024-02-14 carries a nine-month net income "to 2024-03-31"; read as-is it is a figure knowable before its own period | 5,546 facts of 1,047 filers (2026-10-13) |
+| `scale` | A balance-sheet column printed in thousands or millions without saying so. Hill-Rom's FY2021 10-K carries total assets of 4,999.1 dollars against 4,671.1 million for FY2020 in the same filing, and 33 other balance lines off by the same million; read as-is it put a return on assets of 49,709 at the top of every assets-scaled sort | 87 facts of 8 filers, 42 of them from three S&P 1500 members (2026-10-13) |
+
+**The scale signature, measured until nothing real was caught.** In one filing at one period end, four or more tags are each a thousand or a million times smaller (within a factor of three) than the filing's own comparative for the prior period; each comparative agrees with the figure first filed for it, so the comparative is the trusted side; the largest comparative in the group is at least a million dollars; and either total assets is among the tags or the factor is a million. Looser rules were measured and rejected: "two or more tags" caught 18,677 facts, most of them real (post-impairment income lines a thousandfold smaller a year later at Cliffs and Valaris, seven lines moving together; cash-flow and OCI lines that legitimately collapse), and a three-tag rule caught SPACs whose trust shrank a thousandfold at redemption. Total assets of a million or more do not shrink a thousandfold outside liquidation; income and cash-flow lines do, so an income-statement column is not guarded by this rule, and the larger direction (a thousandfold growth) is never used. A suspect fact resolves to **nothing**: Hill-Rom's FY2021 `total_assets` is absent, the newest knowable on 2021-12-31 is the June 2021 10-Q balance of 4,572.7 million rather than the 10-K's 4,999.1, and its FY2021 `roa` is NULL rather than 49,709 (check 70).
+
+```sql
+SELECT reason, tag, value_date, value, reference_value, factor, tags_in_filing
+FROM sec_gold.suspect_fact WHERE cik = 47518 ORDER BY reason, tag;
+```
+
 ### `fact_asof`
 
 **The backtest source.** One row per (fact, filing), with every vintage retained — nothing is overwritten by a later restatement. 99.4M rows, 33 GB (2026-10-12), covering the full company spine rather than only S&P 1500 constituents, so it carries no survivorship bias of its own.
@@ -709,7 +725,7 @@ RETURNS TABLE (value_date DATE, filed_date DATE, metric TEXT, value_billions NUM
 
 ```bash
 uv run dera build-gold                 # full DDL rebuild (drops + recreates sec_gold), ~26 min; each file's seconds are printed
-uv run dera build-gold --refresh-only  # REFRESH all six matviews, in order
+uv run dera build-gold --refresh-only  # REFRESH all seven matviews, in order (suspect_fact first)
 uv run dera rebuild-reference          # after a reference change: CSVs, spine in place, security model, refresh what changed
 ```
 
@@ -717,7 +733,8 @@ Notes:
 
 - A full `build-silver` **drops gold's matviews** via `DROP SCHEMA sec_silver CASCADE`, so a full gold rebuild (not `--refresh-only`) follows it. The quarterly fold, `build-silver --quarter Q`, does not: it updates silver in place, and `rebuild-reference` then refreshes the matviews whose inputs changed. A spine rebuild no longer does: the spine tables are refilled in place and `rebuild-reference` refreshes only the matviews whose inputs changed (`--refresh-all` for all five; `--recreate-spine` after a column change in `sql/05_spine`, which drops the spine tables and gold with them).
 - `build-silver` runs `ANALYZE` on `sec_silver.num_silver` and `sub_silver` at the end of the build. Skipping it made the gold matview joins plan against a statistics-less 181M-row table (observed: 9 hours instead of ~1 minute).
-- `--refresh-only` refreshes all six matviews in dependency order, `peer_stats` last.
+- The gold build is **one transaction**: `DROP SCHEMA sec_gold CASCADE` and every file after it commit together, so a failure anywhere leaves the previous gold layer untouched, and nothing outside the transaction (autovacuum included) can analyse a new matview before the next file plans against it. Each matview's DDL therefore ends with `ANALYZE` of itself, and every `REFRESH` the CLI runs is followed by one. Without statistics `peer_stats` costed its fiscal-year-end check (an `EXISTS` inside an `OR`, which cannot become a semi-join) as a free per-row index probe and ran for eleven hours before it was cancelled (2026-10-12); the check is now a join against the distinct annual period ends, a hash join with or without statistics, and the rows it admits are byte-identical.
+- `--refresh-only` refreshes all seven matviews in dependency order, `suspect_fact` first and `peer_stats` last.
 - The functions can be re-applied one file at a time with `run_sql_file`; each drops its previous signature first.
 
 ## Derived concepts
@@ -803,6 +820,7 @@ Every mapping row carries `source` and `source_note`. Filing-sourced and vendor-
 | `016_fiscal_year.sql` | `fiscal_year_of()` |
 | `017_shift_sessions.sql` | `shift_sessions()` |
 | `020_metric_aliases.sql` | `metric_aliases` |
+| `028_suspect_fact.sql` | `suspect_fact`: the silver rows gold refuses (a period after its filing date; a mis-scaled balance-sheet column), anti-joined by 030, 035, 060 and 070 |
 | `030_tradable_financials.sql` | `tradable_financials`, `tradable_financials_pit` |
 | `037_debt_face.sql` | `debt_face` |
 | `035_fact_asof.sql` | `fact_asof` |

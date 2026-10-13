@@ -218,6 +218,11 @@ CREATE INDEX idx_scs_ticker   ON sec_gold.share_class_shares (price_ticker, valu
 CREATE INDEX idx_scs_asof     ON sec_gold.share_class_shares
     (cik, class_label, tradable_from, superseded_tradable);
 
+-- Statistics now, not at commit: the gold build is one transaction, so
+-- autovacuum cannot see this matview until every file after it has
+-- already planned against it blind.
+ANALYZE sec_gold.share_class_shares;
+
 COMMENT ON MATERIALIZED VIEW sec_gold.share_class_shares IS
     'Per-share-class share counts, the market-cap denominator. One row '
     'per (company, class, period, vintage, source tag). A class appears '

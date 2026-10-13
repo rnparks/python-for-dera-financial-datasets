@@ -71,7 +71,25 @@ DROP MATERIALIZED VIEW IF EXISTS sec_gold.peer_stats                  CASCADE;
 -- year, survivorship bias by construction.
 
 CREATE MATERIALIZED VIEW sec_gold.peer_stats AS
-WITH picked AS (
+WITH annual_dates AS (
+    -- Every (company, period end) at which the company reports an
+    -- annual (qtrs = 4) period: the fiscal year-ends. 34,555 rows
+    -- (2026-10-12). `picked` joins this set rather than probing it with
+    -- a correlated EXISTS: an EXISTS inside an OR cannot be pulled up
+    -- into a semi-join, so it ran as a per-row subplan, one index probe
+    -- for each of the 16M candidate facts, each walking every fact of
+    -- that company-date because no index carries qtrs. Against a table
+    -- with statistics that was tolerable; inside a full gold build, where
+    -- tradable_financials was created in the same transaction and has
+    -- none, the planner costed the probe as free and the build ran for
+    -- eleven hours before it was cancelled (2026-10-12). A hash join
+    -- against a 35K-row set is the same predicate with no estimate to
+    -- get wrong.
+    SELECT DISTINCT ae.cik, ae.value_date
+    FROM sec_gold.tradable_financials ae
+    WHERE ae.qtrs = 4
+),
+picked AS (
     -- One value per (company, concept, fiscal year), picking the
     -- best-priority tag. Industry-specific tag rows are eligible and
     -- preferred where the company's SIC matches; excluding them used to
@@ -98,6 +116,7 @@ WITH picked AS (
     JOIN sec_gold.concept_tag_map      m ON m.tag = tf.tag
     JOIN sec_gold.canonical_concepts   c ON c.concept = m.concept
     LEFT JOIN sec_reference.company    co ON co.cik = tf.cik
+    LEFT JOIN annual_dates             ad ON ad.cik = tf.cik AND ad.value_date = tf.value_date
     WHERE tf.qtrs = CASE WHEN c.fact_type = 'balance' THEN 0 ELSE 4 END
       AND tf.value IS NOT NULL
       AND tf.uom = 'USD'      -- dollars only: Berkshire's yen notes (060)
@@ -111,10 +130,9 @@ WITH picked AS (
       -- December flows by March debt. A balance is admitted only when
       -- the company reports an annual (qtrs = 4) period ending on that
       -- same date, which is what "the fiscal year-end balance" means
-      -- here without trusting SEC's inconsistent fy field.
-      AND (c.fact_type <> 'balance'
-           OR EXISTS (SELECT 1 FROM sec_gold.tradable_financials ae
-                       WHERE ae.cik = tf.cik AND ae.value_date = tf.value_date AND ae.qtrs = 4))
+      -- here without trusting SEC's inconsistent fy field (the
+      -- annual_dates join above).
+      AND (c.fact_type <> 'balance' OR ad.cik IS NOT NULL)
       AND (m.sic_prefix = '' OR co.sic_latest::TEXT LIKE m.sic_prefix || '%')
       -- DERA publishes filer typos as-is, spanning 1980 to 2031. Left
       -- unbounded they poison the peer moments.
@@ -380,6 +398,11 @@ CREATE INDEX idx_peerstats_cik     ON sec_gold.peer_stats (cik);
 CREATE INDEX idx_peerstats_index   ON sec_gold.peer_stats (index_name, fiscal_year);
 CREATE INDEX idx_peerstats_lookup  ON sec_gold.peer_stats (peer_level, concept, fiscal_year);
 CREATE INDEX idx_peerstats_group   ON sec_gold.peer_stats (peer_level, peer_group, fiscal_year, concept);
+
+-- Statistics now, not at commit: the gold build is one transaction, so
+-- autovacuum cannot see this matview until every file after it has
+-- already planned against it blind.
+ANALYZE sec_gold.peer_stats;
 
 COMMENT ON MATERIALIZED VIEW sec_gold.peer_stats IS
     'Cross-sectional peer scores at two GICS levels. Filter on '

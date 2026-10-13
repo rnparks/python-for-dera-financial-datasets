@@ -71,7 +71,14 @@ WHERE n.segments IS NULL
   -- aggregate keyed on date. Bounded generously so real restatements of
   -- old periods survive.
   AND n.value_date >= DATE '2005-01-01'
-  AND n.value_date <= CURRENT_DATE + INTERVAL '1 year';
+  AND n.value_date <= CURRENT_DATE + INTERVAL '1 year'
+  -- Not a fact the gold layer refuses (028: a period ending after its
+  -- own filing date, or a column printed in thousands or millions
+  -- without saying so). Every as_of_* function reads this table, so
+  -- one predicate here covers them all.
+  AND NOT EXISTS (SELECT 1 FROM sec_gold.suspect_fact x
+                  WHERE x.adsh = n.adsh AND x.tag = n.tag
+                    AND x.value_date = n.value_date AND x.qtrs = n.qtrs);
 
 -- The interval scan above is the hot path: company, concept, period,
 -- then the two availability bounds.
@@ -84,6 +91,11 @@ CREATE INDEX idx_factasof_tag    ON sec_gold.fact_asof (tag, value_date);
 -- No cik-only index: cik leads idx_factasof_lookup, which serves every
 -- per-company predicate. The separate one was 653 MB of duplicate work.
 CREATE INDEX idx_factasof_sector ON sec_gold.fact_asof (gics_sector, tradable_from);
+
+-- Statistics now, not at commit: the gold build is one transaction, so
+-- autovacuum cannot see this matview until every file after it has
+-- already planned against it blind.
+ANALYZE sec_gold.fact_asof;
 
 COMMENT ON MATERIALIZED VIEW sec_gold.fact_asof IS
     'Bitemporal fact table: one row per (fact, filing). Every vintage '

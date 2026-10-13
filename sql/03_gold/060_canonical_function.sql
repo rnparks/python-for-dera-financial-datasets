@@ -77,6 +77,10 @@ LANGUAGE sql STABLE AS $$
           m.sic_prefix = ''
        OR s.sic::TEXT LIKE m.sic_prefix || '%'
       )
+      -- Not a fact the gold layer refuses (028).
+      AND NOT EXISTS (SELECT 1 FROM sec_gold.suspect_fact x
+                  WHERE x.adsh = n.adsh AND x.tag = n.tag
+                    AND x.value_date = n.value_date AND x.qtrs = n.qtrs)
     ORDER BY
       m.sic_prefix <> '' DESC,
       m.priority        ASC

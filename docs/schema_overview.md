@@ -185,6 +185,7 @@ full reference including every function signature.
 
 | Object | Kind | Rows | Size | What it is |
 |---|---|---:|---:|---|
+| `suspect_fact` | matview | 5.7K | 9 MB | The silver rows gold refuses, with the reason: a period ending after its filing date (5,546) or a balance-sheet column a thousand or a million times too small (87); anti-joined by the two fact matviews and the silver-reading functions |
 | `fact_asof` | matview | 97.9M | 33 GB | **Bitemporal facts, every vintage. The backtest source** |
 | `tradable_financials` | matview | 12.4M | 3.5 GB | Latest-restated facts, one row per fact; index membership and GICS dated |
 | `tradable_financials_pit` | matview | 12.4M | 3.6 GB | Earliest-sighting twin |

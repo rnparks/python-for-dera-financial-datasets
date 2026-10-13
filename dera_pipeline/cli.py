@@ -52,7 +52,7 @@ Prices (a vendor, not SEC data; schema ``sec_market``)::
 
 Verification::
 
-    uv run dera verify        # 69 data-correctness checks
+    uv run dera verify        # 70 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 
@@ -270,6 +270,7 @@ def cmd_build_silver(args: argparse.Namespace) -> int:
 # that every as_of_* function reads. That is exactly the failure this
 # constant exists to prevent.
 GOLD_MATVIEWS = (
+    "sec_gold.suspect_fact",
     "sec_gold.tradable_financials",
     "sec_gold.tradable_financials_pit",
     "sec_gold.fact_asof",
@@ -291,12 +292,17 @@ SPINE_TABLES = (
     "share_class",
 )
 GOLD_INPUTS: dict[str, frozenset[str]] = {
+    # suspect_fact reads silver only (028); it refreshes first so the
+    # two fact matviews anti-join a current list.
+    "sec_gold.suspect_fact": frozenset(),
     "sec_gold.tradable_financials": frozenset(
-        {"company", "company_ticker", "index_membership_timeline", "index_membership_latest"}),
+        {"company", "company_ticker", "index_membership_timeline", "index_membership_latest",
+         "sec_gold.suspect_fact"}),
     "sec_gold.tradable_financials_pit": frozenset(
-        {"company", "company_ticker", "index_membership_timeline", "index_membership_latest"}),
+        {"company", "company_ticker", "index_membership_timeline", "index_membership_latest",
+         "sec_gold.suspect_fact"}),
     "sec_gold.fact_asof": frozenset(
-        {"company", "index_membership_timeline", "index_membership_latest"}),
+        {"company", "index_membership_timeline", "index_membership_latest", "sec_gold.suspect_fact"}),
     "sec_gold.share_class_shares": frozenset(
         {"company", "company_ticker", "share_class"}),
     "sec_gold.debt_face": frozenset({"company"}),
@@ -328,13 +334,18 @@ def _refresh_matview(cur, matview: str) -> None:
     and re-runs under the session's defaults, and peer_stats' window
     sorts spilled to disk at the default 4 MB: 4:53 against 15 s for the
     same query with 1 GB. So every refresh gets the DDL's work_mem, and
-    peer_stats gets its two pinned planner settings as well.
+    peer_stats gets its two pinned planner settings as well. Each
+    refresh ends with ANALYZE: the next matview in the plan is built
+    from this one in the same transaction, before autovacuum can see
+    the new rows, and a plan made without statistics is how the full
+    build once ran for eleven hours on peer_stats (080).
     """
     pinned = _PINNED_PLAN.get(matview, ())
     cur.execute("SET LOCAL work_mem = '1GB'")
     for guc in pinned:
         cur.execute(f"SET LOCAL {guc} = off")
     cur.execute(f"REFRESH MATERIALIZED VIEW {matview}")
+    cur.execute(f"ANALYZE {matview}")
     for guc in pinned:
         cur.execute(f"RESET {guc}")
     cur.execute("RESET work_mem")
@@ -385,8 +396,8 @@ def _missing_matviews(conn) -> list[str]:
 def cmd_build_gold(args: argparse.Namespace) -> int:
     """Build (or refresh) the gold layer.
 
-    On first build the ``sql/03_gold`` DDL creates the six matviews
-    across five files (030, 035, 037, 056, 080) with
+    On first build the ``sql/03_gold`` DDL creates the seven matviews
+    across six files (028, 030, 035, 037, 056, 080) with
     ``CREATE MATERIALIZED VIEW ... AS SELECT``, which populates them
     immediately — no separate REFRESH is needed. On a
     rebuild against an existing gold schema, pass ``--refresh-only`` to run
