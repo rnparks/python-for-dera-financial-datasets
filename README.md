@@ -62,7 +62,7 @@ Internet Archive captures of SEC's ticker file; Wikipedia page history
 
 ## Setup
 
-Requires Python ≥ 3.11 and Postgres ≥ 14 with the `btree_gist` contrib extension (the spine creates it; it enforces that the membership timeline never overlaps). Install [uv](https://docs.astral.sh/uv/) if you don't have it.
+Requires Python ≥ 3.11 and Postgres ≥ 14 with the `btree_gist` contrib extension (the spine creates it; it enforces that the membership timeline never overlaps). The `pgstattuple` contrib extension is optional and nothing in the pipeline uses it: `pgstattuple_approx` measures the free space a quarterly fold leaves in the big heaps (`docs/schema_overview.md`, the sizes). Install [uv](https://docs.astral.sh/uv/) if you don't have it.
 
 ```bash
 uv sync

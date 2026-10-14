@@ -1,7 +1,7 @@
 # Schema overview
 
 Every table and materialized view in the database, what it is for, and which
-layer it belongs to. **Sizes and row counts are as of 2026-09-04.**
+layer it belongs to. **Sizes and row counts are as of 2026-10-14.**
 
 If you are new here, read `docs/data_sources.md` first — it explains what is
 flowing in. `docs/gold_tables.md` is the deep reference for `sec_gold`; this
@@ -12,12 +12,19 @@ document is the map.
 ## The five schemas
 
 ```
-sec_raw          bronze    37 GB   raw SEC text, all TEXT, no constraints
-   └─ sec_silver silver    62 GB   typed, deduplicated, bitemporal facts
-        └─ sec_gold  gold  40 GB   query-facing views, concepts, peer stats
-   sec_reference  spine   269 MB   companies, securities, universes, calendar
-   sec_market     prices   <100 MB  month-end closes (Yahoo), the factor panel, the backtest
+sec_raw          bronze    41 GB   raw SEC text, all TEXT, no constraints
+   └─ sec_silver silver    80 GB   typed, deduplicated, bitemporal facts
+        └─ sec_gold  gold  43 GB   query-facing views, concepts, peer stats
+   sec_reference  spine   412 MB   companies, securities, universes, calendar
+   sec_market     prices   185 MB   month-end closes (Yahoo), the factor panel, the backtest
 ```
+
+164 GB in all (2026-10-14). 6.5 GB of it is free space inside
+`sec_silver.num_silver` — 11.6% of that heap, measured with the optional
+`pgstattuple` extension's `pgstattuple_approx` — left by the quarterly folds:
+a fold deletes the replaced quarter and inserts the new one, and Postgres keeps
+the freed pages for the next load rather than returning them to the file
+system. The other large heaps are 1–3% free; nothing needs a `VACUUM FULL`.
 
 `sec_reference` deliberately sits **outside** the bronze→silver→gold chain.
 `build-silver` opens with `DROP SCHEMA sec_silver CASCADE`, and the trading
@@ -37,11 +44,11 @@ reasoned about rather than at ingest.
 
 | Table | Rows | Size | What it is |
 |---|---:|---:|---|
-| `num_raw` | 176.2M | 30 GB | Numeric facts — the actual financial data |
-| `pre_raw` | 45.8M | 6.7 GB | Presentation: how facts map to statement lines |
-| `tag_raw` | 4.7M | 1.2 GB | XBRL taxonomy: tag names, labels, definitions |
-| `sub_raw` | 419.8K | 141 MB | Submissions: one row per filing |
-| `load_log` | 70 | 32 kB | Which quarters have been loaded (drives incremental load; a logged quarter is refused unless `--force` replaces it) |
+| `num_raw` | 188.9M | 32 GB | Numeric facts — the actual financial data |
+| `pre_raw` | 46.5M | 7.1 GB | Presentation: how facts map to statement lines |
+| `tag_raw` | 5.0M | 1.3 GB | XBRL taxonomy: tag names, labels, definitions |
+| `sub_raw` | 440.2K | 149 MB | Submissions: one row per filing |
+| `load_log` | 71 | 64 kB | Which quarters have been loaded (drives incremental load; a logged quarter is refused unless `--force` replaces it) |
 
 Every row of the four raw tables carries `source_quarter`, the DERA file it came from, filled by a transaction-local setting the loader makes before each COPY. It is what `dera load --quarter Q --force` deletes by and what `dera build-silver --quarter Q` reads; a BRIN index on it is enough because rows are appended a quarter at a time.
 
@@ -52,12 +59,12 @@ is established.
 
 | Table | Rows | Size | What it is |
 |---|---:|---:|---|
-| `num_silver` | 185.0M | 60 GB | **The core fact table.** Every vintage of every fact |
-| `tag_silver` | 4.5M | 1.5 GB | Deduplicated taxonomy |
-| `sub_silver` | 433.7K | 111 MB | Filings with `known_at` (acceptance instant) and `tradable_from` |
-| `pre_silver` | 45.8M | 9.5 GB | Every statement line of every filing as rendered: statement, row order, the tag behind the line and the label the filer printed. The balance-sheet face `sec_gold.debt_face` reads |
+| `num_silver` | 188.9M | 69 GB | **The core fact table.** Every vintage of every fact |
+| `tag_silver` | 4.5M | 1.4 GB | Deduplicated taxonomy |
+| `sub_silver` | 440.2K | 121 MB | Filings with `known_at` (acceptance instant) and `tradable_from` |
+| `pre_silver` | 46.5M | 9.6 GB | Every statement line of every filing as rendered: statement, row order, the tag behind the line and the label the filer printed. The balance-sheet face `sec_gold.debt_face` reads |
 | `ticker_map` | 10.2K | 1.3 MB | Legacy CIK ↔ ticker crosswalk (superseded by `sec_reference`) |
-| `universe_sp1500` | 1,505 | 376 kB | **Today's** S&P 1500 membership — no dates; only the `is_primary` tie-break reads it now |
+| `universe_sp1500` | 1,505 | 336 kB | **Today's** S&P 1500 membership — no dates; only the `is_primary` tie-break reads it now |
 
 `num_silver` carries the availability columns everything else depends on:
 `known_at`, `tradable_from`, `vintage_seq`, `superseded_known_at`,
@@ -185,13 +192,13 @@ full reference including every function signature.
 
 | Object | Kind | Rows | Size | What it is |
 |---|---|---:|---:|---|
-| `suspect_fact` | matview | 5.7K | 9 MB | The silver rows gold refuses, with the reason: a period ending after its filing date (5,546) or a balance-sheet column a thousand or a million times too small (87); anti-joined by the two fact matviews and the silver-reading functions |
-| `fact_asof` | matview | 97.9M | 33 GB | **Bitemporal facts, every vintage. The backtest source** |
-| `tradable_financials` | matview | 12.4M | 3.5 GB | Latest-restated facts, one row per fact; index membership and GICS dated |
-| `tradable_financials_pit` | matview | 12.4M | 3.6 GB | Earliest-sighting twin |
-| `debt_face` | matview | 401.1K | 136 MB | Every 10-K and 10-Q balance sheet read for borrowing lines by the labels the filer printed; `zero_by_face` (82,342 filings) is the only source of a `total_debt` of zero and `reason` says why every other face is not one |
-| `peer_stats` | matview | 655.0K | 168 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the day for all three indexes; scored concepts only |
-| `share_class_shares` | matview | 777.5K | 218 MB | Per-class share counts for 9,654 companies, delisted included — the market-cap denominator |
+| `suspect_fact` | matview | 5.6K | 2.2 MB | The silver rows gold refuses, with the reason: a period ending after its filing date (5,546) or a balance-sheet column a thousand or a million times too small (87); anti-joined by the two fact matviews and the silver-reading functions |
+| `fact_asof` | matview | 99.4M | 33 GB | **Bitemporal facts, every vintage. The backtest source** |
+| `tradable_financials` | matview | 16.5M | 4.6 GB | Latest-restated facts, one row per fact; index membership and GICS dated |
+| `tradable_financials_pit` | matview | 16.5M | 4.7 GB | Earliest-sighting twin |
+| `debt_face` | matview | 406.8K | 138 MB | Every 10-K and 10-Q balance sheet read for borrowing lines by the labels the filer printed; `zero_by_face` (83,631 filings) is the only source of a `total_debt` of zero and `reason` says why every other face is not one |
+| `peer_stats` | matview | 761.7K | 196 MB | Cross-sectional scores at sector and sub-industry; each fiscal year's panel is the index of the day for all three indexes; scored concepts only |
+| `share_class_shares` | matview | 788.0K | 220 MB | Per-class share counts for 9,679 companies, delisted included — the market-cap denominator |
 | `canonical_concepts` | table | 49 | — | Research taxonomy: 28 scored concepts (revenue, total_debt, net_margin, gross_profit_to_assets, ocf_to_assets, revenue_growth, …) and 21 unscored operands (19 instrument lines, the two cost components) |
 | `concept_tag_map` | table | 112 | — | Priority-ordered XBRL tag resolution; dollar facts only |
 | `concept_formula_variant` | table | 4 | — | The variants of a derived concept, in order, with an industry scope and a custom-line guard |
