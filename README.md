@@ -82,7 +82,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 74 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 75 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -284,8 +284,8 @@ uv run python tools/ff_baseline.py SP500 --download     # factor spreads vs Fama
 uv run python tools/factor_report.py SP500              # the backtest report as one HTML file -> docs/reports/
 uv run python tools/factor_report.py --overview         # the four universes side by side, after the four per-index runs
 uv run python tools/score_methods.py                   # AQR, MSCI and Barra scoring, strict sector-neutral, equal- and cap-weighted -> docs/reports/ (market caps cached in data/external/french)
-uv run python tools/score_methods.py --variants        # the registry of constructions side by side: Financials scored within their SIC industry group, banks and insurers on comparable measures only, both, and the ex-Financials control
-uv run python tools/score_methods.py --grouping industry --financial-measures comparable   # any combination of the switches as a single run (also --exclude-sectors)
+uv run python tools/score_methods.py --variants        # the registry of constructions side by side: Financials scored within their SIC industry group, banks and insurers on comparable measures only, on their own descriptors (sec_gold.financial_descriptors_asof), both, and the ex-Financials control
+uv run python tools/score_methods.py --grouping industry --financial-measures specific   # any combination of the switches as a single run (--financial-measures all, comparable or specific; also --exclude-sectors)
 ```
 
 ## Keeping the documentation current

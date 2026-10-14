@@ -1785,3 +1785,29 @@ FROM (
              WHERE p.index_name = 'SP500'
                AND p.asof = (SELECT MAX(asof) FROM sec_market.factor_panel WHERE index_name = 'SP500' AND asof <= DATE '2013-07-31')) AS sp500_top_share
 ) t;
+
+\echo '=== 75. The financial descriptors reproduce the ratios the filers report, point in time ==='
+-- sec_gold.financial_descriptors_asof (058) computes a bank's, an insurer's
+-- and a REIT's own measures from the silver facts knowable on the date.
+-- Pinned on 2025-03-31, when the FY2024 10-Ks were knowable, against the
+-- figures the companies reported for 2024: JPMorgan's overhead ratio 52%
+-- (ours 51.7%) and pre-provision profit to assets about 2.1%; Citigroup's
+-- return on tangible common equity 7.0% (ours 6.9%, on total equity);
+-- Travelers' loss and loss-adjustment ratio 64.4% (ours 64.5%); Prologis's
+-- FFO to equity in the band its reported FFO implies (its gains sit in
+-- custom tags, so ours reads about a point high). Bands, not points, so a
+-- restated fact does not fail the suite.
+SELECT CASE WHEN jpm_eff BETWEEN 0.49 AND 0.55 AND jpm_ppnr BETWEEN 0.018 AND 0.025
+             AND c_rote BETWEEN 0.05 AND 0.09 AND trv_loss BETWEEN 0.60 AND 0.70
+             AND pld_ffo_be BETWEEN 0.07 AND 0.15 AND jpm_period = DATE '2024-12-31'
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       jpm_period, round(jpm_eff, 3) AS jpm_eff, round(jpm_ppnr, 4) AS jpm_ppnr, round(c_rote, 3) AS c_rote,
+       round(trv_loss, 3) AS trv_loss, round(pld_ffo_be, 3) AS pld_ffo_be
+FROM (
+    SELECT (SELECT annual_period FROM sec_gold.financial_descriptors_asof(19617, DATE '2025-03-31')) AS jpm_period,
+           (SELECT efficiency FROM sec_gold.financial_descriptors_asof(19617, DATE '2025-03-31')) AS jpm_eff,
+           (SELECT ppnr_at FROM sec_gold.financial_descriptors_asof(19617, DATE '2025-03-31')) AS jpm_ppnr,
+           (SELECT rote FROM sec_gold.financial_descriptors_asof(831001, DATE '2025-03-31')) AS c_rote,
+           (SELECT loss_ratio FROM sec_gold.financial_descriptors_asof(86312, DATE '2025-03-31')) AS trv_loss,
+           (SELECT ffo_be FROM sec_gold.financial_descriptors_asof(1045609, DATE '2025-03-31')) AS pld_ffo_be
+) t;

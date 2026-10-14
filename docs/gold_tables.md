@@ -40,6 +40,7 @@ For the whole database — including `sec_reference`, which holds the survivorsh
 | `quarterly()`, `trailing()` | function | — | The same as of today (latest restated vintage); not for a backtest |
 | [`peer_stats_asof()`](#peer_stats_asof) | function | — | Peer cross-section of an index as it was knowable on a date; computed on demand |
 | [`shares_outstanding_at()`](#shares_outstanding_at) | function | — | Single collapsed share count. NOT sufficient for multi-class market cap |
+| [`financial_descriptors_asof()`](#financial_descriptors_asof) | function | — | A bank's, an insurer's and a REIT's own quality measures knowable on a date: return on tangible equity, pre-provision profit, efficiency, provisions, loss ratio, insurer margin, FFO |
 | [`share_classes_at()`](#share_classes_at) | function | — | Every share class for a company as of a date, one row per class |
 | `norm_ticker()` | function | — | Ticker to stored form (`BRK.B` → `BRK-B`) |
 | `fiscal_year_of()` | function | — | Peer-comparison year key for non-December filers |
@@ -681,6 +682,17 @@ sec_gold.shares_outstanding_at(p_cik INTEGER, p_asof DATE, p_buffer_sessions INT
 
 One collapsed share count knowable on the date, by a tag ladder (`EntityCommonStockSharesOutstanding`, `CommonStockSharesOutstanding`, `CommonStockSharesIssued`, then weighted averages) with mapped share-class summation. An instant count within 400 days of the newest available period beats a period average at the newest period; when only an average is that recent, `source_tag` says so (130 of 1,573 tracked companies today). Class rows are summed per period length: a second- or third-quarter 10-Q reports the quarter's and the year-to-date weighted average at one period end, and adding them had read Berkshire at 4.31B for 2.155B (fixed 2026-10-12; check 15 pins a fixed date). A count more than 333 times, or less than a 333rd of, the filing's own net income over basic EPS is refused as mis-scaled, and the ladder falls through to the next candidate: Reinsurance Group of America's 10-Qs from 2023 carry `CommonStockSharesIssued` of 85,310,598,000,000 against 85,310,598 on its 10-Ks, and Horace Mann's 10-Ks carry each weighted average twice, once a thousand-fold too large; read as-is the first was a $17 quadrillion market cap at the top of every cap-weighted sort it touched. A filing without both facts (19% of filings with a share fact; Berkshire dimensions its EPS by class and so never has one) meets a second test: a consolidated count that another knowable filing of the same tag within 400 days contradicts by 333 times or more is refused, together with the values it contradicts, since without an income line nothing can say which side is right (Berkshire's 2011-12 averages, a million-fold, read as $126 trillion and 92% of the S&P 500's market cap); the ladder then falls through to another tag or to nothing. Measured 2026-10-14 over the factor panel's companies: 1,812 instant counts of 276 companies in 657 filings refused, and 7,024 weighted averages; check 74 pins four of the names and the largest single share of a universe's cap. `share_class_shares` has no such guard yet. **Not sufficient for market cap on a multi-class issuer**; use `share_classes_at()`.
 
+### `financial_descriptors_asof()`
+
+```sql
+sec_gold.financial_descriptors_asof(p_cik INTEGER, p_asof DATE, p_buffer_sessions INTEGER DEFAULT 0)
+  RETURNS TABLE (annual_period DATE, tradable_from DATE,
+                 rote NUMERIC, ppnr_at NUMERIC, efficiency NUMERIC, nii_at NUMERIC, provisions_at NUMERIC,
+                 loss_ratio NUMERIC, insurer_margin NUMERIC, ffo_be NUMERIC, ffo_at NUMERIC)
+```
+
+The measures a bank's, an insurer's and a REIT's own analysts use, which the nine factors of the sheet cannot express (a bank has no gross profit and no operating margin, and its returns on assets divide by leverage), from the newest fiscal year whose net income is knowable on the date, with the rules the rest of gold uses: only facts knowable on the date, only undimensioned consolidated values, nothing from `suspect_fact`, nothing imputed. Return on tangible equity is net income over equity less the filed goodwill-and-intangibles line (or goodwill and, when filed, other intangibles; NULL when no us-gaap goodwill line is filed, which is JPMorgan's case); pre-provision profit to assets is net interest income plus non-interest income less non-interest expense over assets; the efficiency ratio is non-interest expense over the two incomes; net interest income to assets stands in for the margin; provisions to assets takes the first filed of six provision tags, the pre-CECL lines and the CECL credit-loss expense (assets rather than loans, filed on 100% against 64% of bank years); the loss ratio is policyholder benefits and claims over premiums earned; the insurer margin is revenues less benefits, losses and expenses over revenues; FFO is net income plus depreciation and amortisation less the first filed of five gain-on-sale tags, an approximation of NAREIT's, over equity and over assets. Measured 2026-10-14 on 2025-03-31 against reported 2024 figures: JPMorgan's overhead ratio 51.7% (reported 52%), Citigroup's return on tangible equity 6.9% (7.0%), Travelers' loss ratio 64.5% (64.4%); check 75. Stores nothing; `tools/score_methods.py --financial-measures specific` computes it for the panel's financials once and caches the result outside the database.
+
 ### `share_classes_at()`
 
 ```sql
@@ -830,6 +842,7 @@ Every mapping row carries `source` and `source_note`. Filing-sourced and vendor-
 | `050_canonical_concepts.sql` | `canonical_concepts`, `concept_tag_map`, `concept_formula_variant`, `concept_formula`, `concept_ratio` |
 | `055_shares_outstanding.sql` | `shares_outstanding_at()` |
 | `056_share_class_shares.sql` | `share_class_shares`, `share_classes_at()` |
+| `058_financial_descriptors.sql` | `financial_descriptors_asof()` |
 | `060_canonical_function.sql` | `resolve_direct()`, `get_canonical()`, `get_canonical_by_ticker()` |
 | `065_asof_functions.sql` | the `as_of_*` functions, including both `as_of_snapshot` overloads and `as_of_canonical_at()` |
 | `067_trailing.sql` | `as_of_quarterly()`, `as_of_trailing()` (CIK and ticker forms), `quarterly()`, `trailing()`: quarterly flows and trailing twelve months, computed on demand |

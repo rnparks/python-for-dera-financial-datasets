@@ -844,6 +844,9 @@ def test_variant_name_and_label_from_switches():
     assert vn({**base, "measures": "comparable"}) == "comparable"
     assert vn({**base, "grouping": "industry", "measures": "comparable"}) == "industry-comparable"
     assert vn({**base, "exclude": ("Financials", "Real Estate")}) == "ex-financials"      # the registry's name wins
+    assert vn({**base, "measures": "specific"}) == "specific"
+    assert vn({**base, "grouping": "industry", "measures": "specific"}) == "industry-specific"
+    assert vl({**base, "measures": "specific"}) == "specific measures"
     custom = {**base, "grouping": "industry", "exclude": ("Utilities",)}
     assert vn(custom) == "industry-ex-utilities" and vl(custom) == "industry-relative, ex-Utilities"
     assert score_methods.sql_params("SP400", custom)["exclude"] == ["Utilities"]
@@ -862,3 +865,14 @@ def test_drop_dominant_caps_nulls_only_the_dominant_company_date():
     assert dropped.iloc[0]["share"] == pytest.approx(0.92)
     assert math.isnan(out.loc[0, "market_cap"]) and out["market_cap"].notna().sum() == 12
     assert (out.loc[out["asof"] == d2, "market_cap"] == 1.0).all()      # a tenth each: nothing dominant on the second date
+
+
+def test_descriptors_are_signed_and_grouped_and_in_the_sql():
+    names = [n for n, _, _, _ in score_methods.DESCRIPTORS]
+    assert names == score_methods.DESC_COLS and len(set(names)) == len(names)
+    for n, label, sign, grp in score_methods.DESCRIPTORS:
+        assert sign in (1, -1) and grp in score_methods.DESCRIPTOR_GROUPS
+        assert (sign == -1) == ("low is good" in label)                     # a negated ratio says so in its label
+        assert f"('{n}', {'-' if sign < 0 else ''}p.{n}, '{grp}')" in score_methods.SQL_SCORE
+    assert "WHEN c.sic_latest BETWEEN 6000 AND 6199 THEN 'banks'" in score_methods.SQL_SCORE
+    assert "d.rote" in score_methods.SQL_DESC or "f.rote" in score_methods.SQL_DESC

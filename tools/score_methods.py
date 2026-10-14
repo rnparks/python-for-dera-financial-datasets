@@ -56,7 +56,7 @@ all applied at run time to the stored panel (nothing is rebuilt):
                  otherwise), the sort still within the sector; a group
                  under ten members on a date, or a member without a SIC, is
                  scored within the sector
-  --financial-measures all|comparable
+  --financial-measures all|comparable|specific
                  comparable: a member with SIC 6000-6499 (depository and
                  non-depository credit, brokers and exchanges, insurance
                  carriers and agents) is scored only on the measures that
@@ -65,6 +65,17 @@ all applied at run time to the stored panel (nothing is rebuilt):
                  surprise; gross profit, cash flow and both returns on assets
                  and the operating margin are left out for it, and its
                  composite needs three of the four rather than four of nine
+                 specific: as comparable, plus the descriptors a bank's, an
+                 insurer's and a REIT's own analysts use, from
+                 sec_gold.financial_descriptors_asof (point in time, nothing
+                 stored; cached in <ff-dir>/financial_descriptors_panel.csv):
+                 banks and credit (SIC 6000-6199) return on tangible equity,
+                 pre-provision profit to assets, efficiency ratio (low is
+                 good), net interest income to assets, provisions to assets
+                 (low is good); insurers (6300-6499) loss ratio (low is
+                 good), pre-tax margin; REITs (6798) FFO to equity and to
+                 assets. Each is scored like any other measure and also
+                 sorted on its own, within Financials and Real Estate
   --exclude-sectors "Financials,Real Estate"
                  the academic control: the named GICS sectors dropped
                  before scoring (Financials and Real Estate are the two
@@ -72,7 +83,8 @@ all applied at run time to the stored panel (nothing is rebuilt):
 
 A single run with non-default switches writes its CSVs with a suffix naming
 them. --variants runs the registry in VARIANTS (sector-relative as shipped;
-industry-relative; comparable measures; both; ex-Financials and Real Estate)
+industry-relative; comparable measures; both; specific measures; both with
+specific measures; ex-Financials and Real Estate)
 and compares them on one page, which also measures where each industry
 group's members land in the sector's quintiles under each variant.
 
@@ -150,6 +162,23 @@ COMPARABLE_SIC = (6000, 6499)
 ASSET_SCALED = ("gp_at", "ocf_at", "roa", "roa_q", "operating_margin")
 MIN_FACTORS = 4
 MIN_FACTORS_COMPARABLE = 3
+# The descriptors of sec_gold.financial_descriptors_asof, the SIC range of
+# the members they apply to under --financial-measures specific, and the
+# sign that makes a higher score the better one (a ratio where lower is
+# better is negated before scoring, like revenue growth).
+DESCRIPTOR_GROUPS = {"banks": (6000, 6199), "insurance": (6300, 6499), "REITs": (6798, 6798)}
+DESCRIPTORS = [
+    ("rote", "Return on tangible equity", 1, "banks"),
+    ("ppnr_at", "Pre-provision profit / assets", 1, "banks"),
+    ("efficiency", "Efficiency ratio (low is good)", -1, "banks"),
+    ("nii_at", "Net interest income / assets", 1, "banks"),
+    ("provisions_at", "Provisions / assets (low is good)", -1, "banks"),
+    ("loss_ratio", "Loss ratio (low is good)", -1, "insurance"),
+    ("insurer_margin", "Insurer pre-tax margin", 1, "insurance"),
+    ("ffo_be", "FFO / equity", 1, "REITs"),
+    ("ffo_at", "FFO / assets", 1, "REITs"),
+]
+DESCRIPTOR_WORKERS = 6
 # The switches, with their defaults, and the registry --variants compares.
 DEFAULT_SPEC = {"grouping": "sector", "measures": "all", "exclude": ()}
 VARIANTS = {
@@ -157,6 +186,8 @@ VARIANTS = {
     "industry": {"label": "industry-relative", "grouping": "industry", "measures": "all", "exclude": ()},
     "comparable": {"label": "comparable measures", "grouping": "sector", "measures": "comparable", "exclude": ()},
     "industry-comparable": {"label": "industry-relative, comparable measures", "grouping": "industry", "measures": "comparable", "exclude": ()},
+    "specific": {"label": "specific measures", "grouping": "sector", "measures": "specific", "exclude": ()},
+    "industry-specific": {"label": "industry-relative, specific measures", "grouping": "industry", "measures": "specific", "exclude": ()},
     "ex-financials": {"label": "ex-Financials and Real Estate", "grouping": "sector", "measures": "all", "exclude": ("Financials", "Real Estate")},
 }
 
@@ -169,8 +200,8 @@ def variant_name(spec: dict) -> str:
     parts = []
     if spec["grouping"] == "industry":
         parts.append("industry")
-    if spec["measures"] == "comparable":
-        parts.append("comparable")
+    if spec["measures"] in ("comparable", "specific"):
+        parts.append(spec["measures"])
     if spec["exclude"]:
         parts.append("ex-" + "-".join(x.lower().replace(" ", "") for x in spec["exclude"]))
     return "-".join(parts) or "sector"
@@ -184,8 +215,8 @@ def variant_label(spec: dict) -> str:
     parts = []
     if spec["grouping"] == "industry":
         parts.append("industry-relative")
-    if spec["measures"] == "comparable":
-        parts.append("comparable measures")
+    if spec["measures"] in ("comparable", "specific"):
+        parts.append(f"{spec['measures']} measures")
     if spec["exclude"]:
         parts.append("ex-" + " and ".join(spec["exclude"]))
     return ", ".join(parts) or "sector-relative"
@@ -217,8 +248,11 @@ WITH p0 AS (
          -fp.revenue_growth AS revenue_growth, fp.roe_q, fp.roa_q, fp.sue,
          CASE WHEN %(grouping)s = 'industry' AND fp.gics_sector = %(industry_sector)s
               THEN fp.gics_sector || ' / ' || __SIC_CASE__ END AS igrp,
-         (%(measures)s = 'comparable' AND c.sic_latest BETWEEN %(comparable_lo)s AND %(comparable_hi)s) AS comparable
+         (%(measures)s IN ('comparable', 'specific') AND c.sic_latest BETWEEN %(comparable_lo)s AND %(comparable_hi)s) AS comparable,
+         CASE WHEN %(measures)s = 'specific' THEN __DESCRIPTOR_GROUP_CASE__ END AS dgrp,
+         d.rote, d.ppnr_at, d.efficiency, d.nii_at, d.provisions_at, d.loss_ratio, d.insurer_margin, d.ffo_be, d.ffo_at
   FROM sec_market.factor_panel fp LEFT JOIN sec_reference.company c ON c.cik = fp.cik
+  LEFT JOIN fin_desc d ON d.asof = fp.asof AND d.cik = fp.cik
   WHERE fp.index_name = %(u)s AND fp.gics_sector IS NOT NULL AND NOT (fp.gics_sector = ANY (%(exclude)s::text[]))),
 p AS (
   SELECT p0.*, CASE WHEN igrp IS NOT NULL AND count(*) OVER (PARTITION BY asof, igrp) >= %(min_group)s THEN igrp END AS igrp_ok
@@ -230,11 +264,13 @@ long AS (
   SELECT p.asof, p.cik, p.gics_sector, p.comparable, g.sgrp, g.own, f.factor, f.val
   FROM p,
        LATERAL (VALUES (p.gics_sector, p.igrp_ok IS NULL), (p.igrp_ok, TRUE)) AS g(sgrp, own),
-       LATERAL (VALUES ('gp_at', p.gp_at), ('ocf_at', p.ocf_at), ('roa', p.roa), ('roe', p.roe),
-                ('operating_margin', p.operating_margin), ('revenue_growth', p.revenue_growth),
-                ('roe_q', p.roe_q), ('roa_q', p.roa_q), ('sue', p.sue)) AS f(factor, val)
+       LATERAL (VALUES ('gp_at', p.gp_at, NULL), ('ocf_at', p.ocf_at, NULL), ('roa', p.roa, NULL), ('roe', p.roe, NULL),
+                ('operating_margin', p.operating_margin, NULL), ('revenue_growth', p.revenue_growth, NULL),
+                ('roe_q', p.roe_q, NULL), ('roa_q', p.roa_q, NULL), ('sue', p.sue, NULL),
+                __DESCRIPTOR_VALUES__) AS f(factor, val, dgrp)
   WHERE g.sgrp IS NOT NULL AND f.val IS NOT NULL
-    AND NOT (p.comparable AND f.factor = ANY (%(asset_scaled)s::text[]))),
+    AND NOT (p.comparable AND f.factor = ANY (%(asset_scaled)s::text[]))
+    AND (f.dgrp IS NULL OR f.dgrp = p.dgrp)),
 grp AS (
   SELECT asof, sgrp, factor,
          percentile_cont(0.05) WITHIN GROUP (ORDER BY val) AS p5, percentile_cont(0.95) WITHIN GROUP (ORDER BY val) AS p95,
@@ -257,7 +293,11 @@ sig AS (
   UNION ALL
   SELECT asof, cik, gics_sector, 'composite', (z - avg(z) OVER w) / NULLIF(stddev_samp(z) OVER w, 0)
   FROM comp WINDOW w AS (PARTITION BY asof, gics_sector)),
-""".replace("__SIC_CASE__", industry_group_sql())
+""".replace("__SIC_CASE__", industry_group_sql()).replace(
+    "__DESCRIPTOR_GROUP_CASE__",
+    "CASE " + " ".join(f"WHEN c.sic_latest BETWEEN {lo} AND {hi} THEN '{g}'" for g, (lo, hi) in DESCRIPTOR_GROUPS.items()) + " END").replace(
+    "__DESCRIPTOR_VALUES__",
+    ", ".join(f"('{n}', {'-' if sign < 0 else ''}p.{n}, '{g}')" for n, _, sign, g in DESCRIPTORS))
 
 SQL_SORT = """
 fr AS (SELECT * FROM (VALUES ('monthly'), ('quarterly'), ('annual')) v(freq)),
@@ -394,6 +434,56 @@ def ensure_cap_cache(path: Path) -> pd.DataFrame:
     return cache
 
 
+# ------------------------------------------------------- descriptor cache
+
+SQL_DESC = """
+SELECT d.asof, d.cik, f.rote, f.ppnr_at, f.efficiency, f.nii_at, f.provisions_at, f.loss_ratio, f.insurer_margin, f.ffo_be, f.ffo_at
+FROM unnest(%(asof)s::date[], %(cik)s::int[]) AS d(asof, cik)
+LEFT JOIN LATERAL sec_gold.financial_descriptors_asof(d.cik, d.asof) f ON TRUE
+"""
+DESC_COLS = [n for n, _, _, _ in DESCRIPTORS]
+
+
+def _desc_chunk(keys: pd.DataFrame) -> pd.DataFrame:
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(SQL_DESC, {"asof": list(keys["asof"]), "cik": [int(c) for c in keys["cik"]]})
+        rows = cur.fetchall()
+    out = pd.DataFrame(rows, columns=["asof", "cik"] + DESC_COLS)
+    for c in DESC_COLS:
+        out[c] = out[c].astype(float)
+    return out
+
+
+def ensure_descriptor_cache(path: Path) -> pd.DataFrame:
+    """The descriptors for every (date, company) of the panel whose SIC is in
+    a descriptor group, computed once by sec_gold.financial_descriptors_asof
+    and kept on disk; only company-dates missing from the file are computed."""
+    ranges = " OR ".join(f"c.sic_latest BETWEEN {lo} AND {hi}" for lo, hi in DESCRIPTOR_GROUPS.values())
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT DISTINCT p.asof, p.cik FROM sec_market.factor_panel p JOIN sec_reference.company c ON c.cik = p.cik "
+                    f"WHERE {ranges} ORDER BY 1, 2")
+        keys = pd.DataFrame(cur.fetchall(), columns=["asof", "cik"])
+    if path.exists():
+        cache = pd.read_csv(path, parse_dates=["asof"])
+        cache["asof"] = cache["asof"].dt.date
+    else:
+        cache = pd.DataFrame(columns=["asof", "cik"] + DESC_COLS)
+    have = set(zip(cache["asof"], cache["cik"].astype(int))) if len(cache) else set()
+    missing = keys[[(a, int(c)) not in have for a, c in zip(keys["asof"], keys["cik"])]]
+    if len(missing):
+        print(f"descriptors: {len(missing):,} company-dates to compute ({len(have):,} cached)")
+        chunks = [missing.iloc[i::DESCRIPTOR_WORKERS] for i in range(DESCRIPTOR_WORKERS)]
+        with ThreadPoolExecutor(max_workers=DESCRIPTOR_WORKERS) as ex:
+            parts = list(ex.map(_desc_chunk, [c for c in chunks if len(c)]))
+        cache = pd.concat([cache] + parts, ignore_index=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cache.to_csv(path, index=False)
+        have_any = int(cache[DESC_COLS].notna().any(axis=1).sum())
+        print(f"descriptors: {have_any:,} of {len(cache):,} company-dates have at least one; cached at {path}")
+    cache["cik"] = cache["cik"].astype(int)
+    return cache
+
+
 # ----------------------------------------------------------------- the sorts
 
 def sql_params(u: str, variant: str | dict) -> dict:
@@ -405,7 +495,17 @@ def sql_params(u: str, variant: str | dict) -> dict:
             "asset_scaled": list(ASSET_SCALED), "min_factors": MIN_FACTORS, "min_factors_comparable": MIN_FACTORS_COMPARABLE}
 
 
-def run_universe(u: str, cap: pd.DataFrame, variant: str | dict = "sector") -> dict[str, pd.DataFrame]:
+def _load_fin_desc(cur, desc: pd.DataFrame | None) -> None:
+    cols = ", ".join(f"{c} NUMERIC" for c in DESC_COLS)
+    cur.execute(f"CREATE TEMP TABLE fin_desc (asof DATE, cik INTEGER, {cols}, PRIMARY KEY (asof, cik))")
+    if desc is not None and len(desc):
+        with cur.copy(f"COPY fin_desc (asof, cik, {', '.join(DESC_COLS)}) FROM STDIN") as copy:
+            for row in desc[["asof", "cik"] + DESC_COLS].itertuples(index=False):
+                copy.write_row((row[0], int(row[1])) + tuple(None if pd.isna(v) else float(v) for v in row[2:]))
+    cur.execute("ANALYZE fin_desc")
+
+
+def run_universe(u: str, cap: pd.DataFrame, variant: str | dict = "sector", desc: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
     out = {}
     with db.get_conn() as conn:
         with conn.cursor() as cur:
@@ -414,6 +514,7 @@ def run_universe(u: str, cap: pd.DataFrame, variant: str | dict = "sector") -> d
                 for a, c, m in cap[cap["market_cap"].notna()].itertuples(index=False):
                     copy.write_row((a, int(c), float(m)))
             cur.execute("ANALYZE cap")
+            _load_fin_desc(cur, desc)
         for m in METHODS:
             with conn.cursor() as cur:
                 cur.execute(SQL, {**sql_params(u, variant), "m": m})
@@ -427,9 +528,10 @@ def run_universe(u: str, cap: pd.DataFrame, variant: str | dict = "sector") -> d
     return out
 
 
-def group_shares(u: str, variant: str | dict) -> list[dict]:
+def group_shares(u: str, variant: str | dict, desc: pd.DataFrame | None = None) -> list[dict]:
     """Where INDUSTRY_SECTOR's industry groups land in its composite quintiles under a variant, AQR scoring."""
     with db.get_conn() as conn, conn.cursor() as cur:
+        _load_fin_desc(cur, desc)
         cur.execute(SQL_SHARES, {**sql_params(u, variant), "m": "aqr"})
         return [{"group": g, "company_months": int(n), "pct_bottom": float(b), "pct_top": float(t)} for g, n, b, t in cur.fetchall()]
 
@@ -718,7 +820,9 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
         g = r[(r.universe == u) & (r.method == m) & (r.freq == freq) & (r.factor == factor) & (r.weighting == weighting)]
         return None if g.empty else g.iloc[0]
 
-    counts = {(v, m, w): summarise_counts(results[v][(results[v].method == m) & (results[v].weighting == w)].to_dict("records"))
+    core = [f for f, _ in FACTORS]
+    counts = {(v, m, w): summarise_counts(results[v][(results[v].method == m) & (results[v].weighting == w)
+                                                     & results[v].factor.isin(core)].to_dict("records"))
               for v in variants for m in METHODS for w in ("cw", "vw")}
 
     def count_text(m, w):
@@ -791,7 +895,7 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
     sig_rows = []
     factor_order = [f for f, _ in FACTORS]
     for w in ("cw", "vw"):
-        piv = {v: results[v][(results[v].weighting == w) & (results[v].method == "aqr")]
+        piv = {v: results[v][(results[v].weighting == w) & (results[v].method == "aqr") & results[v].factor.isin(core)]
                .set_index(["universe", "freq", "factor"])["FF5+UMD t_alpha"] for v in variants}
         keys = set()
         for v in variants:
@@ -801,6 +905,30 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
                             + "".join(tcell(piv[v].get((u, freq, factor), None)) for v in variants) + "</tr>")
 
     variant_head = "".join(f"<th colspan=\"4\">{vlabel[v]}</th>" for v in variants)
+
+    # 6. The descriptors as single-factor sorts, under the first variant that has them.
+    dv = next((v for v in variants if specs[v]["measures"] == "specific"), None)
+    desc_rows = []
+    if dv:
+        for u in universes:
+            for name, dlabel, _, grp in DESCRIPTORS:
+                cells = []
+                for freq in FREQS:
+                    for w in ("cw", "vw"):
+                        r = lookup(dv, u, "aqr", freq, name, w)
+                        cells.append("<td></td><td></td>" if r is None else f"<td>{pct(r['raw_ann'])}</td>{tcell(r['FF5+UMD t_alpha'])}")
+                if any("<td>" in c and c != "<td></td><td></td>" for c in cells):
+                    desc_rows.append(f"<tr><td>{LABEL[u]}</td><td>{esc(dlabel)}</td><td>{grp}</td>{''.join(cells)}</tr>")
+    desc_section = ""
+    if dv:
+        desc_section = f"""<h2>6. The descriptors as sorts of their own</h2>
+<p>Under {vlabel[dv]}, each descriptor sorted like any other measure, AQR scoring: top fifth against bottom fifth within each sector that has {MIN_SECTOR} scored members, which for a bank or insurer descriptor is Financials alone and for FFO is Real Estate (and Financials before 2016-09). The raw annualised spread and the FF5+UMD alpha t, equal- and cap-weighted, by schedule. A ratio where lower is better was negated before scoring, so a positive spread always means the better-scored names earned more.</p>
+<div class="wrap"><table>
+<thead><tr><th rowspan="2">Universe</th><th rowspan="2">Descriptor</th><th rowspan="2">Group</th><th colspan="4">Monthly</th><th colspan="4">Quarterly</th><th colspan="4">Annual</th></tr>
+<tr>{'<th>EW raw</th><th>EW α t</th><th>VW raw</th><th>VW α t</th>' * 3}</tr></thead>
+<tbody>{''.join(desc_rows) if desc_rows else '<tr><td colspan="15">none</td></tr>'}</tbody></table></div>
+<p class="note">A descriptor sort holds only the members whose SIC puts them in its group and who file its inputs for the year; the counts are small (one sector, a fifth of it a side), so these are noisier than the nine.</p>
+"""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -826,6 +954,8 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
 <li><b>Industry-relative</b>: for members of {INDUSTRY_SECTOR}, every measure standardised within the (date, industry group) instead, the group by the filer's SIC code (<code>sec_reference.company.sic_latest</code>: {groups_text}, {INDUSTRY_OTHER} otherwise); the composite, the mean of those group-relative scores, re-standardised within the sector as before, which leaves the order within the sector unchanged; the sort unchanged, quintiles within the sector. A group with fewer than {MIN_GROUP} members on a date, or a member without a SIC, is scored within the sector as before. REITs are a group only while the dated panel files them under {INDUSTRY_SECTOR}, before the 2016-09 GICS change made Real Estate a sector. Every other sector is scored as in the sector-relative variant.</li>
 <li><b>Comparable measures</b>: a member with SIC {COMPARABLE_SIC[0]}–{COMPARABLE_SIC[1]} (depository and non-depository credit, brokers and exchanges, insurance carriers and agents) is scored only on return on equity, quarterly return on equity, revenue growth and earnings surprise; gross profit to assets, cash flow to assets, both returns on assets and the operating margin are left out for it before scoring, and its composite needs {MIN_FACTORS_COMPARABLE} of those four where every other member needs {MIN_FACTORS} of nine. It therefore does not appear in the five single-factor sorts it has no value for, and a sector left with fewer than {MIN_SECTOR} scored members on a date drops out of that sort. Scoring stays within the sector.</li>
 <li><b>Industry-relative, comparable measures</b>: both of the above.</li>
+<li><b>Specific measures</b>: as comparable measures, plus the descriptors a bank's, an insurer's and a REIT's own analysts use, from <code>sec_gold.financial_descriptors_asof</code> (point in time from the newest fiscal year knowable on the date, nothing stored, nothing imputed; cached outside the database): for SIC {DESCRIPTOR_GROUPS['banks'][0]}–{DESCRIPTOR_GROUPS['banks'][1]} return on tangible equity, pre-provision profit to assets, the efficiency ratio (lower is better), net interest income to assets and provisions to assets (lower is better); for {DESCRIPTOR_GROUPS['insurance'][0]}–{DESCRIPTOR_GROUPS['insurance'][1]} the loss ratio (lower is better) and the pre-tax margin; for REITs ({DESCRIPTOR_GROUPS['REITs'][0]}) FFO to equity and to assets. Each enters the member's composite like any other measure and is sorted on its own in section 6.</li>
+<li><b>Industry-relative, specific measures</b>: both of the above.</li>
 <li><b>ex-Financials and Real Estate</b>: both sectors dropped before scoring, the GICS form of the academic rule that excludes SIC 6000–6999 (Fama and French 1992, Novy-Marx 2013). Everything else unchanged.</li>
 </ul>
 <p>The SIC code is the one on the company's latest filing; a bank is a bank throughout, so for this purpose it is stable. Scoring groups by industry instead of sector, and scoring a bank only on what a bank's accounts can say, are what systematic managers do when a sector mixes balance-sheet businesses with asset-light ones; the industry-specific descriptors they add (return on tangible equity, efficiency ratio, combined ratio, funds from operations) are not built here yet.</p>
@@ -865,9 +995,10 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
 <tbody>{''.join(sig_rows) if sig_rows else '<tr><td colspan="7">none</td></tr>'}</tbody></table></div>
 <p class="note">AQR scoring, FF5+UMD alpha t under each variant for any sort where at least one variant reaches |t| 2.</p>
 
-<h2>6. What this does and does not settle</h2>
+{desc_section}
+<h2>7. What this does and does not settle</h2>
 <ul>
-<li><b>Separating the groups and restricting the measures are the first two steps; the third is not built.</b> A bank scored on comparable measures is still scored on what the panel has. The descriptors its own analysts use (return on tangible equity, pre-provision profit to assets, efficiency ratio, provisions to loans, the combined ratio, funds from operations for REITs) are each a formula variant keyed by SIC prefix in the concept layer, and that is the next step.</li>
+<li><b>The descriptors are computed, not stored.</b> They come from a function over the silver facts with gold's point-in-time rules and live in a cache beside the market caps; promoting them into the stored panel would grow the database and is a separate decision. What they do not reach: a bank whose goodwill sits in a custom line has no return on tangible equity (JPMorgan), FFO is an approximation of NAREIT's (impairments and joint ventures are not adjusted; Prologis's gains sit in custom tags), provisions are scaled by assets because the loan line is filed on 64% of bank years, and a credit company that files no net interest income has no bank descriptors.</li>
 <li><b>Survivors only.</b> Unchanged from the sector-neutral page: no delisted company has a price series, so every short leg here is flattered.</li>
 <li><b>Real Estate has the same shape.</b> Sorted across the whole universe, Real Estate members land in the bottom fifth far more often than the top; sector neutrality handles that, and inside the sector nearly every member is a REIT, so an industry split does nothing there. Funds from operations is the fix.</li>
 <li><b>Cap weighting rests on guarded share counts.</b> {dropped_text(dropped if dropped is not None else pd.DataFrame())}</li>
@@ -909,8 +1040,9 @@ def main() -> int:
     ap.add_argument("--out-dir", default=str(config.PROJECT_ROOT / "docs" / "reports"))
     ap.add_argument("--grouping", choices=["sector", "industry"], default=DEFAULT_SPEC["grouping"],
                     help="score a Financials member within its SIC industry group rather than the sector")
-    ap.add_argument("--financial-measures", choices=["all", "comparable"], default=DEFAULT_SPEC["measures"],
-                    help="comparable: SIC 6000-6499 members scored on ROE, quarterly ROE, revenue growth and SUE only")
+    ap.add_argument("--financial-measures", choices=["all", "comparable", "specific"], default=DEFAULT_SPEC["measures"],
+                    help="comparable: SIC 6000-6499 members scored on ROE, quarterly ROE, revenue growth and SUE only; "
+                         "specific: as comparable plus the bank, insurer and REIT descriptors of sec_gold.financial_descriptors_asof")
     ap.add_argument("--exclude-sectors", default="", help='GICS sectors dropped before scoring, e.g. "Financials,Real Estate"')
     ap.add_argument("--variants", action="store_true",
                     help="run the registry of variants (sector, industry, comparable, both, ex-financials) and write the comparison page")
@@ -931,6 +1063,7 @@ def main() -> int:
         dropped["ticker"] = [tickers.get((a, int(c))) or str(c) for a, c in zip(dropped["asof"], dropped["cik"])]
         print("market cap: left out as dominant: " + ", ".join(f"{r.ticker} {r.asof} ({r.share:.0%})" for r in dropped.itertuples()))
     cap_share = 100.0 * cap["market_cap"].notna().mean()
+    desc = ensure_descriptor_cache(ff_dir / "financial_descriptors_panel.csv")
 
     if args.variants:
         specs = {name: dict(spec) for name, spec in VARIANTS.items()}
@@ -942,9 +1075,9 @@ def main() -> int:
     frames, shares = {}, {}
     with ThreadPoolExecutor(max_workers=len(universes)) as ex:
         for v in variants:
-            frames[v] = dict(zip(universes, ex.map(lambda u, v=v: run_universe(u, cap, specs[v]), universes)))
+            frames[v] = dict(zip(universes, ex.map(lambda u, v=v: run_universe(u, cap, specs[v], desc), universes)))
             if args.variants and not specs[v]["exclude"]:
-                shares[v] = dict(zip(universes, ex.map(lambda u, v=v: group_shares(u, specs[v]), universes)))
+                shares[v] = dict(zip(universes, ex.map(lambda u, v=v: group_shares(u, specs[v], desc), universes)))
             print(f"{specs[v]['label']}: sorts done")
         priced = dict(zip(universes, ex.map(priced_by_quintile, universes)))
 
