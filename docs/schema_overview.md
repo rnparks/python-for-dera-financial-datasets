@@ -284,7 +284,7 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 73 checks; exits non-zero on any FAIL
+uv run dera verify     # 74 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 

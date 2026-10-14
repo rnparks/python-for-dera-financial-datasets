@@ -43,6 +43,37 @@
 -- period beats an average at the newest period; only when no instant
 -- count is that recent does the average win, and `source_tag` says so.
 
+-- SCALE. Filers mis-scale share counts the way they mis-scale balance
+-- sheets: Reinsurance Group of America's 10-Qs carry
+-- CommonStockSharesIssued of 85,310,598,000,000 against 85,310,598 on
+-- its 10-Ks, a million-fold, from 2023 on; Horace Mann's 10-Ks carry
+-- each weighted average twice, once in shares and once a thousand-fold
+-- too large. Read as-is the first put a $17 quadrillion market cap at
+-- the top of every cap-weighted sort it touched. The balance-sheet
+-- guard (028_suspect_fact) covers dollar columns only, and a share
+-- count has no column of neighbours to be compared with, so the
+-- reference here is the filing's own income statement: net income
+-- divided by basic earnings per share implies the share count without
+-- depending on how any share tag was scaled. A candidate more than 333
+-- times that implied count, or less than a 333rd of it, is refused
+-- (every scale error is a thousand- or a million-fold; no real count is
+-- that far from its own EPS denominator; within-filing differences
+-- between issued, outstanding and the average are a factor of two or
+-- three at most). Measured 2026-10-14 over the companies of the factor
+-- panel: 81% of filings with a share fact have an anchor (both facts
+-- present and non-zero); the rule refuses 1,812 instant counts of 276
+-- companies in 657 filings and 7,024 weighted averages. A filing
+-- without an anchor (Berkshire dimensions its EPS by class, so its
+-- million-fold A-equivalent averages of 2011-12 had none) meets a
+-- second test: a consolidated count is refused when ANY other knowable
+-- filing carries the same tag within 400 days more than 333 times off
+-- it. That refuses the right values beside the wrong ones (a median
+-- cannot arbitrate: the mis-scaled filing's comparatives supersede the
+-- right originals and outnumber them), so the ladder falls through to
+-- another tag or to nothing, which is the honest outcome when a filer
+-- contradicts itself a thousand-fold and no income line can settle it.
+-- Only knowable facts enter either test.
+
 -- Explicit drop: CREATE OR REPLACE cannot change a RETURNS TABLE
 -- shape, so editing this signature and re-applying the single file
 -- against a live schema fails with "cannot change return type of
@@ -67,7 +98,7 @@ LANGUAGE sql STABLE AS $$
     -- Every share-count fact knowable as of the date, including the
     -- per-class rows that the consolidated filter normally discards.
     visible AS (
-        SELECT n.tag, n.value, n.value_date, n.tradable_from, n.segments, n.qtrs
+        SELECT n.tag, n.value, n.value_date, n.tradable_from, n.segments, n.qtrs, n.adsh
         FROM sec_silver.num_silver n, k
         WHERE n.cik = p_cik
           AND n.coreg IS NULL
@@ -83,6 +114,42 @@ LANGUAGE sql STABLE AS $$
           AND n.tradable_from <= k.d
           AND (n.superseded_tradable > k.d OR n.superseded_tradable IS NULL)
     ),
+    -- The filing's own share count implied by its income statement: net
+    -- income over basic EPS at the longest period of the latest period
+    -- end the filing reports, knowable with the filing. The income line
+    -- is the first the filing carries of NetIncomeLoss, the amount
+    -- available to common, ProfitLoss and continuing operations (PG&E
+    -- files only the second and third); the per-share line the first of
+    -- basic, basic-and-diluted, continuing-operations basic and diluted.
+    -- Only undimensioned facts: an issuer whose EPS is per one class
+    -- (Berkshire, per Class A) dimensions it and so has no anchor here,
+    -- which is right, since its summed count is in another class's units.
+    anchor AS (
+        SELECT DISTINCT ON (adsh) adsh, ni / eps AS implied
+        FROM (
+            SELECT n.adsh, n.value_date, n.qtrs,
+                   COALESCE(MAX(n.value) FILTER (WHERE n.tag = 'NetIncomeLoss'),
+                            MAX(n.value) FILTER (WHERE n.tag = 'NetIncomeLossAvailableToCommonStockholdersBasic'),
+                            MAX(n.value) FILTER (WHERE n.tag = 'ProfitLoss'),
+                            MAX(n.value) FILTER (WHERE n.tag = 'IncomeLossFromContinuingOperations')) AS ni,
+                   COALESCE(MAX(n.value) FILTER (WHERE n.tag = 'EarningsPerShareBasic'),
+                            MAX(n.value) FILTER (WHERE n.tag = 'EarningsPerShareBasicAndDiluted'),
+                            MAX(n.value) FILTER (WHERE n.tag = 'IncomeLossFromContinuingOperationsPerBasicShare'),
+                            MAX(n.value) FILTER (WHERE n.tag = 'EarningsPerShareDiluted')) AS eps
+            FROM sec_silver.num_silver n, k
+            WHERE n.cik = p_cik
+              AND n.coreg IS NULL AND n.segments IS NULL AND n.value IS NOT NULL
+              AND n.tag IN ('NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic', 'ProfitLoss',
+                            'IncomeLossFromContinuingOperations',
+                            'EarningsPerShareBasic', 'EarningsPerShareBasicAndDiluted',
+                            'IncomeLossFromContinuingOperationsPerBasicShare', 'EarningsPerShareDiluted')
+              AND n.tradable_from <= k.d
+              AND n.adsh IN (SELECT adsh FROM visible)
+            GROUP BY n.adsh, n.value_date, n.qtrs
+        ) f
+        WHERE ni IS NOT NULL AND eps IS NOT NULL AND ni <> 0 AND ABS(eps) >= 0.01
+        ORDER BY adsh, qtrs DESC, value_date DESC
+    ),
     consolidated AS (
         SELECT v.value AS shares, v.value_date, v.tradable_from, v.tag AS source_tag,
                'consolidated'::TEXT AS method,
@@ -93,8 +160,12 @@ LANGUAGE sql STABLE AS $$
                    WHEN 'WeightedAverageNumberOfDilutedSharesOutstanding' THEN 8
                    ELSE 9
                END AS rung,
-               v.qtrs
-        FROM visible v
+               v.qtrs, a.implied,
+               EXISTS (SELECT 1 FROM visible o
+                        WHERE v.value > 0 AND o.segments IS NULL AND o.tag = v.tag AND o.adsh <> v.adsh AND o.value > 0
+                          AND o.value_date BETWEEN v.value_date - 400 AND v.value_date + 400
+                          AND (v.value / o.value >= 333 OR o.value / v.value >= 333)) AS same_tag_far
+        FROM visible v LEFT JOIN anchor a ON a.adsh = v.adsh
         WHERE v.segments IS NULL
     ),
     -- Sum the share classes only where no consolidated row exists for
@@ -129,8 +200,8 @@ LANGUAGE sql STABLE AS $$
                 WHEN 'CommonStockSharesIssued'      THEN 5
                 ELSE 9
             END AS rung,
-            v.qtrs
-        FROM visible v
+            v.qtrs, MAX(a.implied) AS implied, FALSE AS same_tag_far
+        FROM visible v LEFT JOIN anchor a ON a.adsh = v.adsh
         -- ALLOWLIST, not a pattern match. The previous filter was
         -- `segments LIKE 'ClassOfStock=%' AND NOT ILIKE '%treasury%'`,
         -- which had two defects found by testing rather than reading:
@@ -180,6 +251,11 @@ LANGUAGE sql STABLE AS $$
             SELECT * FROM by_class
         ) l
         WHERE l.shares > 0
+          -- The scale guard: nothing over a count a thousand-fold off
+          -- its own filing's net income over EPS; without that anchor,
+          -- nothing over a tag the company's nearby filings contradict.
+          AND CASE WHEN l.implied IS NOT NULL THEN ABS(l.shares / l.implied) BETWEEN 1.0 / 333 AND 333
+                   ELSE NOT l.same_tag_far END
     )
     SELECT shares, value_date, tradable_from, source_tag, method
     FROM laddered
@@ -197,6 +273,10 @@ $$;
 COMMENT ON FUNCTION sec_gold.shares_outstanding_at(INTEGER, DATE, INTEGER) IS
     'Share count knowable on p_asof, by priority ladder with mapped '
     'share-class summation. method: consolidated | class_sum_mapped. '
+    'A count more than 333 times, or less than a 333rd of, the filing''s '
+    'own net income over basic EPS is refused as mis-scaled; without that '
+    'anchor, a count contradicted that far by the same tag in another '
+    'filing within 400 days is refused. '
     'An instant count within 400 days of the newest period beats a '
     'weighted average. NOT sufficient for market cap on multi-class '
     'issuers - that needs each class priced separately (177 of 1,569 '

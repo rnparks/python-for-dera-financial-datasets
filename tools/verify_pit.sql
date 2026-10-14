@@ -1749,3 +1749,39 @@ FROM (
            (SELECT COUNT(*) FROM sec_reference.index_members('SP400', DATE '2017-06-30') WHERE gics_sector IS NOT NULL) AS sp400_2017_with_sector,
            (SELECT COUNT(*) FROM sec_reference.index_members('SP600', DATE '2019-06-28') WHERE gics_sector IS NOT NULL) AS sp600_2019_with_sector
 ) t;
+
+\echo '=== 74. Share counts a thousand-fold off the net income over EPS of their own filing are refused; no company is a fifth of its universe ==='
+-- Filers mis-scale share counts as they mis-scale balance sheets:
+-- Reinsurance Group of America's 10-Qs from 2023 carry
+-- CommonStockSharesIssued of 85,310,598,000,000 against 85,310,598 on
+-- its 10-Ks; Horace Mann's 10-Ks carry each weighted average twice,
+-- once a thousand-fold too large. Read as-is the first gave a $17
+-- quadrillion market cap, 99.7% of the S&P 1500's, and twelve companies
+-- had a cap above $8 trillion on some panel date (2026-10-14).
+-- shares_outstanding_at refuses a count beyond 333 times, or under a
+-- 333rd of, the filing's own net income over basic EPS
+-- (055_shares_outstanding.sql). Pinned: the four names that had
+-- dominated, at dates they did, within a band around their true caps;
+-- and the largest single share of the S&P 1500's market cap at
+-- 2025-06-30 and of the S&P 500's at 2013-07-31, from the stored panels,
+-- under a fifth (the real maximum is Apple or Nvidia at 6-8%).
+SELECT CASE WHEN rga BETWEEN 10e9 AND 40e9 AND pcg BETWEEN 10e9 AND 60e9
+             AND kmb BETWEEN 30e9 AND 90e9 AND sna BETWEEN 2e9 AND 12e9
+             AND sp1500_top_share < 0.2 AND sp500_top_share < 0.2
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       round(rga / 1e9, 1) AS rga_bn, round(pcg / 1e9, 1) AS pcg_bn, round(kmb / 1e9, 1) AS kmb_bn, round(sna / 1e9, 1) AS sna_bn,
+       round(sp1500_top_share, 3) AS sp1500_top_share, round(sp500_top_share, 3) AS sp500_top_share
+FROM (
+    SELECT (SELECT market_cap FROM sec_market.market_cap_at(898174, DATE '2025-06-30')) AS rga,
+           (SELECT market_cap FROM sec_market.market_cap_at(1004980, DATE '2015-01-31')) AS pcg,
+           (SELECT market_cap FROM sec_market.market_cap_at(55785, DATE '2020-01-31')) AS kmb,
+           (SELECT market_cap FROM sec_market.market_cap_at(91440, DATE '2012-10-31')) AS sna,
+           (SELECT MAX(m.market_cap) / SUM(m.market_cap)
+              FROM sec_market.factor_panel p, LATERAL sec_market.market_cap_at(p.cik, p.asof) m
+             WHERE p.index_name = 'SP1500'
+               AND p.asof = (SELECT MAX(asof) FROM sec_market.factor_panel WHERE index_name = 'SP1500' AND asof <= DATE '2025-06-30')) AS sp1500_top_share,
+           (SELECT MAX(m.market_cap) / SUM(m.market_cap)
+              FROM sec_market.factor_panel p, LATERAL sec_market.market_cap_at(p.cik, p.asof) m
+             WHERE p.index_name = 'SP500'
+               AND p.asof = (SELECT MAX(asof) FROM sec_market.factor_panel WHERE index_name = 'SP500' AND asof <= DATE '2013-07-31')) AS sp500_top_share
+) t;

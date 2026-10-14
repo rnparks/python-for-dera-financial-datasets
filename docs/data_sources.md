@@ -49,9 +49,15 @@ database — `sec_silver.sub_silver` contains **zero** Form 25, Form 15 or 8-A. 
 listings and delistings, which is to say the entire lifecycle of a security, are
 simply not in this dataset. No amount of work on these tables recovers them.
 
-Two known data quirks, both published by SEC as-is and both handled downstream:
-filer typos put `value_date`s between 1980 and 2031, and `segments` values
-occasionally contain embedded tabs.
+Three known data quirks, all published by SEC as-is and all handled downstream:
+filer typos put `value_date`s between 1980 and 2031; `segments` values
+occasionally contain embedded tabs; and filers mis-scale whole columns, a
+balance sheet printed in thousands or millions without saying so (Hill-Rom's
+FY2021 10-K; refused by `sec_gold.suspect_fact`) or a share count a thousand- or
+million-fold off (Reinsurance Group of America's 10-Qs carry 85,310,598,000,000
+issued shares against 85,310,598 on its 10-Ks; refused by
+`shares_outstanding_at` against the filing's own net income over EPS, check 74;
+2026-10-14).
 
 ## 2. EDGAR bulk submissions archive
 

@@ -812,3 +812,37 @@ def test_legs_by_period_splits_on_the_month_and_annualises():
     assert out["before"]["spread_cw"] == pytest.approx(1.01 ** 12 - 1)
     assert out["from"]["spread_vw"] == pytest.approx(1.04 ** 12 - 1)
     assert out["from"]["short_cw"] == pytest.approx(0.0)
+
+
+def test_industry_group_by_sic_prefix_and_its_sql():
+    g = score_methods.industry_group
+    assert g(None) is None
+    assert g(5999) == "financial services" and g(6000) == "banks" and g(6099) == "banks" and g(6100) == "financial services"
+    assert g(6299) == "financial services" and g(6300) == "insurance" and g(6499) == "insurance" and g(6500) == "financial services"
+    assert g(6797) == "financial services" and g(6798) == "REITs" and g(6799) == "financial services"
+    assert g(7389) == "financial services"                      # Visa, Moody's: business services by SIC
+    sql = score_methods.industry_group_sql("x.sic")
+    assert sql.startswith("CASE WHEN x.sic IS NULL THEN NULL")
+    for name, lo, hi in score_methods.INDUSTRY_GROUPS:
+        assert f"WHEN x.sic BETWEEN {lo} AND {hi} THEN '{name}'" in sql
+    assert sql.endswith(f"ELSE '{score_methods.INDUSTRY_OTHER}' END")
+    # The sector variant scores within the sector and excludes nothing; the control drops both SIC 6000-6999 sectors.
+    assert score_methods.VARIANTS["sector"][1:] == ("sector", ())
+    assert score_methods.VARIANTS["ex-financials"][2] == ("Financials", "Real Estate")
+    assert score_methods.sql_params("SP500", "ex-financials")["exclude"] == ["Financials", "Real Estate"]
+    assert score_methods.sql_params("SP500", "industry")["grouping"] == "industry"
+
+
+def test_drop_dominant_caps_nulls_only_the_dominant_company_date():
+    import datetime as dt
+    import math
+
+    import pandas as pd
+    d1, d2 = dt.date(2012, 6, 29), dt.date(2012, 7, 31)
+    rows = [(d1, 1, 92.0), (d1, 2, 5.0), (d1, 3, 3.0)] + [(d2, c, 1.0) for c in range(1, 11)]
+    cap = pd.DataFrame(rows, columns=["asof", "cik", "market_cap"])
+    out, dropped = score_methods.drop_dominant_caps(cap, max_share=0.15)
+    assert len(dropped) == 1 and dropped.iloc[0]["cik"] == 1 and dropped.iloc[0]["asof"] == d1
+    assert dropped.iloc[0]["share"] == pytest.approx(0.92)
+    assert math.isnan(out.loc[0, "market_cap"]) and out["market_cap"].notna().sum() == 12
+    assert (out.loc[out["asof"] == d2, "market_cap"] == 1.0).all()      # a tenth each: nothing dominant on the second date

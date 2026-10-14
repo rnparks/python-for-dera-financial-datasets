@@ -52,7 +52,7 @@ Prices (a vendor, not SEC data; schema ``sec_market``)::
 
 Verification::
 
-    uv run dera verify        # 73 data-correctness checks
+    uv run dera verify        # 74 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 
