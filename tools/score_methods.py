@@ -45,30 +45,46 @@ Every spread is measured raw and against FF5 and FF5 + UMD with
 Newey-West (six lags) t-statistics, with the code of tools/ff_baseline.py.
 Nothing is written to the database.
 
-With --variants the same sorts are run three ways and compared on one page:
+Three construction choices are switches, each independent of the others,
+all applied at run time to the stored panel (nothing is rebuilt):
 
-  sector         scoring within the sector, as above (the shipped numbers)
-  industry       a Financials member's measures standardised within its
-                 industry group by SIC code (sec_reference.company.sic_latest:
-                 banks 6000-6099, insurance 6300-6499, REITs 6798, financial
-                 services otherwise), the sort still within the sector; a
-                 group under ten members on a date, or a member without a
-                 SIC, is scored within the sector
-  ex-financials  the academic control: Financials and Real Estate (the two
-                 GICS sectors of SIC 6000-6999) dropped before scoring
+  --grouping sector|industry
+                 industry: a Financials member's measures standardised
+                 within its industry group by SIC code
+                 (sec_reference.company.sic_latest: banks 6000-6099,
+                 insurance 6300-6499, REITs 6798, financial services
+                 otherwise), the sort still within the sector; a group
+                 under ten members on a date, or a member without a SIC, is
+                 scored within the sector
+  --financial-measures all|comparable
+                 comparable: a member with SIC 6000-6499 (depository and
+                 non-depository credit, brokers and exchanges, insurance
+                 carriers and agents) is scored only on the measures that
+                 mean the same thing across financials: return on equity,
+                 quarterly return on equity, revenue growth and earnings
+                 surprise; gross profit, cash flow and both returns on assets
+                 and the operating margin are left out for it, and its
+                 composite needs three of the four rather than four of nine
+  --exclude-sectors "Financials,Real Estate"
+                 the academic control: the named GICS sectors dropped
+                 before scoring (Financials and Real Estate are the two
+                 sectors of SIC 6000-6999)
 
-The page also measures where each industry group's members land in the
-sector's quintiles under the first two.
+A single run with non-default switches writes its CSVs with a suffix naming
+them. --variants runs the registry in VARIANTS (sector-relative as shipped;
+industry-relative; comparable measures; both; ex-Financials and Real Estate)
+and compares them on one page, which also measures where each industry
+group's members land in the sector's quintiles under each variant.
 
 Usage:
-  uv run python tools/score_methods.py                 # all four universes
+  uv run python tools/score_methods.py                 # all four universes, the shipped construction
   uv run python tools/score_methods.py --universes SP500,SP1500
-  uv run python tools/score_methods.py --variants      # plus the two other variants and the comparison page
-Writes <ff-dir>/score_methods_<universe>.csv (every statistic, every
-weighting), <ff-dir>/score_methods_series_<universe>.csv (the monthly
-legs and spreads) and docs/reports/score_methods_sector_neutral_<date>.html;
-with --variants also <ff-dir>/score_methods_<universe>_<variant>.csv and the
-series file for the two other variants, and
+  uv run python tools/score_methods.py --grouping industry --financial-measures comparable
+  uv run python tools/score_methods.py --variants      # the registry, one comparison page
+Writes <ff-dir>/score_methods_<universe>[_<variant>].csv (every statistic,
+every weighting), <ff-dir>/score_methods_series_<universe>[_<variant>].csv
+(the monthly legs and spreads), docs/reports/score_methods_sector_neutral_<date>.html
+for the shipped construction and, with --variants,
 docs/reports/score_methods_financials_<date>.html.
 """
 from __future__ import annotations
@@ -123,12 +139,56 @@ INDUSTRY_SECTOR = "Financials"
 INDUSTRY_GROUPS = (("banks", 6000, 6099), ("insurance", 6300, 6499), ("REITs", 6798, 6798))
 INDUSTRY_OTHER = "financial services"
 MIN_GROUP = MIN_SECTOR
-# variant -> (label, grouping, sectors excluded before scoring)
+# The measures that mean the same thing across financials. A member whose
+# SIC is in COMPARABLE_SIC (depository and non-depository credit, brokers and
+# exchanges, insurance carriers and agents) is scored, under
+# --financial-measures comparable, without the asset-scaled and margin
+# measures, and its composite needs MIN_FACTORS_COMPARABLE of the four that
+# remain (roe, roe_q, revenue_growth, sue). Measured 2026-10-14: 93-97% of
+# such company-months carry three or more of the four.
+COMPARABLE_SIC = (6000, 6499)
+ASSET_SCALED = ("gp_at", "ocf_at", "roa", "roa_q", "operating_margin")
+MIN_FACTORS = 4
+MIN_FACTORS_COMPARABLE = 3
+# The switches, with their defaults, and the registry --variants compares.
+DEFAULT_SPEC = {"grouping": "sector", "measures": "all", "exclude": ()}
 VARIANTS = {
-    "sector": ("sector-relative", "sector", ()),
-    "industry": ("industry-relative", "industry", ()),
-    "ex-financials": ("ex-Financials and Real Estate", "sector", ("Financials", "Real Estate")),
+    "sector": {"label": "sector-relative", "grouping": "sector", "measures": "all", "exclude": ()},
+    "industry": {"label": "industry-relative", "grouping": "industry", "measures": "all", "exclude": ()},
+    "comparable": {"label": "comparable measures", "grouping": "sector", "measures": "comparable", "exclude": ()},
+    "industry-comparable": {"label": "industry-relative, comparable measures", "grouping": "industry", "measures": "comparable", "exclude": ()},
+    "ex-financials": {"label": "ex-Financials and Real Estate", "grouping": "sector", "measures": "all", "exclude": ("Financials", "Real Estate")},
 }
+
+
+def variant_name(spec: dict) -> str:
+    """The registry's name for a spec, or one built from its non-default switches (pure)."""
+    for name, v in VARIANTS.items():
+        if all(v[k] == spec[k] for k in DEFAULT_SPEC):
+            return name
+    parts = []
+    if spec["grouping"] == "industry":
+        parts.append("industry")
+    if spec["measures"] == "comparable":
+        parts.append("comparable")
+    if spec["exclude"]:
+        parts.append("ex-" + "-".join(x.lower().replace(" ", "") for x in spec["exclude"]))
+    return "-".join(parts) or "sector"
+
+
+def variant_label(spec: dict) -> str:
+    """A label for a spec: the registry's, or one built from its switches (pure)."""
+    name = variant_name(spec)
+    if name in VARIANTS:
+        return VARIANTS[name]["label"]
+    parts = []
+    if spec["grouping"] == "industry":
+        parts.append("industry-relative")
+    if spec["measures"] == "comparable":
+        parts.append("comparable measures")
+    if spec["exclude"]:
+        parts.append("ex-" + " and ".join(spec["exclude"]))
+    return ", ".join(parts) or "sector-relative"
 
 
 def industry_group(sic: int | None) -> str | None:
@@ -156,7 +216,8 @@ WITH p0 AS (
   SELECT fp.asof, fp.cik, fp.gics_sector, fp.gp_at, fp.ocf_at, fp.roa, fp.roe, fp.operating_margin,
          -fp.revenue_growth AS revenue_growth, fp.roe_q, fp.roa_q, fp.sue,
          CASE WHEN %(grouping)s = 'industry' AND fp.gics_sector = %(industry_sector)s
-              THEN fp.gics_sector || ' / ' || __SIC_CASE__ END AS igrp
+              THEN fp.gics_sector || ' / ' || __SIC_CASE__ END AS igrp,
+         (%(measures)s = 'comparable' AND c.sic_latest BETWEEN %(comparable_lo)s AND %(comparable_hi)s) AS comparable
   FROM sec_market.factor_panel fp LEFT JOIN sec_reference.company c ON c.cik = fp.cik
   WHERE fp.index_name = %(u)s AND fp.gics_sector IS NOT NULL AND NOT (fp.gics_sector = ANY (%(exclude)s::text[]))),
 p AS (
@@ -166,13 +227,14 @@ p AS (
 -- group is too small is scored against the whole sector; a member with a
 -- qualifying industry group enters that too, and that row is its own score.
 long AS (
-  SELECT p.asof, p.cik, p.gics_sector, g.sgrp, g.own, f.factor, f.val
+  SELECT p.asof, p.cik, p.gics_sector, p.comparable, g.sgrp, g.own, f.factor, f.val
   FROM p,
        LATERAL (VALUES (p.gics_sector, p.igrp_ok IS NULL), (p.igrp_ok, TRUE)) AS g(sgrp, own),
        LATERAL (VALUES ('gp_at', p.gp_at), ('ocf_at', p.ocf_at), ('roa', p.roa), ('roe', p.roe),
                 ('operating_margin', p.operating_margin), ('revenue_growth', p.revenue_growth),
                 ('roe_q', p.roe_q), ('roa_q', p.roa_q), ('sue', p.sue)) AS f(factor, val)
-  WHERE g.sgrp IS NOT NULL AND f.val IS NOT NULL),
+  WHERE g.sgrp IS NOT NULL AND f.val IS NOT NULL
+    AND NOT (p.comparable AND f.factor = ANY (%(asset_scaled)s::text[]))),
 grp AS (
   SELECT asof, sgrp, factor,
          percentile_cont(0.05) WITHIN GROUP (ORDER BY val) AS p5, percentile_cont(0.95) WITHIN GROUP (ORDER BY val) AS p95,
@@ -180,15 +242,16 @@ grp AS (
   FROM long GROUP BY 1, 2, 3),
 ranked AS (SELECT l.*, rank() OVER (PARTITION BY asof, sgrp, factor ORDER BY val) AS rk FROM long l),
 x AS (
-  SELECT r.asof, r.cik, r.gics_sector, r.sgrp, r.own, r.factor,
+  SELECT r.asof, r.cik, r.gics_sector, r.comparable, r.sgrp, r.own, r.factor,
          CASE %(m)s WHEN 'aqr'   THEN r.rk::numeric
                    WHEN 'msci'  THEN LEAST(g.p95, GREATEST(g.p5, r.val))
                    WHEN 'barra' THEN LEAST(g.mu + 3 * g.sd, GREATEST(g.mu - 3 * g.sd, r.val)) END AS v
   FROM ranked r JOIN grp g USING (asof, sgrp, factor)),
 z AS (
-  SELECT asof, cik, gics_sector, own, factor, (v - avg(v) OVER w) / NULLIF(stddev_samp(v) OVER w, 0) AS z
+  SELECT asof, cik, gics_sector, comparable, own, factor, (v - avg(v) OVER w) / NULLIF(stddev_samp(v) OVER w, 0) AS z
   FROM x WINDOW w AS (PARTITION BY asof, sgrp, factor)),
-comp AS (SELECT asof, cik, gics_sector, avg(z) AS z FROM z WHERE own AND z IS NOT NULL GROUP BY 1, 2, 3 HAVING count(z) >= 4),
+comp AS (SELECT asof, cik, gics_sector, avg(z) AS z FROM z WHERE own AND z IS NOT NULL GROUP BY 1, 2, 3
+         HAVING count(z) >= CASE WHEN bool_or(comparable) THEN %(min_factors_comparable)s ELSE %(min_factors)s END),
 sig AS (
   SELECT asof, cik, gics_sector, factor, z AS signal FROM z WHERE own
   UNION ALL
@@ -333,13 +396,16 @@ def ensure_cap_cache(path: Path) -> pd.DataFrame:
 
 # ----------------------------------------------------------------- the sorts
 
-def sql_params(u: str, variant: str) -> dict:
-    _, grouping, exclude = VARIANTS[variant]
-    return {"u": u, "min_sector": MIN_SECTOR, "min_group": MIN_GROUP, "grouping": grouping,
-            "exclude": list(exclude), "industry_sector": INDUSTRY_SECTOR}
+def sql_params(u: str, variant: str | dict) -> dict:
+    """The query parameters for a universe under a variant, by registry name or spec (pure)."""
+    spec = VARIANTS[variant] if isinstance(variant, str) else variant
+    return {"u": u, "min_sector": MIN_SECTOR, "min_group": MIN_GROUP, "grouping": spec["grouping"],
+            "exclude": list(spec["exclude"]), "industry_sector": INDUSTRY_SECTOR,
+            "measures": spec["measures"], "comparable_lo": COMPARABLE_SIC[0], "comparable_hi": COMPARABLE_SIC[1],
+            "asset_scaled": list(ASSET_SCALED), "min_factors": MIN_FACTORS, "min_factors_comparable": MIN_FACTORS_COMPARABLE}
 
 
-def run_universe(u: str, cap: pd.DataFrame, variant: str = "sector") -> dict[str, pd.DataFrame]:
+def run_universe(u: str, cap: pd.DataFrame, variant: str | dict = "sector") -> dict[str, pd.DataFrame]:
     out = {}
     with db.get_conn() as conn:
         with conn.cursor() as cur:
@@ -361,7 +427,7 @@ def run_universe(u: str, cap: pd.DataFrame, variant: str = "sector") -> dict[str
     return out
 
 
-def group_shares(u: str, variant: str) -> list[dict]:
+def group_shares(u: str, variant: str | dict) -> list[dict]:
     """Where INDUSTRY_SECTOR's industry groups land in its composite quintiles under a variant, AQR scoring."""
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(SQL_SHARES, {**sql_params(u, variant), "m": "aqr"})
@@ -634,11 +700,14 @@ def build_html(results: pd.DataFrame, agree: dict, legs: dict, priced: dict[str,
 
 
 def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: dict, ff_last: str, today: dt.date,
-                        dropped: pd.DataFrame | None = None) -> str:
-    """The three variants side by side: the composite, the counts over every
-    sort, the legs, where the industry groups land, every sort past |t| 2."""
+                        dropped: pd.DataFrame | None = None, specs: dict | None = None) -> str:
+    """The variants side by side: the composite, the counts over every sort,
+    the legs, where the industry groups land, every sort past |t| 2."""
     names = dict(FACTORS)
-    variants = [v for v in VARIANTS if v in results]
+    specs = specs or VARIANTS
+    variants = [v for v in specs if v in results]
+    vlabel = {v: specs[v]["label"] for v in variants}
+    with_fin = [v for v in variants if v in shares]
     universes = [u for u in UNIVERSES if u in set(results["sector"].universe)]
     split_label = f"{SPLIT_YM[:4]}-{SPLIT_YM[4:]}"
     hu = "SP1500" if "SP1500" in universes else universes[-1]
@@ -656,25 +725,29 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
         parts = []
         for v in variants:
             c = counts[(v, m, w)]
-            parts.append(f"{VARIANTS[v][0]} {c['sig_alpha']} of {c['n']} ({c['sig_alpha_pos']} positive), "
+            parts.append(f"{vlabel[v]} {c['sig_alpha']} of {c['n']} ({c['sig_alpha_pos']} positive), "
                          f"{c['positive']} spreads positive, mean alpha t {c['mean_alpha_t']:.2f}")
         return "; ".join(parts)
 
-    # 1. Where the industry groups land.
+    # 1. Where the industry groups land, under every variant that keeps the sector.
     share_rows = []
     for u in universes:
-        ind = {r["group"]: r for r in shares.get("industry", {}).get(u, [])}
-        for r in shares.get("sector", {}).get(u, []):
-            i = ind.get(r["group"])
-            share_rows.append(f"<tr><td>{LABEL[u]}</td><td>{esc(r['group'])}</td><td>{r['company_months']:,}</td>"
-                              f"<td>{r['pct_bottom']:.0f}%</td><td>{r['pct_top']:.0f}%</td>"
-                              + (f"<td>{i['pct_bottom']:.0f}%</td><td>{i['pct_top']:.0f}%</td>" if i else "<td></td><td></td>") + "</tr>")
-    banks = {v: next((r for r in shares.get(v, {}).get(hu, []) if r["group"] == INDUSTRY_GROUPS[0][0]), None) for v in ("sector", "industry")}
-    banks_text = ""
-    if banks["sector"] and banks["industry"]:
-        banks_text = (f" In the {LABEL[hu]}, {banks['sector']['pct_bottom']:.0f}% of bank company-months sat in the sector's bottom fifth and "
-                      f"{banks['sector']['pct_top']:.0f}% in its top under sector-relative scoring; industry-relative, "
-                      f"{banks['industry']['pct_bottom']:.0f}% and {banks['industry']['pct_top']:.0f}%.")
+        by_v = {v: {r["group"]: r for r in shares[v].get(u, [])} for v in with_fin}
+        groups = [r["group"] for r in shares[with_fin[0]].get(u, [])] if with_fin else []
+        for g in groups:
+            cells = []
+            for v in with_fin:
+                r = by_v[v].get(g)
+                cells.append(f"<td>{r['company_months']:,}</td><td>{r['pct_bottom']:.0f}%</td><td>{r['pct_top']:.0f}%</td>" if r else "<td></td><td></td><td></td>")
+            share_rows.append(f"<tr><td>{LABEL[u]}</td><td>{esc(g)}</td>{''.join(cells)}</tr>")
+    banks_parts = []
+    for v in with_fin:
+        r = next((r for r in shares[v].get(hu, []) if r["group"] == INDUSTRY_GROUPS[0][0]), None)
+        if r:
+            banks_parts.append(f"{vlabel[v]} {r['pct_bottom']:.0f}% and {r['pct_top']:.0f}%")
+    banks_text = (f" In the {LABEL[hu]}, the share of bank company-months in the sector's bottom fifth and in its top: "
+                  + "; ".join(banks_parts) + ".") if banks_parts else ""
+    share_head = "".join(f"<th colspan=\"3\">{vlabel[v]}</th>" for v in with_fin)
 
     # 2. The composite side by side.
     comp_rows = []
@@ -690,7 +763,7 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
     for v in variants:
         r_ew, r_vw = lookup(v, hu, "aqr", "monthly", "composite", "cw"), lookup(v, hu, "aqr", "monthly", "composite", "vw")
         if r_ew is not None and r_vw is not None:
-            head_text.append(f"{VARIANTS[v][0]} {pct(r_ew['raw_ann'])} (alpha t {r_ew['FF5+UMD t_alpha']:.2f}) equal-weighted, "
+            head_text.append(f"{vlabel[v]} {pct(r_ew['raw_ann'])} (alpha t {r_ew['FF5+UMD t_alpha']:.2f}) equal-weighted, "
                              f"{pct(r_vw['raw_ann'])} (t {r_vw['FF5+UMD t_alpha']:.2f}) cap-weighted")
 
     # 3. The counts.
@@ -701,7 +774,7 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
             for w in ("cw", "vw"):
                 c = counts[(v, m, w)]
                 cells.append(f"<td>{c['sig_alpha']}</td><td>{c['sig_alpha_pos']}</td><td>{c['positive']}</td><td>{num(c['mean_alpha_t'])}</td>")
-            count_rows.append(f"<tr><td>{VARIANTS[v][0]}</td><td>{mlabel}</td>{''.join(cells)}</tr>")
+            count_rows.append(f"<tr><td>{vlabel[v]}</td><td>{mlabel}</td>{''.join(cells)}</tr>")
     n_sorts = counts[(variants[0], "aqr", "cw")]["n"]
 
     # 4. The legs.
@@ -710,7 +783,7 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
         for label, title in (("before", f"to {split_label}"), ("from", f"from {split_label}")):
             for v in variants:
                 L = legs[v][u][label]
-                leg_rows.append(f"<tr><td>{LABEL[u]}</td><td>{title} ({L['months']} mo)</td><td>{VARIANTS[v][0]}</td>"
+                leg_rows.append(f"<tr><td>{LABEL[u]}</td><td>{title} ({L['months']} mo)</td><td>{vlabel[v]}</td>"
                                 + "".join(f"<td>{pct(L[c])}</td>" for c in ("long_cw", "short_cw", "spread_cw", "long_vw", "short_vw", "spread_vw"))
                                 + "</tr>")
 
@@ -727,7 +800,7 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
             sig_rows.append(f"<tr><td>{LABEL[u]}</td><td>{esc(names[factor])}</td><td>{freq}</td><td>{'equal' if w == 'cw' else 'cap'}</td>"
                             + "".join(tcell(piv[v].get((u, freq, factor), None)) for v in variants) + "</tr>")
 
-    variant_head = "".join(f"<th colspan=\"4\">{VARIANTS[v][0]}</th>" for v in variants)
+    variant_head = "".join(f"<th colspan=\"4\">{vlabel[v]}</th>" for v in variants)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -738,8 +811,8 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
 </head>
 <body>
 <main>
-<h1>Financials scored within their industry, beside the ex-Financials control</h1>
-<p class="sub">The strict sector-neutral sort of <code>docs/reports/score_methods_sector_neutral_{today.isoformat()}.html</code> run three ways: scoring within the sector as shipped; scoring a Financials member within its industry group (banks, insurance, REITs, financial services, by SIC code) with the sort still within the sector; and the academic control that drops Financials and Real Estate before scoring. Generated {today.isoformat()} from the database by <code>tools/score_methods.py --variants</code>. Nothing here was written to the database.</p>
+<h1>Financials: industry-relative scoring, comparable measures, and the ex-Financials control</h1>
+<p class="sub">The strict sector-neutral sort of <code>docs/reports/score_methods_sector_neutral_{today.isoformat()}.html</code> run {len(variants)} ways: scoring within the sector as shipped; scoring a Financials member within its industry group (banks, insurance, REITs, financial services, by SIC code) with the sort still within the sector; scoring banks, brokers and insurers only on the measures that mean the same thing across financials; both together; and the academic control that drops Financials and Real Estate before scoring. Each is a switch of <code>tools/score_methods.py</code>, applied at run time to the stored panel. Generated {today.isoformat()} from the database by <code>tools/score_methods.py --variants</code>. Nothing here was written to the database.</p>
 
 <div class="verdict">
 <p><b>Where Financials members land.</b>{banks_text} Section 1 has every group and universe.</p>
@@ -747,19 +820,21 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
 <p><b>Over every sort, equal-weighted, AQR scoring, clearing |t| 2 on FF5+UMD:</b> {count_text("aqr", "cw")}. <b>Cap-weighted:</b> {count_text("aqr", "vw")}. Section 3 has the three methods.</p>
 </div>
 
-<h2>What the three variants are, exactly</h2>
+<h2>What the variants are, exactly</h2>
 <ul>
 <li><b>Sector-relative</b>: every measure standardised within its (date, GICS sector) group, the composite the mean of a member's available scores re-standardised within the sector, quintiles within the sector. The shipped construction.</li>
 <li><b>Industry-relative</b>: for members of {INDUSTRY_SECTOR}, every measure standardised within the (date, industry group) instead, the group by the filer's SIC code (<code>sec_reference.company.sic_latest</code>: {groups_text}, {INDUSTRY_OTHER} otherwise); the composite, the mean of those group-relative scores, re-standardised within the sector as before, which leaves the order within the sector unchanged; the sort unchanged, quintiles within the sector. A group with fewer than {MIN_GROUP} members on a date, or a member without a SIC, is scored within the sector as before. REITs are a group only while the dated panel files them under {INDUSTRY_SECTOR}, before the 2016-09 GICS change made Real Estate a sector. Every other sector is scored as in the sector-relative variant.</li>
+<li><b>Comparable measures</b>: a member with SIC {COMPARABLE_SIC[0]}–{COMPARABLE_SIC[1]} (depository and non-depository credit, brokers and exchanges, insurance carriers and agents) is scored only on return on equity, quarterly return on equity, revenue growth and earnings surprise; gross profit to assets, cash flow to assets, both returns on assets and the operating margin are left out for it before scoring, and its composite needs {MIN_FACTORS_COMPARABLE} of those four where every other member needs {MIN_FACTORS} of nine. It therefore does not appear in the five single-factor sorts it has no value for, and a sector left with fewer than {MIN_SECTOR} scored members on a date drops out of that sort. Scoring stays within the sector.</li>
+<li><b>Industry-relative, comparable measures</b>: both of the above.</li>
 <li><b>ex-Financials and Real Estate</b>: both sectors dropped before scoring, the GICS form of the academic rule that excludes SIC 6000–6999 (Fama and French 1992, Novy-Marx 2013). Everything else unchanged.</li>
 </ul>
-<p>The SIC code is the one on the company's latest filing; a bank is a bank throughout, so for this purpose it is stable. Scoring groups by industry instead of sector is what systematic managers do when a sector mixes balance-sheet businesses with asset-light ones; the industry-specific descriptors they add (return on tangible equity, efficiency ratio, combined ratio, funds from operations) are not built here, so a bank is still scored on the measures the panel has, three of which divide by assets.</p>
+<p>The SIC code is the one on the company's latest filing; a bank is a bank throughout, so for this purpose it is stable. Scoring groups by industry instead of sector, and scoring a bank only on what a bank's accounts can say, are what systematic managers do when a sector mixes balance-sheet businesses with asset-light ones; the industry-specific descriptors they add (return on tangible equity, efficiency ratio, combined ratio, funds from operations) are not built here yet.</p>
 
 <h2>1. Where each industry group lands in {INDUSTRY_SECTOR}'s quintiles</h2>
 <p>The composite, AQR scoring, every date: the share of each group's company-months in the sector's bottom fifth and its top fifth. A sort that treats the groups alike puts 20% in each.</p>
 <div class="wrap"><table>
-<thead><tr><th rowspan="2">Universe</th><th rowspan="2">Group</th><th rowspan="2">Company-months</th><th colspan="2">Sector-relative</th><th colspan="2">Industry-relative</th></tr>
-<tr><th>Bottom fifth</th><th>Top fifth</th><th>Bottom fifth</th><th>Top fifth</th></tr></thead>
+<thead><tr><th rowspan="2">Universe</th><th rowspan="2">Group</th>{share_head}</tr>
+<tr>{'<th>Company-months</th><th>Bottom fifth</th><th>Top fifth</th>' * len(with_fin)}</tr></thead>
 <tbody>{''.join(share_rows)}</tbody></table></div>
 
 <h2>2. The composite, side by side</h2>
@@ -786,13 +861,13 @@ def build_variants_html(results: dict[str, pd.DataFrame], legs: dict, shares: di
 
 <h2>5. Every sort that clears |t| 2 under any variant</h2>
 <div class="wrap"><table>
-<thead><tr><th>Universe</th><th>Factor</th><th>Schedule</th><th>Weighting</th>{''.join(f'<th>{VARIANTS[v][0]} α t</th>' for v in variants)}</tr></thead>
+<thead><tr><th>Universe</th><th>Factor</th><th>Schedule</th><th>Weighting</th>{''.join(f'<th>{vlabel[v]} α t</th>' for v in variants)}</tr></thead>
 <tbody>{''.join(sig_rows) if sig_rows else '<tr><td colspan="7">none</td></tr>'}</tbody></table></div>
 <p class="note">AQR scoring, FF5+UMD alpha t under each variant for any sort where at least one variant reaches |t| 2.</p>
 
 <h2>6. What this does and does not settle</h2>
 <ul>
-<li><b>It separates the groups; it does not change what a bank is scored on.</b> A bank still has no gross profit and no operating margin in the panel, and three of its seven measures divide by assets. The next two steps, not built here: score banks and insurers only on the measures that mean the same thing across financials (return on equity, its quarterly form, revenue growth, earnings surprise), an allowlist rule by SIC prefix; then the descriptors their own analysts use (return on tangible equity, pre-provision profit to assets, efficiency ratio, provisions to loans, the combined ratio, funds from operations for REITs), each a formula variant keyed by SIC prefix in the concept layer.</li>
+<li><b>Separating the groups and restricting the measures are the first two steps; the third is not built.</b> A bank scored on comparable measures is still scored on what the panel has. The descriptors its own analysts use (return on tangible equity, pre-provision profit to assets, efficiency ratio, provisions to loans, the combined ratio, funds from operations for REITs) are each a formula variant keyed by SIC prefix in the concept layer, and that is the next step.</li>
 <li><b>Survivors only.</b> Unchanged from the sector-neutral page: no delisted company has a price series, so every short leg here is flattered.</li>
 <li><b>Real Estate has the same shape.</b> Sorted across the whole universe, Real Estate members land in the bottom fifth far more often than the top; sector neutrality handles that, and inside the sector nearly every member is a REIT, so an industry split does nothing there. Funds from operations is the fix.</li>
 <li><b>Cap weighting rests on guarded share counts.</b> {dropped_text(dropped if dropped is not None else pd.DataFrame())}</li>
@@ -832,8 +907,13 @@ def main() -> int:
     ap.add_argument("--universes", default=",".join(UNIVERSES))
     ap.add_argument("--ff-dir", default=str(config.PROJECT_ROOT / "data" / "external" / "french"))
     ap.add_argument("--out-dir", default=str(config.PROJECT_ROOT / "docs" / "reports"))
+    ap.add_argument("--grouping", choices=["sector", "industry"], default=DEFAULT_SPEC["grouping"],
+                    help="score a Financials member within its SIC industry group rather than the sector")
+    ap.add_argument("--financial-measures", choices=["all", "comparable"], default=DEFAULT_SPEC["measures"],
+                    help="comparable: SIC 6000-6499 members scored on ROE, quarterly ROE, revenue growth and SUE only")
+    ap.add_argument("--exclude-sectors", default="", help='GICS sectors dropped before scoring, e.g. "Financials,Real Estate"')
     ap.add_argument("--variants", action="store_true",
-                    help="also run the industry-relative and the ex-Financials variants and write the comparison page")
+                    help="run the registry of variants (sector, industry, comparable, both, ex-financials) and write the comparison page")
     args = ap.parse_args()
     ff_dir = Path(args.ff_dir)
     ff = load_french(ff_dir)
@@ -852,14 +932,20 @@ def main() -> int:
         print("market cap: left out as dominant: " + ", ".join(f"{r.ticker} {r.asof} ({r.share:.0%})" for r in dropped.itertuples()))
     cap_share = 100.0 * cap["market_cap"].notna().mean()
 
-    variants = list(VARIANTS) if args.variants else ["sector"]
+    if args.variants:
+        specs = {name: dict(spec) for name, spec in VARIANTS.items()}
+    else:
+        spec = {"grouping": args.grouping, "measures": args.financial_measures,
+                "exclude": tuple(x.strip() for x in args.exclude_sectors.split(",") if x.strip())}
+        specs = {variant_name(spec): {**spec, "label": variant_label(spec)}}
+    variants = list(specs)
     frames, shares = {}, {}
     with ThreadPoolExecutor(max_workers=len(universes)) as ex:
         for v in variants:
-            frames[v] = dict(zip(universes, ex.map(lambda u, v=v: run_universe(u, cap, v), universes)))
-            if args.variants and not VARIANTS[v][2]:
-                shares[v] = dict(zip(universes, ex.map(lambda u, v=v: group_shares(u, v), universes)))
-            print(f"{VARIANTS[v][0]}: sorts done")
+            frames[v] = dict(zip(universes, ex.map(lambda u, v=v: run_universe(u, cap, specs[v]), universes)))
+            if args.variants and not specs[v]["exclude"]:
+                shares[v] = dict(zip(universes, ex.map(lambda u, v=v: group_shares(u, specs[v]), universes)))
+            print(f"{specs[v]['label']}: sorts done")
         priced = dict(zip(universes, ex.map(priced_by_quintile, universes)))
 
     results, agree, legs = {}, {}, {}
@@ -873,19 +959,20 @@ def main() -> int:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"score_methods_sector_neutral_{today.isoformat()}.html"
-    out_path.write_text(build_html(results["sector"], agree["sector"], legs["sector"], priced, cap_share, ff_last, today, dropped))
-    print(f"written {out_path}")
+    if "sector" in results:
+        out_path = out_dir / f"score_methods_sector_neutral_{today.isoformat()}.html"
+        out_path.write_text(build_html(results["sector"], agree["sector"], legs["sector"], priced, cap_share, ff_last, today, dropped))
+        print(f"written {out_path}")
     if args.variants:
         out_path = out_dir / f"score_methods_financials_{today.isoformat()}.html"
-        out_path.write_text(build_variants_html(results, legs, shares, ff_last, today, dropped))
+        out_path.write_text(build_variants_html(results, legs, shares, ff_last, today, dropped, specs))
         print(f"written {out_path}")
 
     pd.set_option("display.width", 250)
     for v in variants:
         show = results[v][results[v].factor == "composite"].pivot_table(index=["universe", "freq"], columns=["weighting", "method"],
                                                                         values="FF5+UMD t_alpha")
-        print(f"--- {VARIANTS[v][0]}: composite FF5+UMD alpha t")
+        print(f"--- {specs[v]['label']}: composite FF5+UMD alpha t")
         print(show.to_string(float_format=lambda x: f"{x:7.2f}"))
         for u in universes:
             L = legs[v][u]

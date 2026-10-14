@@ -826,11 +826,27 @@ def test_industry_group_by_sic_prefix_and_its_sql():
     for name, lo, hi in score_methods.INDUSTRY_GROUPS:
         assert f"WHEN x.sic BETWEEN {lo} AND {hi} THEN '{name}'" in sql
     assert sql.endswith(f"ELSE '{score_methods.INDUSTRY_OTHER}' END")
-    # The sector variant scores within the sector and excludes nothing; the control drops both SIC 6000-6999 sectors.
-    assert score_methods.VARIANTS["sector"][1:] == ("sector", ())
-    assert score_methods.VARIANTS["ex-financials"][2] == ("Financials", "Real Estate")
+    # The sector variant scores within the sector on every measure and excludes nothing; the control drops both SIC 6000-6999 sectors.
+    assert {k: score_methods.VARIANTS["sector"][k] for k in score_methods.DEFAULT_SPEC} == score_methods.DEFAULT_SPEC
+    assert score_methods.VARIANTS["ex-financials"]["exclude"] == ("Financials", "Real Estate")
     assert score_methods.sql_params("SP500", "ex-financials")["exclude"] == ["Financials", "Real Estate"]
     assert score_methods.sql_params("SP500", "industry")["grouping"] == "industry"
+    p = score_methods.sql_params("SP500", "industry-comparable")
+    assert p["measures"] == "comparable" and p["grouping"] == "industry" and p["asset_scaled"] == list(score_methods.ASSET_SCALED)
+    assert (p["comparable_lo"], p["comparable_hi"]) == (6000, 6499) and p["min_factors_comparable"] < p["min_factors"]
+
+
+def test_variant_name_and_label_from_switches():
+    vn, vl = score_methods.variant_name, score_methods.variant_label
+    base = dict(score_methods.DEFAULT_SPEC)
+    assert vn(base) == "sector" and vl(base) == "sector-relative"
+    assert vn({**base, "grouping": "industry"}) == "industry"
+    assert vn({**base, "measures": "comparable"}) == "comparable"
+    assert vn({**base, "grouping": "industry", "measures": "comparable"}) == "industry-comparable"
+    assert vn({**base, "exclude": ("Financials", "Real Estate")}) == "ex-financials"      # the registry's name wins
+    custom = {**base, "grouping": "industry", "exclude": ("Utilities",)}
+    assert vn(custom) == "industry-ex-utilities" and vl(custom) == "industry-relative, ex-Utilities"
+    assert score_methods.sql_params("SP400", custom)["exclude"] == ["Utilities"]
 
 
 def test_drop_dominant_caps_nulls_only_the_dominant_company_date():

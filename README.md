@@ -284,7 +284,8 @@ uv run python tools/ff_baseline.py SP500 --download     # factor spreads vs Fama
 uv run python tools/factor_report.py SP500              # the backtest report as one HTML file -> docs/reports/
 uv run python tools/factor_report.py --overview         # the four universes side by side, after the four per-index runs
 uv run python tools/score_methods.py                   # AQR, MSCI and Barra scoring, strict sector-neutral, equal- and cap-weighted -> docs/reports/ (market caps cached in data/external/french)
-uv run python tools/score_methods.py --variants        # the same, plus Financials scored within their SIC industry group and the ex-Financials control, one comparison page
+uv run python tools/score_methods.py --variants        # the registry of constructions side by side: Financials scored within their SIC industry group, banks and insurers on comparable measures only, both, and the ex-Financials control
+uv run python tools/score_methods.py --grouping industry --financial-measures comparable   # any combination of the switches as a single run (also --exclude-sectors)
 ```
 
 ## Keeping the documentation current
