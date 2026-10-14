@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factor backtests, four universes, 2026-10-13</title>
+<style>
+:root { --bg:#fbfbf9; --fg:#1d1d1b; --muted:#5f5f5a; --rule:#dedcd3; --head:#f1efe6; --zebra:#f7f6f1;
+        --accent:#8a3b12; --sig:#fde8d9; --weak:#fff6e5; --band:#eceae2; --link:#1f4e79; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#15161a; --fg:#e8e6df; --muted:#a3a39b; --rule:#33353c; --head:#1f2127; --zebra:#1a1c21;
+          --accent:#e8905a; --sig:#4a2a17; --weak:#3a3114; --band:#24262d; --link:#8ab4e8; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 32px 16px 80px; }
+h1 { font-size: 2rem; line-height:1.2; margin: 0 0 4px; letter-spacing:-0.01em; }
+h2 { font-size: 1.35rem; margin: 44px 0 12px; padding-top: 10px; border-top: 2px solid var(--rule); }
+h3 { font-size: 1.05rem; margin: 26px 0 8px; }
+p, li { max-width: 72ch; }
+.sub { color: var(--muted); margin: 0 0 24px; }
+.verdict { border-left: 5px solid var(--accent); padding: 12px 18px; background: var(--head); margin: 20px 0; }
+.verdict p { margin: 6px 0; }
+.kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0; }
+.kpi { background: var(--head); border:1px solid var(--rule); border-radius: 8px; padding: 10px 14px; }
+.kpi b { display:block; font-size: 1.35rem; }
+.kpi span { color: var(--muted); font-size: 0.85rem; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0 6px; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--rule); text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+thead th { background: var(--head); position: sticky; top: 0; }
+tbody tr:nth-child(even) { background: var(--zebra); }
+td.sig { background: var(--sig); font-weight: 600; }
+td.weak { background: var(--weak); }
+.wrap { overflow-x: auto; }
+.note { color: var(--muted); font-size: 0.85rem; margin: 2px 0 14px; }
+code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--head); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--head); border:1px solid var(--rule); border-radius: 8px; padding: 12px 14px; overflow-x:auto; font-size: 0.85rem; }
+figure { margin: 16px 0 6px; }
+figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 6px; }
+svg { width: 100%; height: auto; display:block; }
+svg .grid { stroke: var(--rule); stroke-width: 1; }
+svg .axis { fill: var(--muted); font-size: 12px; }
+svg .lbl { fill: var(--fg); font-size: 12px; }
+svg .band { fill: var(--band); }
+a { color: var(--link); }
+.small { font-size: 0.85rem; color: var(--muted); }
+@media print { body { background:#fff; color:#000; } main { max-width:none; padding:0; } h2 { break-after: avoid; } .wrap { overflow: visible; } }
+
+svg .one { stroke: var(--fg); stroke-width: 1.2; }
+.grid2 { display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.card { border:1px solid var(--rule); border-radius: 8px; padding: 12px 16px; background: var(--head); }
+.card h3 { margin: 0 0 6px; }
+.card p { margin: 4px 0; font-size: 0.95rem; }
+ol li { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Do accounting factors pay? The S&amp;P 500, 400, 600 and the three together</h1>
+<p class="sub">Point-in-time fundamentals from SEC DERA, month-end prices, equal-weight quintile sorts rebalanced monthly, quarterly and annually, measured raw and against the Fama-French five factors and momentum, in four universes. Generated 2026-10-13 from the database by <code>tools/factor_report.py --overview</code>; the per-universe pages carry every bucket, alpha and loading.</p>
+
+<div class="verdict">
+<p><b>Verdict: nothing pays beyond chance, in any of the four universes. 4 of 120 sorts clear |t| 2 on a factor model, 2 of them sorting the wrong way, against 6 expected from noise at the 5% level.</b> Ten sorts (a composite and nine accounting factors) on three rebalancing schedules in four universes make 120 tests. The raw spreads that clear t 2: S&amp;P 600, Gross profit / assets at annual rebalancing, -9.8% a year, t -2.03. After the factor models: S&amp;P 500: Revenue growth (low is good), quarterly, +4.2% a year, t 2.50 on FF5 and 2.37 with momentum; S&amp;P 400: Revenue growth (low is good), monthly, +4.3% a year, t 1.99 on FF5 and 2.08 with momentum; S&amp;P 600: Operating margin, monthly, -8.0% a year, t -2.48 on FF5 and -2.53 with momentum; S&amp;P 600: Operating margin, quarterly, -8.0% a year, t -2.32 on FF5 and -2.36 with momentum. No sort clears |t| 2 in more than one universe. No sort has the same sign with |t| above 1 in all four universes.</p>
+<p>The machinery checks out in every universe: each equal-weight benchmark regresses on the five factors with beta near one, alpha within 1.2% of zero and R² of 0.96 or more, with the size loading rising from 0.15 in the 500 to 0.93 in the 600. The Yahoo returns and the French series agree.</p>
+</div>
+
+<div class="kpis">
+<div class="kpi"><b>4</b><span>universes, 120 tests, two factor models each</span></div>
+<div class="kpi"><b>4</b><span>sorts clear |t| 2 on a model; 2 the wrong way</span></div>
+<div class="kpi"><b>578</b><span>universe-months, 96 to 199 a universe</span></div>
+<div class="kpi"><b>1,693</b><span>companies with prices, 303,761 month-end rows</span></div>
+<div class="kpi"><b>718</b><span>of 2,417 members ever with no open listing (no prices)</span></div>
+</div>
+
+<h2>1. The four universes side by side</h2>
+<div class="wrap"><table>
+<thead><tr><th>Universe</th><th>Panel from</th><th>Months</th><th>Members a date</th><th>Priced next month, first year → 2025</th><th>Benchmark, ann.</th><th>FF5 α</th><th>R²</th><th>SMB</th><th>Max raw |t|</th><th>Alphas past |t| 2, FF5 / FF5+UMD</th></tr></thead>
+<tbody><tr><td><a href="factor_backtest_SP500_2026-10-13.html">S&amp;P 500</a></td><td>2010-01</td><td>199</td><td>499</td><td>66% → 98%</td><td>13.8%</td><td>-0.3%</td><td>0.96</td><td>0.15</td><td>1.56</td><td>1 / 1</td></tr><tr><td><a href="factor_backtest_SP400_2026-10-13.html">S&amp;P 400</a></td><td>2011-01</td><td>187</td><td>399</td><td>55% → 95%</td><td>12.3%</td><td>-1.1%</td><td>0.96</td><td>0.57</td><td>1.03</td><td>0 / 1</td></tr><tr><td><a href="factor_backtest_SP600_2026-10-13.html">S&amp;P 600</a></td><td>2018-08</td><td>96</td><td>571</td><td>65% → 93%</td><td>9.5%</td><td>-0.3%</td><td>0.98</td><td>0.93</td><td>2.03</td><td>2 / 2</td></tr><tr><td><a href="factor_backtest_SP1500_2026-10-13.html">S&amp;P 1500</a></td><td>2018-08</td><td>96</td><td>1,468</td><td>74% → 95%</td><td>10.1%</td><td>-1.2%</td><td>0.98</td><td>0.55</td><td>0.96</td><td>0 / 0</td></tr></tbody></table></div>
+<p class="note">Benchmark: the equal-weight return of every priced member, monthly, minus the bill rate; α and R² from the FF5 fit, SMB from the six-factor fit. Max raw |t| is over the thirty top-minus-bottom spreads of that universe. The S&amp;P 400 history is replayed from 2011 and the S&amp;P 600 from 2018-08, so the 600 and the union are a third as long as the 500.</p>
+
+<h2>2. Every sort in every universe</h2>
+<p>Raw annualised top-minus-bottom spread and the alpha t-statistic after the five factors and momentum, per universe. Shaded when |t| ≥ 2 (strong) or ≥ 1.65 (faint). A real effect would show up with the same sign in more than one universe; read down a row.</p>
+<div class="wrap"><table>
+<thead><tr><th rowspan="2">Factor</th><th rowspan="2">Schedule</th><th colspan="2">S&amp;P 500</th><th colspan="2">S&amp;P 400</th><th colspan="2">S&amp;P 600</th><th colspan="2">S&amp;P 1500</th></tr>
+<tr><th>Raw ann.</th><th>α t</th><th>Raw ann.</th><th>α t</th><th>Raw ann.</th><th>α t</th><th>Raw ann.</th><th>α t</th></tr></thead>
+<tbody><tr><td>Composite</td><td>monthly</td><td>1.0%</td><td>0.34</td><td>0.9%</td><td>0.65</td><td>-4.4%</td><td>-1.23</td><td>-0.5%</td><td>-0.51</td></tr><tr><td>Composite</td><td>quarterly</td><td>1.2%</td><td>0.27</td><td>0.5%</td><td>0.23</td><td>-4.1%</td><td>-0.98</td><td>-1.2%</td><td>-0.84</td></tr><tr><td>Composite</td><td>annual</td><td>0.9%</td><td>0.17</td><td>1.7%</td><td>0.72</td><td>-4.2%</td><td>-1.17</td><td>-3.6%</td><td>-1.58</td></tr><tr><td>Gross profit / assets</td><td>monthly</td><td>0.3%</td><td>0.11</td><td>1.9%</td><td>0.96</td><td>-5.9%</td><td>-0.97</td><td>-2.5%</td><td>-0.51</td></tr><tr><td>Gross profit / assets</td><td>quarterly</td><td>0.7%</td><td>0.26</td><td>0.8%</td><td>0.64</td><td>-7.2%</td><td>-1.21</td><td>-3.1%</td><td>-0.66</td></tr><tr><td>Gross profit / assets</td><td>annual</td><td>2.2%</td><td>1.04</td><td>3.1%</td><td>1.15</td><td>-9.8%</td><td class="weak">-1.75</td><td>-2.2%</td><td>-0.29</td></tr><tr><td>Operating cash flow / assets</td><td>monthly</td><td>-0.3%</td><td>-0.75</td><td>2.2%</td><td>0.38</td><td>-1.8%</td><td>-0.58</td><td>0.0%</td><td>-0.56</td></tr><tr><td>Operating cash flow / assets</td><td>quarterly</td><td>0.4%</td><td>-0.58</td><td>0.3%</td><td>-0.56</td><td>-2.5%</td><td>-0.71</td><td>-0.5%</td><td>-0.59</td></tr><tr><td>Operating cash flow / assets</td><td>annual</td><td>1.9%</td><td>0.70</td><td>0.9%</td><td>-0.20</td><td>-0.1%</td><td>-0.21</td><td>-0.1%</td><td>-0.61</td></tr><tr><td>Return on assets</td><td>monthly</td><td>-0.6%</td><td>-0.60</td><td>1.3%</td><td>0.64</td><td>-6.1%</td><td>-1.43</td><td>-0.5%</td><td>-0.33</td></tr><tr><td>Return on assets</td><td>quarterly</td><td>-0.2%</td><td>-0.61</td><td>0.0%</td><td>-0.07</td><td>-6.1%</td><td>-1.24</td><td>-1.3%</td><td>-0.63</td></tr><tr><td>Return on assets</td><td>annual</td><td>2.0%</td><td>0.86</td><td>-0.4%</td><td>-0.12</td><td>-5.6%</td><td>-1.21</td><td>-3.0%</td><td>-1.06</td></tr><tr><td>Return on equity</td><td>monthly</td><td>0.9%</td><td>0.37</td><td>1.6%</td><td>0.66</td><td>-4.4%</td><td>-1.36</td><td>-0.1%</td><td>-0.39</td></tr><tr><td>Return on equity</td><td>quarterly</td><td>1.3%</td><td>0.42</td><td>0.4%</td><td>0.02</td><td>-4.4%</td><td>-1.32</td><td>-0.6%</td><td>-0.63</td></tr><tr><td>Return on equity</td><td>annual</td><td>1.2%</td><td>0.72</td><td>0.5%</td><td>0.28</td><td>-4.1%</td><td>-1.03</td><td>-2.9%</td><td>-1.24</td></tr><tr><td>Operating margin</td><td>monthly</td><td>-2.5%</td><td>-1.22</td><td>-1.1%</td><td>0.24</td><td>-9.9%</td><td class="sig">-2.53</td><td>-2.8%</td><td>-1.19</td></tr><tr><td>Operating margin</td><td>quarterly</td><td>-2.6%</td><td>-1.34</td><td>-2.4%</td><td>-0.44</td><td>-9.9%</td><td class="sig">-2.36</td><td>-3.1%</td><td>-1.23</td></tr><tr><td>Operating margin</td><td>annual</td><td>-3.5%</td><td>-1.38</td><td>-1.2%</td><td>0.05</td><td>-8.5%</td><td class="weak">-1.69</td><td>-4.9%</td><td>-1.42</td></tr><tr><td>Revenue growth (low is good)</td><td>monthly</td><td>1.7%</td><td class="weak">1.87</td><td>2.1%</td><td class="sig">2.08</td><td>0.4%</td><td>0.35</td><td>-0.7%</td><td>0.37</td></tr><tr><td>Revenue growth (low is good)</td><td>quarterly</td><td>1.8%</td><td class="sig">2.37</td><td>1.2%</td><td class="weak">1.79</td><td>-0.6%</td><td>0.28</td><td>-1.0%</td><td>0.38</td></tr><tr><td>Revenue growth (low is good)</td><td>annual</td><td>2.1%</td><td>1.35</td><td>3.2%</td><td>0.40</td><td>2.5%</td><td>0.83</td><td>2.1%</td><td>0.90</td></tr><tr><td>Quarterly ROE</td><td>monthly</td><td>2.1%</td><td>0.54</td><td>1.4%</td><td>0.57</td><td>-2.4%</td><td>-0.58</td><td>-0.4%</td><td>-0.34</td></tr><tr><td>Quarterly ROE</td><td>quarterly</td><td>1.6%</td><td>-0.01</td><td>1.5%</td><td>0.34</td><td>-1.5%</td><td>-0.28</td><td>-0.1%</td><td>-0.41</td></tr><tr><td>Quarterly ROE</td><td>annual</td><td>0.7%</td><td>-0.22</td><td>-1.5%</td><td>-0.74</td><td>-7.1%</td><td class="weak">-1.90</td><td>-2.0%</td><td>-0.90</td></tr><tr><td>Quarterly ROA</td><td>monthly</td><td>0.3%</td><td>-0.19</td><td>1.1%</td><td>0.65</td><td>-2.9%</td><td>-0.59</td><td>-1.0%</td><td>-0.44</td></tr><tr><td>Quarterly ROA</td><td>quarterly</td><td>0.6%</td><td>-0.38</td><td>1.5%</td><td>0.56</td><td>-1.8%</td><td>-0.15</td><td>-0.2%</td><td>-0.20</td></tr><tr><td>Quarterly ROA</td><td>annual</td><td>-0.0%</td><td>-0.42</td><td>-2.4%</td><td>-0.93</td><td>-6.6%</td><td class="weak">-1.65</td><td>-2.5%</td><td>-0.91</td></tr><tr><td>Earnings surprise (SUE)</td><td>monthly</td><td>1.2%</td><td>-0.40</td><td>-0.0%</td><td>0.06</td><td>-1.5%</td><td>-1.50</td><td>-1.6%</td><td class="weak">-1.85</td></tr><tr><td>Earnings surprise (SUE)</td><td>quarterly</td><td>1.4%</td><td>-0.05</td><td>1.4%</td><td>0.48</td><td>1.1%</td><td>-0.32</td><td>0.1%</td><td>-0.60</td></tr><tr><td>Earnings surprise (SUE)</td><td>annual</td><td>-1.6%</td><td>-1.19</td><td>0.8%</td><td>0.23</td><td>-1.1%</td><td>-0.85</td><td>-0.9%</td><td>-0.80</td></tr></tbody></table></div>
+<figure><svg viewBox="0 0 860 366" role="img" aria-label="FF5+UMD alpha t-statistics by universe">
+<rect x="344.4" y="26" width="381.2" height="310" class="band"/>
+<line x1="249.1" y1="26" x2="249.1" y2="336" class="grid"/>
+<text x="249.1" y="20" class="axis" text-anchor="middle">t = -3</text>
+<line x1="344.4" y1="26" x2="344.4" y2="336" class="grid"/>
+<text x="344.4" y="20" class="axis" text-anchor="middle">t = -2</text>
+<line x1="439.7" y1="26" x2="439.7" y2="336" class="grid"/>
+<text x="439.7" y="20" class="axis" text-anchor="middle">t = -1</text>
+<line x1="535.0" y1="26" x2="535.0" y2="336" class="grid"/>
+<text x="535.0" y="20" class="axis" text-anchor="middle">t = 0</text>
+<line x1="630.3" y1="26" x2="630.3" y2="336" class="grid"/>
+<text x="630.3" y="20" class="axis" text-anchor="middle">t = 1</text>
+<line x1="725.6" y1="26" x2="725.6" y2="336" class="grid"/>
+<text x="725.6" y="20" class="axis" text-anchor="middle">t = 2</text>
+<line x1="820.9" y1="26" x2="820.9" y2="336" class="grid"/>
+<text x="820.9" y="20" class="axis" text-anchor="middle">t = 3</text>
+<text x="220" y="55.0" class="lbl" text-anchor="end">Composite</text>
+<line x1="230" y1="51.0" x2="840" y2="51.0" class="grid"/>
+<circle cx="567.0" cy="51.0" r="5" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Composite, monthly: t = 0.34</title></circle>
+<rect x="555.6" y="46.0" width="10" height="10" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Composite, quarterly: t = 0.27</title></rect>
+<path d="M550.9,45.0 L556.9,56.0 L544.9,56.0 Z" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Composite, annual: t = 0.17</title></path>
+<circle cx="596.5" cy="51.0" r="5" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Composite, monthly: t = 0.65</title></circle>
+<rect x="551.8" y="46.0" width="10" height="10" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Composite, quarterly: t = 0.23</title></rect>
+<path d="M603.5,45.0 L609.5,56.0 L597.5,56.0 Z" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Composite, annual: t = 0.72</title></path>
+<circle cx="418.1" cy="51.0" r="5" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Composite, monthly: t = -1.23</title></circle>
+<rect x="436.4" y="46.0" width="10" height="10" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Composite, quarterly: t = -0.98</title></rect>
+<path d="M423.9,45.0 L429.9,56.0 L417.9,56.0 Z" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Composite, annual: t = -1.17</title></path>
+<circle cx="486.0" cy="51.0" r="5" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Composite, monthly: t = -0.51</title></circle>
+<rect x="449.9" y="46.0" width="10" height="10" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Composite, quarterly: t = -0.84</title></rect>
+<path d="M384.5,45.0 L390.5,56.0 L378.5,56.0 Z" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Composite, annual: t = -1.58</title></path>
+<text x="220" y="85.0" class="lbl" text-anchor="end">Gross profit / assets</text>
+<line x1="230" y1="81.0" x2="840" y2="81.0" class="grid"/>
+<circle cx="545.8" cy="81.0" r="5" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Gross profit / assets, monthly: t = 0.11</title></circle>
+<rect x="554.9" y="76.0" width="10" height="10" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Gross profit / assets, quarterly: t = 0.26</title></rect>
+<path d="M634.3,75.0 L640.3,86.0 L628.3,86.0 Z" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Gross profit / assets, annual: t = 1.04</title></path>
+<circle cx="626.7" cy="81.0" r="5" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Gross profit / assets, monthly: t = 0.96</title></circle>
+<rect x="591.3" y="76.0" width="10" height="10" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Gross profit / assets, quarterly: t = 0.64</title></rect>
+<path d="M644.8,75.0 L650.8,86.0 L638.8,86.0 Z" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Gross profit / assets, annual: t = 1.15</title></path>
+<circle cx="442.8" cy="81.0" r="5" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Gross profit / assets, monthly: t = -0.97</title></circle>
+<rect x="414.2" y="76.0" width="10" height="10" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Gross profit / assets, quarterly: t = -1.21</title></rect>
+<path d="M368.1,75.0 L374.1,86.0 L362.1,86.0 Z" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Gross profit / assets, annual: t = -1.75</title></path>
+<circle cx="485.9" cy="81.0" r="5" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Gross profit / assets, monthly: t = -0.51</title></circle>
+<rect x="467.3" y="76.0" width="10" height="10" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Gross profit / assets, quarterly: t = -0.66</title></rect>
+<path d="M507.8,75.0 L513.8,86.0 L501.8,86.0 Z" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Gross profit / assets, annual: t = -0.29</title></path>
+<text x="220" y="115.0" class="lbl" text-anchor="end">Operating cash flow / assets</text>
+<line x1="230" y1="111.0" x2="840" y2="111.0" class="grid"/>
+<circle cx="463.1" cy="111.0" r="5" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Operating cash flow / assets, monthly: t = -0.75</title></circle>
+<rect x="474.4" y="106.0" width="10" height="10" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Operating cash flow / assets, quarterly: t = -0.58</title></rect>
+<path d="M601.5,105.0 L607.5,116.0 L595.5,116.0 Z" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Operating cash flow / assets, annual: t = 0.70</title></path>
+<circle cx="571.1" cy="111.0" r="5" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Operating cash flow / assets, monthly: t = 0.38</title></circle>
+<rect x="477.0" y="106.0" width="10" height="10" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Operating cash flow / assets, quarterly: t = -0.56</title></rect>
+<path d="M516.4,105.0 L522.4,116.0 L510.4,116.0 Z" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Operating cash flow / assets, annual: t = -0.20</title></path>
+<circle cx="479.5" cy="111.0" r="5" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Operating cash flow / assets, monthly: t = -0.58</title></circle>
+<rect x="462.3" y="106.0" width="10" height="10" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Operating cash flow / assets, quarterly: t = -0.71</title></rect>
+<path d="M515.4,105.0 L521.4,116.0 L509.4,116.0 Z" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Operating cash flow / assets, annual: t = -0.21</title></path>
+<circle cx="481.5" cy="111.0" r="5" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Operating cash flow / assets, monthly: t = -0.56</title></circle>
+<rect x="473.5" y="106.0" width="10" height="10" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Operating cash flow / assets, quarterly: t = -0.59</title></rect>
+<path d="M476.7,105.0 L482.7,116.0 L470.7,116.0 Z" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Operating cash flow / assets, annual: t = -0.61</title></path>
+<text x="220" y="145.0" class="lbl" text-anchor="end">Return on assets</text>
+<line x1="230" y1="141.0" x2="840" y2="141.0" class="grid"/>
+<circle cx="477.7" cy="141.0" r="5" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Return on assets, monthly: t = -0.60</title></circle>
+<rect x="472.1" y="136.0" width="10" height="10" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Return on assets, quarterly: t = -0.61</title></rect>
+<path d="M617.1,135.0 L623.1,146.0 L611.1,146.0 Z" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Return on assets, annual: t = 0.86</title></path>
+<circle cx="596.2" cy="141.0" r="5" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Return on assets, monthly: t = 0.64</title></circle>
+<rect x="523.4" y="136.0" width="10" height="10" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Return on assets, quarterly: t = -0.07</title></rect>
+<path d="M523.6,135.0 L529.6,146.0 L517.6,146.0 Z" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Return on assets, annual: t = -0.12</title></path>
+<circle cx="399.0" cy="141.0" r="5" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Return on assets, monthly: t = -1.43</title></circle>
+<rect x="411.8" y="136.0" width="10" height="10" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Return on assets, quarterly: t = -1.24</title></rect>
+<path d="M419.9,135.0 L425.9,146.0 L413.9,146.0 Z" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Return on assets, annual: t = -1.21</title></path>
+<circle cx="503.2" cy="141.0" r="5" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Return on assets, monthly: t = -0.33</title></circle>
+<rect x="470.2" y="136.0" width="10" height="10" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Return on assets, quarterly: t = -0.63</title></rect>
+<path d="M433.8,135.0 L439.8,146.0 L427.8,146.0 Z" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Return on assets, annual: t = -1.06</title></path>
+<text x="220" y="175.0" class="lbl" text-anchor="end">Return on equity</text>
+<line x1="230" y1="171.0" x2="840" y2="171.0" class="grid"/>
+<circle cx="570.4" cy="171.0" r="5" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Return on equity, monthly: t = 0.37</title></circle>
+<rect x="570.2" y="166.0" width="10" height="10" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Return on equity, quarterly: t = 0.42</title></rect>
+<path d="M603.5,165.0 L609.5,176.0 L597.5,176.0 Z" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Return on equity, annual: t = 0.72</title></path>
+<circle cx="597.6" cy="171.0" r="5" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Return on equity, monthly: t = 0.66</title></circle>
+<rect x="532.3" y="166.0" width="10" height="10" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Return on equity, quarterly: t = 0.02</title></rect>
+<path d="M561.4,165.0 L567.4,176.0 L555.4,176.0 Z" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Return on equity, annual: t = 0.28</title></path>
+<circle cx="405.2" cy="171.0" r="5" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Return on equity, monthly: t = -1.36</title></circle>
+<rect x="404.3" y="166.0" width="10" height="10" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Return on equity, quarterly: t = -1.32</title></rect>
+<path d="M436.7,165.0 L442.7,176.0 L430.7,176.0 Z" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Return on equity, annual: t = -1.03</title></path>
+<circle cx="497.4" cy="171.0" r="5" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Return on equity, monthly: t = -0.39</title></circle>
+<rect x="469.7" y="166.0" width="10" height="10" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Return on equity, quarterly: t = -0.63</title></rect>
+<path d="M416.4,165.0 L422.4,176.0 L410.4,176.0 Z" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Return on equity, annual: t = -1.24</title></path>
+<text x="220" y="205.0" class="lbl" text-anchor="end">Operating margin</text>
+<line x1="230" y1="201.0" x2="840" y2="201.0" class="grid"/>
+<circle cx="419.1" cy="201.0" r="5" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Operating margin, monthly: t = -1.22</title></circle>
+<rect x="402.0" y="196.0" width="10" height="10" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Operating margin, quarterly: t = -1.34</title></rect>
+<path d="M403.5,195.0 L409.5,206.0 L397.5,206.0 Z" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Operating margin, annual: t = -1.38</title></path>
+<circle cx="558.0" cy="201.0" r="5" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Operating margin, monthly: t = 0.24</title></circle>
+<rect x="488.4" y="196.0" width="10" height="10" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Operating margin, quarterly: t = -0.44</title></rect>
+<path d="M539.8,195.0 L545.8,206.0 L533.8,206.0 Z" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Operating margin, annual: t = 0.05</title></path>
+<circle cx="293.5" cy="201.0" r="5" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Operating margin, monthly: t = -2.53</title></circle>
+<rect x="305.0" y="196.0" width="10" height="10" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Operating margin, quarterly: t = -2.36</title></rect>
+<path d="M373.8,195.0 L379.8,206.0 L367.8,206.0 Z" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Operating margin, annual: t = -1.69</title></path>
+<circle cx="421.7" cy="201.0" r="5" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Operating margin, monthly: t = -1.19</title></circle>
+<rect x="412.9" y="196.0" width="10" height="10" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Operating margin, quarterly: t = -1.23</title></rect>
+<path d="M399.5,195.0 L405.5,206.0 L393.5,206.0 Z" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Operating margin, annual: t = -1.42</title></path>
+<text x="220" y="235.0" class="lbl" text-anchor="end">Revenue growth (low is good)</text>
+<line x1="230" y1="231.0" x2="840" y2="231.0" class="grid"/>
+<circle cx="713.5" cy="231.0" r="5" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Revenue growth (low is good), monthly: t = 1.87</title></circle>
+<rect x="756.3" y="226.0" width="10" height="10" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Revenue growth (low is good), quarterly: t = 2.37</title></rect>
+<path d="M663.7,225.0 L669.7,236.0 L657.7,236.0 Z" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Revenue growth (low is good), annual: t = 1.35</title></path>
+<circle cx="733.6" cy="231.0" r="5" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Revenue growth (low is good), monthly: t = 2.08</title></circle>
+<rect x="700.7" y="226.0" width="10" height="10" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Revenue growth (low is good), quarterly: t = 1.79</title></rect>
+<path d="M572.9,225.0 L578.9,236.0 L566.9,236.0 Z" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Revenue growth (low is good), annual: t = 0.40</title></path>
+<circle cx="568.7" cy="231.0" r="5" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Revenue growth (low is good), monthly: t = 0.35</title></circle>
+<rect x="556.4" y="226.0" width="10" height="10" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Revenue growth (low is good), quarterly: t = 0.28</title></rect>
+<path d="M614.3,225.0 L620.3,236.0 L608.3,236.0 Z" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Revenue growth (low is good), annual: t = 0.83</title></path>
+<circle cx="570.4" cy="231.0" r="5" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Revenue growth (low is good), monthly: t = 0.37</title></circle>
+<rect x="566.1" y="226.0" width="10" height="10" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Revenue growth (low is good), quarterly: t = 0.38</title></rect>
+<path d="M620.4,225.0 L626.4,236.0 L614.4,236.0 Z" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Revenue growth (low is good), annual: t = 0.90</title></path>
+<text x="220" y="265.0" class="lbl" text-anchor="end">Quarterly ROE</text>
+<line x1="230" y1="261.0" x2="840" y2="261.0" class="grid"/>
+<circle cx="586.6" cy="261.0" r="5" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Quarterly ROE, monthly: t = 0.54</title></circle>
+<rect x="528.8" y="256.0" width="10" height="10" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Quarterly ROE, quarterly: t = -0.01</title></rect>
+<path d="M514.5,255.0 L520.5,266.0 L508.5,266.0 Z" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Quarterly ROE, annual: t = -0.22</title></path>
+<circle cx="589.2" cy="261.0" r="5" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Quarterly ROE, monthly: t = 0.57</title></circle>
+<rect x="562.5" y="256.0" width="10" height="10" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Quarterly ROE, quarterly: t = 0.34</title></rect>
+<path d="M464.3,255.0 L470.3,266.0 L458.3,266.0 Z" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Quarterly ROE, annual: t = -0.74</title></path>
+<circle cx="479.6" cy="261.0" r="5" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Quarterly ROE, monthly: t = -0.58</title></circle>
+<rect x="503.2" y="256.0" width="10" height="10" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Quarterly ROE, quarterly: t = -0.28</title></rect>
+<path d="M354.2,255.0 L360.2,266.0 L348.2,266.0 Z" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Quarterly ROE, annual: t = -1.90</title></path>
+<circle cx="502.9" cy="261.0" r="5" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Quarterly ROE, monthly: t = -0.34</title></circle>
+<rect x="490.5" y="256.0" width="10" height="10" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Quarterly ROE, quarterly: t = -0.41</title></rect>
+<path d="M449.3,255.0 L455.3,266.0 L443.3,266.0 Z" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Quarterly ROE, annual: t = -0.90</title></path>
+<text x="220" y="295.0" class="lbl" text-anchor="end">Quarterly ROA</text>
+<line x1="230" y1="291.0" x2="840" y2="291.0" class="grid"/>
+<circle cx="516.6" cy="291.0" r="5" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Quarterly ROA, monthly: t = -0.19</title></circle>
+<rect x="494.0" y="286.0" width="10" height="10" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Quarterly ROA, quarterly: t = -0.38</title></rect>
+<path d="M494.8,285.0 L500.8,296.0 L488.8,296.0 Z" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Quarterly ROA, annual: t = -0.42</title></path>
+<circle cx="597.2" cy="291.0" r="5" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Quarterly ROA, monthly: t = 0.65</title></circle>
+<rect x="583.4" y="286.0" width="10" height="10" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Quarterly ROA, quarterly: t = 0.56</title></rect>
+<path d="M446.0,285.0 L452.0,296.0 L440.0,296.0 Z" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Quarterly ROA, annual: t = -0.93</title></path>
+<circle cx="479.0" cy="291.0" r="5" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Quarterly ROA, monthly: t = -0.59</title></circle>
+<rect x="515.5" y="286.0" width="10" height="10" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Quarterly ROA, quarterly: t = -0.15</title></rect>
+<path d="M377.5,285.0 L383.5,296.0 L371.5,296.0 Z" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Quarterly ROA, annual: t = -1.65</title></path>
+<circle cx="493.0" cy="291.0" r="5" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Quarterly ROA, monthly: t = -0.44</title></circle>
+<rect x="511.2" y="286.0" width="10" height="10" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Quarterly ROA, quarterly: t = -0.20</title></rect>
+<path d="M448.0,285.0 L454.0,296.0 L442.0,296.0 Z" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Quarterly ROA, annual: t = -0.91</title></path>
+<text x="220" y="325.0" class="lbl" text-anchor="end">Earnings surprise (SUE)</text>
+<line x1="230" y1="321.0" x2="840" y2="321.0" class="grid"/>
+<circle cx="497.1" cy="321.0" r="5" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Earnings surprise (SUE), monthly: t = -0.40</title></circle>
+<rect x="525.4" y="316.0" width="10" height="10" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Earnings surprise (SUE), quarterly: t = -0.05</title></rect>
+<path d="M421.5,315.0 L427.5,326.0 L415.5,326.0 Z" fill="#1f4e79" fill-opacity="0.8"><title>S&P 500, Earnings surprise (SUE), annual: t = -1.19</title></path>
+<circle cx="540.3" cy="321.0" r="5" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Earnings surprise (SUE), monthly: t = 0.06</title></circle>
+<rect x="575.5" y="316.0" width="10" height="10" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Earnings surprise (SUE), quarterly: t = 0.48</title></rect>
+<path d="M556.9,315.0 L562.9,326.0 L550.9,326.0 Z" fill="#2980b9" fill-opacity="0.8"><title>S&P 400, Earnings surprise (SUE), annual: t = 0.23</title></path>
+<circle cx="392.3" cy="321.0" r="5" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Earnings surprise (SUE), monthly: t = -1.50</title></circle>
+<rect x="499.5" y="316.0" width="10" height="10" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Earnings surprise (SUE), quarterly: t = -0.32</title></rect>
+<path d="M454.2,315.0 L460.2,326.0 L448.2,326.0 Z" fill="#c0392b" fill-opacity="0.8"><title>S&P 600, Earnings surprise (SUE), annual: t = -0.85</title></path>
+<circle cx="358.3" cy="321.0" r="5" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Earnings surprise (SUE), monthly: t = -1.85</title></circle>
+<rect x="472.6" y="316.0" width="10" height="10" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Earnings surprise (SUE), quarterly: t = -0.60</title></rect>
+<path d="M459.1,315.0 L465.1,326.0 L453.1,326.0 Z" fill="#1e8449" fill-opacity="0.8"><title>S&P 1500, Earnings surprise (SUE), annual: t = -0.80</title></path>
+<circle cx="236" cy="354" r="5" fill="#555"/><text x="246" y="358" class="lbl">monthly</text>
+<rect x="316" y="349" width="10" height="10" fill="#555"/><text x="332" y="358" class="lbl">quarterly</text>
+<path d="M416,348 L422,359 L410,359 Z" fill="#555"/><text x="428" y="358" class="lbl">annual</text>
+<text x="500" y="358" class="lbl" fill="#1f4e79">■ S&amp;P 500</text>
+<text x="595" y="358" class="lbl" fill="#2980b9">■ S&amp;P 400</text>
+<text x="690" y="358" class="lbl" fill="#c0392b">■ S&amp;P 600</text>
+<text x="785" y="358" class="lbl" fill="#1e8449">■ S&amp;P 1500</text>
+</svg>
+<figcaption>FF5+UMD alpha t-statistics for every sort, one colour per universe. No sort clears |t| 2 in more than one universe.</figcaption></figure>
+
+<h2>3. What the composite spread did</h2>
+<figure><svg viewBox="0 0 860 340" role="img" aria-label="Composite spread, growth of one dollar, by universe">
+<line x1="56" y1="297.4" x2="844" y2="297.4" class="grid"/>
+<text x="48" y="301.4" class="axis" text-anchor="end">$0.6</text>
+<line x1="56" y1="246.2" x2="844" y2="246.2" class="grid"/>
+<text x="48" y="250.2" class="axis" text-anchor="end">$0.8</text>
+<line x1="56" y1="195.0" x2="844" y2="195.0" class="grid one"/>
+<text x="48" y="199.0" class="axis" text-anchor="end">$1.0</text>
+<line x1="56" y1="143.8" x2="844" y2="143.8" class="grid"/>
+<text x="48" y="147.8" class="axis" text-anchor="end">$1.2</text>
+<line x1="56" y1="92.7" x2="844" y2="92.7" class="grid"/>
+<text x="48" y="96.7" class="axis" text-anchor="end">$1.4</text>
+<line x1="56" y1="41.5" x2="844" y2="41.5" class="grid"/>
+<text x="48" y="45.5" class="axis" text-anchor="end">$1.6</text>
+<text x="56.0" y="318" class="axis" text-anchor="middle">2010</text>
+<text x="147.1" y="318" class="axis" text-anchor="middle">2012</text>
+<text x="242.1" y="318" class="axis" text-anchor="middle">2014</text>
+<text x="337.1" y="318" class="axis" text-anchor="middle">2016</text>
+<text x="432.2" y="318" class="axis" text-anchor="middle">2018</text>
+<text x="527.2" y="318" class="axis" text-anchor="middle">2020</text>
+<text x="622.3" y="318" class="axis" text-anchor="middle">2022</text>
+<text x="717.3" y="318" class="axis" text-anchor="middle">2024</text>
+<text x="812.3" y="318" class="axis" text-anchor="middle">2026</text>
+<polyline points="56.0,183.0 60.0,198.3 63.9,206.9 67.9,204.3 71.8,193.8 75.8,197.0 79.8,187.8 83.7,179.8 87.7,174.8 91.6,170.7 95.6,194.4 99.6,201.5 103.5,200.6 107.5,194.3 111.4,187.9 115.4,179.1 119.4,171.0 123.3,167.1 127.3,143.1 131.2,125.0 135.2,140.8 139.2,138.5 143.1,140.2 147.1,141.8 151.0,145.3 155.0,139.3 159.0,130.4 162.9,127.0 166.9,135.2 170.8,136.2 174.8,141.9 178.8,148.7 182.7,158.5 186.7,156.3 190.6,166.6 194.6,172.6 198.6,176.0 202.5,178.9 206.5,180.7 210.4,183.0 214.4,185.8 218.4,182.7 222.3,182.6 226.3,182.7 230.2,187.1 234.2,181.5 238.2,182.6 242.1,185.0 246.1,180.6 250.0,183.0 254.0,183.9 257.9,182.9 261.9,189.7 265.9,185.7 269.8,185.9 273.8,183.7 277.7,179.9 281.7,172.6 285.7,173.7 289.6,169.4 293.6,166.7 297.5,168.2 301.5,177.3 305.5,179.0 309.4,178.2 313.4,171.1 317.3,169.8 321.3,160.0 325.3,154.5 329.2,156.0 333.2,151.1 337.1,142.0 341.1,133.1 345.1,147.3 349.0,172.1 353.0,178.9 356.9,174.0 360.9,175.5 364.9,181.9 368.8,184.0 372.8,188.9 376.7,199.0 380.7,202.2 384.7,204.6 388.6,204.2 392.6,197.8 396.5,193.3 400.5,188.3 404.5,193.1 408.4,198.0 412.4,190.8 416.3,188.6 420.3,184.5 424.3,175.8 428.2,176.5 432.2,175.0 436.1,170.0 440.1,167.8 444.1,167.9 448.0,165.2 452.0,162.7 455.9,161.6 459.9,153.7 463.9,151.5 467.8,157.3 471.8,153.6 475.7,144.8 479.7,155.2 483.7,149.1 487.6,136.8 491.6,141.5 495.5,140.4 499.5,146.2 503.5,144.4 507.4,130.4 511.4,144.4 515.3,137.3 519.3,135.1 523.3,136.5 527.2,128.6 531.2,112.2 535.1,63.1 539.1,71.9 543.1,51.6 547.0,58.9 551.0,44.6 554.9,50.6 558.9,40.5 562.9,55.3 566.8,109.0 570.8,116.5 574.7,119.3 578.7,151.6 582.7,150.8 586.6,145.2 590.6,150.3 594.5,127.8 598.5,108.8 602.5,101.3 606.4,115.5 610.4,99.3 614.3,79.1 618.3,79.8 622.3,117.8 626.2,130.6 630.2,132.6 634.1,134.8 638.1,136.9 642.1,122.7 646.0,116.7 650.0,126.0 653.9,120.7 657.9,128.2 661.8,121.0 665.8,116.6 669.8,130.0 673.7,128.4 677.7,109.3 681.6,114.5 685.6,111.7 689.6,114.4 693.5,123.1 697.5,109.0 701.4,106.9 705.4,105.2 709.4,108.8 713.3,118.4 717.3,110.0 721.2,101.2 725.2,110.1 729.2,117.2 733.1,115.5 737.1,109.3 741.0,119.9 745.0,120.4 749.0,117.5 752.9,122.3 756.9,127.7 760.8,119.7 764.8,121.0 768.8,125.3 772.7,133.1 776.7,124.4 780.6,125.6 784.6,132.8 788.6,134.8 792.5,139.9 796.5,143.5 800.4,149.9 804.4,149.6 808.4,159.1 812.3,161.6 816.3,155.6 820.2,162.2 824.2,166.8 828.2,167.0 832.1,176.2 836.1,170.7 840.0,177.4 844.0,175.1" fill="none" stroke="#1f4e79" stroke-width="2.2"/>
+<polyline points="103.5,200.5 107.5,198.9 111.4,195.9 115.4,190.1 119.4,177.8 123.3,175.6 127.3,161.0 131.2,151.3 135.2,160.1 139.2,158.4 143.1,170.2 147.1,176.5 151.0,185.2 155.0,183.3 159.0,178.9 162.9,165.9 166.9,178.3 170.8,179.7 174.8,183.4 178.8,191.6 182.7,198.0 186.7,192.0 190.6,202.1 194.6,204.1 198.6,209.7 202.5,213.8 206.5,216.8 210.4,222.2 214.4,218.2 218.4,220.4 222.3,213.5 226.3,213.8 230.2,211.3 234.2,210.8 238.2,207.3 242.1,211.2 246.1,208.5 250.0,205.5 254.0,205.9 257.9,206.0 261.9,212.0 265.9,206.2 269.8,206.1 273.8,195.5 277.7,191.1 281.7,182.3 285.7,186.7 289.6,180.2 293.6,180.9 297.5,171.6 301.5,180.4 305.5,183.1 309.4,185.6 313.4,169.0 317.3,172.4 321.3,163.7 325.3,165.0 329.2,168.1 333.2,160.9 337.1,152.9 341.1,150.5 345.1,163.1 349.0,177.6 353.0,163.9 356.9,166.5 360.9,164.0 364.9,168.9 368.8,179.8 372.8,175.1 376.7,191.5 380.7,199.9 384.7,201.5 388.6,208.4 392.6,202.2 396.5,199.1 400.5,198.6 404.5,204.9 408.4,205.7 412.4,198.4 416.3,209.1 420.3,200.3 424.3,193.2 428.2,191.6 432.2,195.3 436.1,189.9 440.1,190.7 444.1,199.6 448.0,202.6 452.0,198.6 455.9,200.7 459.9,196.9 463.9,194.2 467.8,191.5 471.8,180.4 475.7,169.6 479.7,187.0 483.7,182.0 487.6,177.6 491.6,185.0 495.5,183.6 499.5,186.0 503.5,181.9 507.4,158.2 511.4,175.0 515.3,171.5 519.3,176.6 523.3,179.3 527.2,164.5 531.2,152.9 535.1,129.2 539.1,151.2 543.1,144.1 547.0,141.7 551.0,128.9 554.9,144.1 558.9,138.3 562.9,152.2 566.8,194.5 570.8,200.7 574.7,206.6 578.7,226.1 582.7,216.2 586.6,215.3 590.6,215.4 594.5,217.0 598.5,205.5 602.5,204.9 606.4,214.4 610.4,209.4 614.3,202.7 618.3,203.9 622.3,216.4 626.2,224.0 630.2,234.6 634.1,228.7 638.1,229.9 642.1,226.9 646.0,214.7 650.0,218.8 653.9,214.3 657.9,214.4 661.8,206.9 665.8,205.7 669.8,210.7 673.7,205.9 677.7,193.8 681.6,191.9 685.6,187.7 689.6,187.5 693.5,192.9 697.5,174.4 701.4,164.2 705.4,156.8 709.4,155.4 713.3,171.5 717.3,157.8 721.2,132.9 725.2,136.0 729.2,138.9 733.1,134.3 737.1,133.9 741.0,142.3 745.0,143.1 749.0,142.2 752.9,147.1 756.9,152.6 760.8,147.9 764.8,154.5 768.8,155.9 772.7,149.4 776.7,133.0 780.6,134.1 784.6,144.5 788.6,138.9 792.5,147.8 796.5,146.0 800.4,158.1 804.4,162.5 808.4,168.4 812.3,177.7 816.3,179.6 820.2,176.0 824.2,188.8 828.2,197.0 832.1,194.3 836.1,187.6 840.0,182.9 844.0,179.9" fill="none" stroke="#2980b9" stroke-width="2.2"/>
+<polyline points="463.9,198.5 467.8,200.1 471.8,197.3 475.7,182.2 479.7,207.0 483.7,214.6 487.6,213.1 491.6,212.3 495.5,216.4 499.5,215.0 503.5,220.8 507.4,212.2 511.4,220.2 515.3,220.0 519.3,227.0 523.3,233.8 527.2,230.8 531.2,230.4 535.1,211.9 539.1,211.2 543.1,194.9 547.0,200.1 551.0,194.9 554.9,210.1 558.9,206.5 562.9,209.5 566.8,256.4 570.8,262.0 574.7,276.9 578.7,290.0 582.7,286.5 586.6,283.3 590.6,278.6 594.5,285.2 598.5,276.0 602.5,274.7 606.4,281.2 610.4,281.2 614.3,266.1 618.3,261.9 622.3,270.9 626.2,280.0 630.2,281.7 634.1,278.3 638.1,278.3 642.1,273.8 646.0,272.7 650.0,276.2 653.9,268.6 657.9,277.3 661.8,273.6 665.8,272.1 669.8,277.9 673.7,273.2 677.7,266.0 681.6,260.1 685.6,254.7 689.6,247.9 693.5,246.8 697.5,245.7 701.4,238.1 705.4,230.0 709.4,237.7 713.3,247.1 717.3,237.1 721.2,238.1 725.2,238.8 729.2,234.6 733.1,237.1 737.1,235.9 741.0,243.5 745.0,243.2 749.0,239.5 752.9,241.6 756.9,238.2 760.8,239.3 764.8,238.6 768.8,240.3 772.7,230.9 776.7,228.8 780.6,223.1 784.6,235.6 788.6,235.0 792.5,244.7 796.5,252.9 800.4,262.5 804.4,260.2 808.4,259.7 812.3,262.8 816.3,263.6 820.2,267.3 824.2,280.6 828.2,291.4 832.1,292.1 836.1,284.6 840.0,286.0 844.0,286.3" fill="none" stroke="#c0392b" stroke-width="2.2"/>
+<polyline points="463.9,192.6 467.8,192.1 471.8,187.7 475.7,176.4 479.7,194.0 483.7,194.1 487.6,185.1 491.6,188.0 495.5,187.6 499.5,189.9 503.5,188.3 507.4,173.3 511.4,186.7 515.3,185.3 519.3,187.2 523.3,190.6 527.2,179.4 531.2,172.1 535.1,140.9 539.1,150.0 543.1,134.2 547.0,139.6 551.0,123.8 554.9,136.8 558.9,126.7 562.9,142.6 566.8,190.1 570.8,200.6 574.7,210.2 578.7,234.4 582.7,228.5 586.6,223.4 590.6,223.9 594.5,221.8 598.5,206.2 602.5,203.3 606.4,216.3 610.4,210.1 614.3,196.0 618.3,193.4 622.3,208.4 626.2,219.4 630.2,221.5 634.1,217.2 638.1,217.3 642.1,211.3 646.0,206.8 650.0,209.7 653.9,200.8 657.9,210.2 661.8,203.5 665.8,199.2 669.8,211.6 673.7,209.3 677.7,193.1 681.6,189.2 685.6,185.6 689.6,184.4 693.5,190.5 697.5,180.2 701.4,173.5 705.4,165.2 709.4,172.0 713.3,190.0 717.3,178.0 721.2,170.2 725.2,172.2 729.2,171.2 733.1,173.0 737.1,168.7 741.0,185.7 745.0,181.0 749.0,175.5 752.9,178.4 756.9,186.4 760.8,183.0 764.8,182.7 768.8,181.4 772.7,173.1 776.7,163.9 780.6,160.8 784.6,170.8 788.6,168.0 792.5,182.2 796.5,186.1 800.4,192.9 804.4,193.3 808.4,197.1 812.3,201.6 816.3,199.0 820.2,202.5 824.2,217.2 828.2,224.0 832.1,229.5 836.1,221.9 840.0,222.3 844.0,220.4" fill="none" stroke="#1e8449" stroke-width="2.2"/>
+<line x1="66" y1="28" x2="88" y2="28" stroke="#1f4e79" stroke-width="2.5"/>
+<text x="94" y="32" class="lbl">S&amp;P 500 from 2010-02: $1.08</text>
+<line x1="66" y1="46" x2="88" y2="46" stroke="#2980b9" stroke-width="2.5"/>
+<text x="94" y="50" class="lbl">S&amp;P 400 from 2011-02: $1.06</text>
+<line x1="66" y1="64" x2="88" y2="64" stroke="#c0392b" stroke-width="2.5"/>
+<text x="94" y="68" class="lbl">S&amp;P 600 from 2018-09: $0.64</text>
+<line x1="66" y1="82" x2="88" y2="82" stroke="#1e8449" stroke-width="2.5"/>
+<text x="94" y="86" class="lbl">S&amp;P 1500 from 2018-09: $0.90</text>
+</svg>
+<figcaption>Growth of a dollar long the composite's top quintile and short its bottom, monthly rebalancing, equal-weight within bucket, each universe from its first panel date. A line that ends near a dollar earned nothing over the period.</figcaption></figure>
+
+<h2>4. What the S&amp;P 1500 panel is</h2>
+<p>Not a fourth index history: on each month end that all three component panels hold, every S&amp;P 500, 400 and 600 member is taken with the factor values already stored for it, one row per company, and the index percentiles and the composite are recomputed over all of them by the sheet's rule (<code>sec_market.build_factor_panel_union</code>). A date any component lacks is refused, so the union begins where the S&amp;P 600 history does, 2018-08. Because the percentiles are over the whole 1,500, a sort now spans sizes: the composite's annual sort loads -0.42 on SMB, so without a size control part of any spread here is a bet on small versus large. A size-neutral version (sort within size terciles, or value-weight the buckets) is the next step for this universe, not more factors.</p>
+
+<h2>5. Why the spreads are biased down, not up</h2>
+<ul>
+<li><b>Survivors only.</b> Yahoo returns nothing for a delisted ticker, so 718 of the 2,417 companies ever in the S&amp;P 1500 have no prices. Failures and takeovers leave an index from the bottom quintile more than the top; their missing returns flatter Q1 and shrink the measured spread. The share of members with a return the following month in the first panel year: S&amp;P 500 66% (2010), S&amp;P 400 55% (2011), S&amp;P 600 65% (2018), S&amp;P 1500 74% (2018). The small caps are the most flattered.</li>
+<li><b>Sixteen months of frozen small-cap membership.</b> The S&amp;P 600 page is unusable from 2019-10 to 2021-02, so the 600 and the union carry the 444 members seen on both sides of the gap rather than 600 (596 just before, 599 just after): fewer, more persistent companies in 2020.</li>
+<li><b>Equal weight, no size control.</b> Every bucket is equal-weighted, which overweights the smallest members of each universe, and the union sorts across sizes.</li>
+<li><b>120 tests.</b> At the 5% level, 6 |t| above 2 are expected from noise alone.</li>
+</ul>
+
+<h2>6. The database: fixed for good, and open</h2>
+<div class="grid2">
+<div class="card"><h3>Fixed structurally (2026-10-13)</h3>
+<p><b>Suspect facts.</b> 5,546 facts dated after their own filing (1,047 filers; Catalent's nine-month income dated 2024-03-31 in a February filing) and 87 balance-sheet lines mis-scaled by a thousand or a million (Hill-Rom's FY2021 total assets of 4,999.1 dollars) are refused by every gold table through <code>sec_gold.suspect_fact</code>, decided from the filing alone so a flag never changes later. The quarterly fold refreshes the list before the fact tables. Check 70.</p>
+<p><b>The one-transaction build.</b> Every matview analyses itself as it is built and after every refresh; the peer-statistics predicate is a join. Eleven hours became 48 minutes.</p>
+<p><b>One row per company.</b> The factor sheet cannot count a company twice through a ticker handoff (IR/TT 2020); check 71 pins the three index-months.</p>
+<p><b>The sector every page left blank.</b> Filled by rule as a label, with the proof that every membership interval kept its key (6,342), that the members and tickers on every month end since 2008 are identical (239,662 member-months), and that no company's own peer values moved (55,496 sector rows added, 0 same-key values changed). The S&amp;P 400 panel carries the composite for 377 members a date in 2017 and the S&amp;P 600 for 509 in 2018, from none. Check 73: 0 foreign labels, 138 unclassified intervals.</p>
+<p><b>The backtest at 1,500 names.</b> Thirteen minutes a call became seconds, the S&amp;P 500 numbers unchanged to the digit.</p>
+<p><b>Banks judged by the filing's SIC</b> (check 63), so a registrant that changes industry later cannot fail a historical test.</p>
+</div>
+<div class="card"><h3>Open, with its evidence</h3>
+<p><b>Survivorship.</b> 718 delisted members have no prices (1,864 of 1,868 listed symbols answered on 2026-10-12; CUK, HCIIP, SATS and TDDWW did not). Polygon's flat files or CRSP close it.</p>
+<p><b>Seats keyed by registrant.</b> A registrant that absorbed another member and kept the seat collapses both into one: BancorpSouth is absent from the S&amp;P 400 between 2018-10-19 and 2021-11-02; the recycled ticker BKR gives Michael Baker the S&amp;P 500 seat from 2017-07-07 to 2019-12; Ashland LLC reappears for 2018-10-19 to 2019-10-02. The fix is a seat keyed by ticker before the CIK-succession cut.</p>
+<p><b>The S&amp;P 600 captures of 2019-10 to 2021-02</b> carry an extra table and are unusable: membership through the gap is frozen at 444.</p>
+<p><b>Ticker handoffs</b> are dated at the crosswalk's next capture, not from the filing that announces them.</p>
+<p><b>Value weights and a size control</b> are not built; the backtest is equal-weight only.</p>
+</div>
+</div>
+
+<h2>7. Recommendation</h2>
+<ol>
+<li><b>Close survivorship first.</b> Load delisted members' prices from Polygon's flat files or CRSP. It is the one change that can move the conclusion: the bottom buckets are missing exactly the companies that failed, and the 600 is missing a third of its 2018 members' returns.</li>
+<li><b>Then a size control and value weights</b> in <code>sec_market.backtest</code>, before reading anything into the 1,500: sort within size terciles and value-weight the buckets, so a spread is not a bet on small versus large.</li>
+<li><b>Then the reference layer:</b> seats keyed by ticker before the succession cut, and the 2019 to 2021 S&amp;P 600 captures parsed for what they are. Both have clear proofs (membership counts by date, the named companies above).</li>
+<li><b>Not more factors.</b> Nine accounting factors and a composite found nothing in four universes; a tenth will not. What would be informative is the same sorts with delisting returns in, and value-weighted.</li>
+</ol>
+
+<h2>8. The per-universe reports</h2>
+<ul><li><a href="factor_backtest_SP500_2026-10-13.html">S&amp;P 500</a>: 199 months from 2010-01, every bucket, alpha and loading.</li><li><a href="factor_backtest_SP400_2026-10-13.html">S&amp;P 400</a>: 187 months from 2011-01, every bucket, alpha and loading.</li><li><a href="factor_backtest_SP600_2026-10-13.html">S&amp;P 600</a>: 96 months from 2018-08, every bucket, alpha and loading.</li><li><a href="factor_backtest_SP1500_2026-10-13.html">S&amp;P 1500</a>: 96 months from 2018-08, every bucket, alpha and loading.</li></ul>
+<pre>uv run dera load-prices
+uv run dera build-factor-panel --index SP500      # then SP400, SP600, SP1500
+uv run python tools/ff_baseline.py SP500 --download   # then SP400, SP600, SP1500
+uv run python tools/factor_report.py SP500            # then SP400, SP600, SP1500
+uv run python tools/factor_report.py --overview</pre>
+<p class="small">Generated 2026-10-13 by <code>tools/factor_report.py --overview</code> from PostgreSQL and the baseline CSVs; French data vintage 202608 (<code>data/external/french</code>, not stored in the repository). Prices: Yahoo Finance month-end closes, 2009-01-30 to 2026-09-30.</p>
+</main>
+</body>
+</html>

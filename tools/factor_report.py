@@ -9,9 +9,17 @@ and loadings, two inline SVG charts (cumulative composite quintiles; the
 alpha t-statistics), the defects the build caught, and what remains open.
 No external assets: the file opens offline and prints.
 
+--overview writes docs/reports/factor_backtest_overview_<date>.html instead:
+the four universes (SP500, SP400, SP600, SP1500) side by side from their
+baseline CSVs and the panel, every sort's alpha in every universe, the
+composite spread's path per universe, what the S&P 1500 union is, what was
+fixed in the database and what is open, and the recommendation. It links
+to the four per-universe pages of the same date.
+
 Usage:
-  uv run python tools/ff_baseline.py SP500 --download          # first
-  uv run python tools/factor_report.py SP500                   # then this
+  uv run python tools/ff_baseline.py SP500 --download          # first, per index
+  uv run python tools/factor_report.py SP500                   # then this, per index
+  uv run python tools/factor_report.py --overview              # after all four
 Options: --from 2010-01-01, --ff-csv data/external/french/ff_baseline_SP500.csv,
          --out docs/reports/factor_backtest_<index>_<today>.html
 """
@@ -41,6 +49,8 @@ FACTORS = [
     ("sue", "Earnings surprise (SUE)", "standardised unexpected earnings, Foster-Olsen-Shevlin form"),
 ]
 FREQS = ["monthly", "quarterly", "annual"]
+UNIVERSES = ["SP500", "SP400", "SP600", "SP1500"]
+LABEL = {"SP500": "S&amp;P 500", "SP400": "S&amp;P 400", "SP600": "S&amp;P 600", "SP1500": "S&amp;P 1500"}
 MODELS = [("FF5", ["Mkt-RF", "SMB", "HML", "RMW", "CMA"]),
           ("FF5+UMD", ["Mkt-RF", "SMB", "HML", "RMW", "CMA", "UMD"])]
 
@@ -82,6 +92,8 @@ def load(conn, index: str, frm: dt.date):
     d["members_ever"] = q(conn, "SELECT count(DISTINCT cik) FROM sec_reference.index_membership")[0][0]
     d["suspect"] = q(conn, """
         SELECT reason, count(*), count(DISTINCT cik) FROM sec_gold.suspect_fact GROUP BY 1 ORDER BY 1""")
+    d["fill_cov"] = fill_coverage(conn)
+    d["gap"] = gap_members(conn)
     d["summary"] = {}
     for freq in FREQS:
         for key, _, _ in FACTORS:
@@ -93,6 +105,28 @@ def load(conn, index: str, frm: dt.date):
         FROM sec_market.backtest(%s, 'composite', 'monthly', %s, NULL, 5)
         WHERE ret IS NOT NULL ORDER BY month_end, bucket""", (index, frm))
     return d
+
+
+def fill_coverage(conn):
+    """Composite coverage, members a date, for the panel-years the sector
+    fill of 2026-10-13 changed (the S&P 400 had no annual factor in 2017,
+    the S&P 600 none before 2021): measured from the stored panel."""
+    rows = q(conn, """
+        SELECT index_name, extract(year FROM asof)::int, round(avg(c))::int
+        FROM (SELECT index_name, asof, count(composite) c FROM sec_market.factor_panel GROUP BY 1, 2) x
+        WHERE (index_name = 'SP400' AND extract(year FROM asof) = 2017)
+           OR (index_name = 'SP600' AND extract(year FROM asof) IN (2018, 2019))
+        GROUP BY 1, 2""")
+    return {(r[0], r[1]): r[2] for r in rows}
+
+
+def gap_members(conn):
+    """S&P 600 members on a month end inside the unusable-capture gap
+    (2019-10 to 2021-02) and on the month ends either side of it."""
+    rows = q(conn, """
+        SELECT d, count(*) FROM (VALUES (DATE '2019-09-30'), (DATE '2020-06-30'), (DATE '2021-03-31')) v(d),
+             LATERAL sec_reference.index_members('SP600', d) GROUP BY d ORDER BY d""")
+    return [int(r[1]) for r in rows]
 
 
 # ------------------------------------------------------------------ helpers
@@ -401,18 +435,44 @@ def build_html(index: str, frm: dt.date, d: dict, ff: pd.DataFrame, today: dt.da
     }.get(index, "")
     cov = d["coverage"]
     later = [int(r[3]) for r in cov[3:]] or [int(cov[-1][3])]
+    n_out = int((best["FF5 t_alpha"].abs() >= 2).sum() + (best["FF5+UMD t_alpha"].abs() >= 2).sum())
+    n_neg = int((best["FF5 t_alpha"] <= -2).sum() + (best["FF5+UMD t_alpha"] <= -2).sum())
+    if n_out == 0:
+        tstat_caption = f"Every one of the {2 * n_tests} points sits inside the shaded |t| &lt; 2 band."
+    else:
+        tstat_caption = (f"{n_out} of {2 * n_tests} points sit outside the shaded |t| &lt; 2 band"
+                         + (f", {n_neg} of them on the wrong side (the sort loses)" if n_neg else "") + ".")
+    fc = d["fill_cov"]
+    fill_note = {
+        "SP500": "The S&amp;P 500 page always carried its sector, so this panel was unaffected; three of its dates were rebuilt after the fill and came out byte-identical.",
+        "SP400": f"This panel now carries the composite for {fc.get(('SP400', 2017), 0)} members a date in 2017, from none.",
+        "SP600": f"This panel now carries the composite for {fc.get(('SP600', 2018), 0)} members a date in 2018 and {fc.get(('SP600', 2019), 0)} in 2019, from none.",
+        "SP1500": f"The S&amp;P 400 component now carries the composite for {fc.get(('SP400', 2017), 0)} members a date in 2017 and the S&amp;P 600 for {fc.get(('SP600', 2018), 0)} in 2018, from none; the union begins in 2018-08 and inherits both.",
+    }.get(index, "")
+    gap_note = ("" if index not in ("SP600", "SP1500") else
+                f"<li><b>Sixteen months of frozen small-cap membership.</b> The S&amp;P 600 page is unusable from 2019-10 to 2021-02 (it had drifted into an S&amp;P 1000 list that the S&amp;P 400 page no longer subtracts cleanly), so membership through that gap is the {d['gap'][1]} members seen on both sides of it rather than 600 ({d['gap'][0]} just before, {d['gap'][2]} just after). An honest under-count: the 2020 sorts here are over fewer, more persistent companies.</li>")
+    if index == "SP1500":
+        universe_method = ("<li><b>Universe.</b> The three component panels on the same month end (<code>sec_market.build_factor_panel_union</code>): every S&amp;P 500, 400 and 600 member with its stored factor values, one row per company, "
+                           "with the percentiles and the composite recomputed over all of them by the sheet's rule. A date any component lacks is refused, so the union starts where the S&amp;P 600 history does, 2018-08.</li>")
+    else:
+        universe_method = (f"<li><b>Universe.</b> <code>sec_reference.index_members('{index}', date)</code>: the constituents on each month end from the replayed index history, one row per company "
+                           "(a seat whose ticker the crosswalk still assigns to its previous holder cannot count a company twice; check 71).</li>")
+    cmds = "uv run dera load-prices\n"
+    if index == "SP1500":
+        cmds += "".join(f"uv run dera build-factor-panel --index {c}\n" for c in ("SP500", "SP400", "SP600"))
+    cmds += f"uv run dera build-factor-panel --index {index}\nuv run python tools/ff_baseline.py {index} --download\nuv run python tools/factor_report.py {index}"
 
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Factor backtest report, {index}, {today.isoformat()}</title>
+<title>Factor backtest, {LABEL.get(index, index).replace("&amp;", "&")}, {today.isoformat()}</title>
 <style>{CSS}</style>
 </head>
 <body>
 <main>
-<h1>Do accounting factors pay in the {index}?</h1>
+<h1>Do accounting factors pay in the {LABEL.get(index, index)}?</h1>
 <p class="sub">Point-in-time fundamentals from SEC DERA, month-end prices, equal-weight quintile sorts rebalanced monthly, quarterly and annually, measured raw and against the Fama-French five factors and momentum. Generated {today.isoformat()} from the database by <code>tools/factor_report.py</code>.</p>
 
 <div class="verdict">
@@ -434,10 +494,10 @@ def build_html(index: str, frm: dt.date, d: dict, ff: pd.DataFrame, today: dt.da
 <thead><tr><th rowspan="2">Factor</th><th colspan="3">Raw spread, annualised</th><th colspan="3">Raw t</th><th colspan="3">FF5 alpha t</th><th colspan="3">FF5 + UMD alpha t</th></tr>
 <tr><th>M</th><th>Q</th><th>A</th><th>M</th><th>Q</th><th>A</th><th>M</th><th>Q</th><th>A</th><th>M</th><th>Q</th><th>A</th></tr></thead>
 <tbody>{''.join(head_rows)}</tbody></table></div>
-<p class="note">M = monthly, Q = quarterly, A = annual rebalancing. Period {frm.isoformat()} to the last priced month; the French series end 2026-08 (vintage 202608), so the regressions drop the final month.</p>
+<p class="note">M = monthly, Q = quarterly, A = annual rebalancing. Period {max(frm, dmin).isoformat()} to the last priced month; the French series end 2026-08 (vintage 202608), so the regressions drop the final month.</p>
 
 <figure>{tstat_chart(ff)}
-<figcaption>Alpha t-statistics for every sort. Everything but one point sits inside the shaded |t| &lt; 2 band.</figcaption></figure>
+<figcaption>Alpha t-statistics for every sort, both models. {tstat_caption}</figcaption></figure>
 
 <h2>2. What the buckets did</h2>
 <figure>{cumulative_chart(d['cum'])}
@@ -445,7 +505,7 @@ def build_html(index: str, frm: dt.date, d: dict, ff: pd.DataFrame, today: dt.da
 {''.join(bucket_tables)}
 
 <h2>3. Against Fama-French: alphas and loadings</h2>
-<p>Two models: FF5 (Mkt-RF, SMB, HML, RMW, CMA) and FF5 plus momentum (UMD). Loadings shown are from the six-factor fit. A profitability sort inside the S&amp;P 500 is, to first order, a long position in RMW and a short in HML; once those are priced the residual is noise. The quarterly signals (quarterly ROE and ROA, earnings surprise) carry momentum exposure that the five-factor model does not remove, which is why their FF5 alphas shrink again under FF5+UMD.</p>
+<p>Two models: FF5 (Mkt-RF, SMB, HML, RMW, CMA) and FF5 plus momentum (UMD). Loadings shown are from the six-factor fit. A profitability sort inside an index is, to first order, a long position in RMW and a short in HML; once those are priced the residual is noise. The quarterly signals (quarterly ROE and ROA, earnings surprise) carry momentum exposure that the five-factor model does not remove, which is why their FF5 alphas shrink again under FF5+UMD.</p>
 <div class="wrap"><table>
 <thead><tr><th>Factor</th><th>Schedule</th><th>Months</th><th>Raw ann.</th><th>Raw t</th><th>FF5 α ann.</th><th>t</th><th>R²</th><th>FF5+UMD α ann.</th><th>t</th><th>R²</th><th>Mkt</th><th>SMB</th><th>HML</th><th>RMW</th><th>CMA</th><th>UMD</th></tr></thead>
 <tbody>{''.join(ff_rows)}</tbody></table></div>
@@ -453,12 +513,13 @@ def build_html(index: str, frm: dt.date, d: dict, ff: pd.DataFrame, today: dt.da
 <div class="wrap"><table>
 <thead><tr><th>Schedule</th><th>Months</th><th>Raw ann. (minus RF)</th><th>t</th><th>FF5 α ann.</th><th>t</th><th>R²</th><th>FF5+UMD α ann.</th><th>t</th><th>Mkt</th><th>SMB</th><th>HML</th><th>RMW</th><th>CMA</th><th>UMD</th></tr></thead>
 <tbody>{''.join(f"<tr><td>{f}</td><td>{int(b.months)}</td><td>{pct(b['raw_ann'])}</td>{tcell(b['raw_t'])}<td>{pct(b['FF5 alpha_ann'])}</td>{tcell(b['FF5 t_alpha'])}<td>{num(b['FF5 r2'])}</td><td>{pct(b['FF5+UMD alpha_ann'])}</td>{tcell(b['FF5+UMD t_alpha'])}" + ''.join(f"<td>{num(b[f'FF5+UMD b_{c}'])}</td>" for c in MODELS[1][1]) + "</tr>" for f, b in bench.items() if b is not None)}</tbody></table></div>
-<p class="note">Equal-weight return of every priced member on each schedule, minus the one-month bill rate. Beta near one, alpha near zero, R² near 0.96: the returns and the French series agree.</p>
+<p class="note">Equal-weight return of every priced member on each schedule, minus the one-month bill rate. Beta near one, alpha near zero, R² {num(bench['monthly']['FF5 r2']) if bench['monthly'] is not None else ''}: the returns and the French series agree.</p>
 
 <h2>4. Why the spreads are biased down, not up</h2>
 <ul>
 <li><b>Survivors only.</b> Yahoo returns nothing for a delisted ticker, so {no_listing} of the {d['members_ever']:,} companies ever in the S&amp;P 1500 have no prices. Failures and takeovers leave the index from the bottom quintile more than the top; their missing returns flatter Q1 and shrink the measured spread. The share of panel members with a price the following month rises from {priced.get(min(priced))}% in {min(priced)} to {max(v for k, v in priced.items() if k < today.year)}% by {today.year - 1}.</li>
 {universe_note}
+{gap_note}
 <li><b>The first year is thinner.</b> The composite covers {int(cov[0][3])} of {int(cov[0][2])} members in {cov[0][0]} (the surprise factor needs eight quarters of history and DERA begins in 2009) and {min(later)} or more a date from {cov[min(3, len(cov) - 1)][0]}.</li>
 <li><b>{n_tests} tests.</b> Ten sorts on three schedules; at the 5% level one or two |t| &gt; 2 are expected from noise alone.</li>
 </ul>
@@ -474,34 +535,343 @@ def build_html(index: str, frm: dt.date, d: dict, ff: pd.DataFrame, today: dt.da
 
 <h2>6. Method, exactly</h2>
 <ul>
-<li><b>Universe.</b> <code>sec_reference.index_members('{index}', date)</code>: the constituents on each month end from the replayed index history, one row per company (a seat whose ticker the crosswalk still assigns to its previous holder cannot count a company twice; check 71).</li>
+{universe_method}
 <li><b>Factors.</b> <code>sec_gold.factor_sheet_asof</code>, stored per month end in <code>sec_market.factor_panel</code>. Annual factors come from the newest fiscal year filed by the date (not older than 550 days), quarterly ones from the newest quarter filed by the date (not older than 200 days). Every input is keyed on <code>tradable_from</code>, the first session a filing could be traded on, never the filing date; 57% of filings are accepted after the close. The panel's CHECK constraints refuse any row whose period end or availability is after its own knowledge date.</li>
 <li><b>Suspect facts.</b> {suspect.get('period_after_filing', (0, 0))[0]:,} facts whose period ends after their own filing date and {suspect.get('scale', (0, 0))[0]} balance-sheet lines printed in thousands or millions without saying so are refused by every gold table (<code>sec_gold.suspect_fact</code>), decided from the filing and earlier filings only.</li>
-<li><b>Prices.</b> Yahoo Finance month-end closes for the primary ticker of each surviving member (<code>sec_market.monthly_price</code>; {sym_ret} of {sym_req} symbols answered on {loaded_at}). Returns use the dividend-and-split-adjusted close; a month is skipped across a gap of more than 35 days, when either month did not trade, or when the prior as-traded close was under a dollar.</li>
+<li><b>Prices.</b> Yahoo Finance month-end closes for the primary ticker of each surviving member (<code>sec_market.monthly_price</code>; {sym_ret:,} of {sym_req:,} symbols answered on {loaded_at}). Returns use the dividend-and-split-adjusted close; a month is skipped across a gap of more than 35 days, when either month did not trade, or when the prior as-traded close was under a dollar.</li>
 <li><b>Sort and hold.</b> <code>sec_market.backtest</code>: on each rebalance date, NTILE(5) over the signed percentile among members that have the factor; equal weight within bucket; held through every month end up to and including the next rebalance; a member without a price that month drops out of its bucket for that month.</li>
 <li><b>Statistics.</b> <code>sec_market.backtest_summary</code> for means, t, Sharpe and hit rates; <code>tools/ff_baseline.py</code> for the regressions (Newey-West, six lags) on Ken French's monthly five factors and momentum, percent returns read as decimals.</li>
 </ul>
-<pre>uv run dera load-prices
-uv run dera build-factor-panel --index {index}
-uv run python tools/ff_baseline.py {index} --download
-uv run python tools/factor_report.py {index}</pre>
+<pre>{cmds}</pre>
 
 <h2>7. What the build caught along the way</h2>
 <ul>
+<li><b>The sector every page left blank.</b> The S&amp;P 400 page from 2013-10 to 2019-08 and the S&amp;P 600 page before 2021-03 gave each member a sub-industry and no sector, and the sector is the level the cross-sections rank in, so the S&amp;P 400 had no annual factor at all in 2017 and the S&amp;P 600 none before 2021. The spine now fills the sector by rule (the sub-industry's sector, else the sector the company carries under another label), as a label only: every membership interval kept its key, the members and tickers on every month end since 2008 are identical, and no company's own values moved. {fill_note}</li>
 <li><b>A company counted twice.</b> The panel's primary key refused 2020-03-31: the S&amp;P 500's IR and TT seats both resolved to Trane Technologies, because the ticker IR passed to Ingersoll Rand Inc on 2020-03-03 and the crosswalk moves a ticker at its next capture (2020-06-28). Three month ends, one company, the only such case since 2010; the sheet is now one row per company and check 71 pins the count.</li>
+<li><b>Thirteen minutes a call.</b> The backtest resolved the as-of ticker inside the price join, once per member-month; on the 1,500-name panel a call ran past thirteen minutes. It now resolves each member's ticker once per rebalance date, the S&amp;P 500 numbers are unchanged to the digit, and a call takes seconds.</li>
 <li><b>A planner pathology.</b> The gold layer is rebuilt in one transaction, so a freshly built matview has no statistics until commit. The peer-statistics build costed a correlated EXISTS as free and ran it as a per-row index scan for eleven hours before it was cancelled. The predicate is now a join, every matview is analysed as soon as it is indexed, and the rebuild takes 48 minutes.</li>
-<li><b>Look-ahead by mis-dating.</b> Catalent's 10-Q of 2024-02-14 dates a nine-month net income to 2024-03-31; the panel's CHECK caught it, and such facts are now refused at the source.</li>
-<li><b>A scale error at the top of every sort.</b> Hill-Rom's FY2021 10-K carries total assets of 4,999.1 dollars against 4,671.1 million for FY2020 in the same filing; it had produced a return on assets of 49,709.</li>
+<li><b>Look-ahead by mis-dating.</b> Catalent's 10-Q of 2024-02-14 dates a nine-month net income to 2024-03-31; the panel's CHECK caught it, and such facts are now refused at the source ({suspect.get('period_after_filing', (0, 0))[0]:,} facts of {suspect.get('period_after_filing', (0, 0))[1]:,} filers). The quarterly fold refreshes the list before the fact tables, so a new quarter's mis-dated facts are caught the same way.</li>
+<li><b>A scale error at the top of every sort.</b> Hill-Rom's FY2021 10-K carries total assets of 4,999.1 dollars against 4,671.1 million for FY2020 in the same filing; it had produced a return on assets of 49,709. Refused with {suspect.get('scale', (0, 0))[0]} such lines from {suspect.get('scale', (0, 0))[1]} filers.</li>
 </ul>
 
 <h2>8. Open</h2>
 <ul>
-<li>Delisted members have no prices; Polygon's flat files (or CRSP) are the source that closes the survivorship gap. Four open symbols Yahoo lacked: CUK, HCIIP, SATS, TDDWW.</li>
-<li>S&amp;P 400 and 600 panels (<code>dera build-factor-panel --index SP400</code>), where the published premia are larger.</li>
-<li>Value-weighted buckets and a size control; the backtest is equal-weight only.</li>
-<li>Ticker handoffs dated from the filings that announce them rather than the crosswalk's next capture.</li>
+<li><b>Survivorship.</b> Delisted members have no prices: {no_listing} of the {d['members_ever']:,} companies ever in the S&amp;P 1500, and in this universe {priced.get(min(priced))}% of {min(priced)} members have a return the following month. Polygon's flat files or CRSP close the gap; nothing else changes the conclusion as much. Four open symbols Yahoo lacked: CUK, HCIIP, SATS, TDDWW.</li>
+<li><b>Seats keyed by registrant, not by ticker.</b> A registrant that absorbed another index member and kept the seat collapses both into one from the capture both appear under: BancorpSouth (1299939, which took Cadence and its ticker in 2021-11) is absent from the S&amp;P 400 between 2018-10-19 and 2021-11-02; SEC's succession row for BKR is a recycled ticker, not a succession, and gives Michael Baker the S&amp;P 500 seat from 2017-07-07 to 2019-12; Ashland LLC reappears for 2018-10-19 to 2019-10-02 between two Ashland Inc intervals. The fix is a seat keyed by ticker before the cut.</li>
+<li><b>The S&amp;P 600 captures of 2019-10 to 2021-02</b> carry an extra table and are unusable, so membership through the gap is the {d['gap'][1]} members seen on both sides ({d['gap'][0]} before, {d['gap'][2]} after). Parsing those pages properly restores the leavers and joiners of sixteen months.</li>
+<li><b>Ticker handoffs</b> are dated at the crosswalk's next capture rather than from the filing that announces them (the IR/TT case above).</li>
+<li><b>Value-weighted buckets and a size control.</b> The backtest is equal-weight only; across the 1,500 a sort without a size control is partly a bet on small versus large.</li>
 </ul>
+<p>The four universes side by side, with the database changes and the recommendation: <a href="factor_backtest_overview_{today.isoformat()}.html">the overview</a>.</p>
 <p class="small">Report generated {today.isoformat()} by <code>tools/factor_report.py</code> from PostgreSQL; French data vintage 202608 (<code>data/external/french</code>, not stored in the repository).</p>
+</main>
+</body>
+</html>
+"""
+
+
+
+# ----------------------------------------------------------------- overview
+def load_overview(conn, index: str, frm: dt.date) -> dict:
+    """The light per-universe queries the overview needs: panel extent,
+    the priced share by year, and the composite spread's monthly path."""
+    d = {}
+    d["panel"] = q(conn, """
+        SELECT count(DISTINCT asof), count(*), min(asof), max(asof)
+        FROM sec_market.factor_panel WHERE index_name = %s""", (index,))[0]
+    d["priced"] = {int(r[0]): float(r[1]) for r in q(conn, """
+        SELECT extract(year FROM fp.asof)::int,
+               round(avg(CASE WHEN p.one IS NOT NULL THEN 1 ELSE 0 END) * 100, 1)
+        FROM sec_market.factor_panel fp
+        LEFT JOIN LATERAL (SELECT 1 AS one FROM sec_market.monthly_price mp
+                           WHERE mp.cik = fp.cik AND mp.month_end > fp.asof AND mp.month_end <= fp.asof + 35
+                           LIMIT 1) p ON TRUE
+        WHERE fp.index_name = %s GROUP BY 1 ORDER BY 1""", (index,))}
+    cum = pd.DataFrame(q(conn, """
+        SELECT month_end, bucket, ret FROM sec_market.backtest(%s, 'composite', 'monthly', %s, NULL, 5)
+        WHERE ret IS NOT NULL ORDER BY month_end, bucket""", (index, frm)), columns=["month_end", "bucket", "ret"])
+    wide = cum.pivot(index="month_end", columns="bucket", values="ret").sort_index()
+    d["spread"] = (wide[5].astype(float) - wide[1].astype(float)).dropna()
+    return d
+
+
+def spread_chart(spreads: dict) -> str:
+    """Growth of a long-short dollar in the composite top-minus-bottom
+    spread, monthly rebalancing, one line per universe."""
+    w, h, pad_l, pad_r, pad_t, pad_b = 860, 340, 56, 16, 20, 40
+    growth = {u: (1 + sp).cumprod() for u, sp in spreads.items() if len(sp)}
+    all_idx = sorted({d for g in growth.values() for d in g.index})
+    ymax = max(float(g.max()) for g in growth.values()) * 1.05
+    ymin = min(float(g.min()) for g in growth.values()) * 0.95
+    n = len(all_idx)
+    pos = {d: i for i, d in enumerate(all_idx)}
+
+    def sx(i):
+        return pad_l + i * (w - pad_l - pad_r) / max(n - 1, 1)
+
+    def sy(v):
+        return pad_t + (h - pad_t - pad_b) * (1 - (v - ymin) / (ymax - ymin))
+
+    colors = {"SP500": "#1f4e79", "SP400": "#2980b9", "SP600": "#c0392b", "SP1500": "#1e8449"}
+    out = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="Composite spread, growth of one dollar, by universe">']
+    step = 0.1 if ymax - ymin < 0.8 else 0.2
+    v = (int(ymin / step) + 1) * step
+    while v <= ymax:
+        y = sy(v)
+        cls = "grid" if abs(v - 1) > 1e-9 else "grid one"
+        out.append(f'<line x1="{pad_l}" y1="{y:.1f}" x2="{w - pad_r}" y2="{y:.1f}" class="{cls}"/>')
+        out.append(f'<text x="{pad_l - 8}" y="{y + 4:.1f}" class="axis" text-anchor="end">${v:.1f}</text>')
+        v += step
+    for yr in sorted({str(d)[:4] for d in all_idx}):
+        i = next(i for i, d in enumerate(all_idx) if str(d).startswith(yr))
+        if int(yr) % 2 == 0:
+            out.append(f'<text x="{sx(i):.1f}" y="{h - pad_b + 18}" class="axis" text-anchor="middle">{yr}</text>')
+    for u, g in growth.items():
+        pts = " ".join(f"{sx(pos[d]):.1f},{sy(float(v)):.1f}" for d, v in g.items())
+        out.append(f'<polyline points="{pts}" fill="none" stroke="{colors[u]}" stroke-width="2.2"/>')
+    lx, ly = pad_l + 10, pad_t + 8
+    for i, (u, g) in enumerate(growth.items()):
+        yy = ly + i * 18
+        out.append(f'<line x1="{lx}" y1="{yy}" x2="{lx + 22}" y2="{yy}" stroke="{colors[u]}" stroke-width="2.5"/>')
+        out.append(f'<text x="{lx + 28}" y="{yy + 4}" class="lbl">{LABEL[u]} from {str(g.index[0])[:7]}: ${float(g.iloc[-1]):.2f}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def tstat_chart_multi(ffs: dict) -> str:
+    """FF5+UMD alpha t-statistics for every sort, one colour per universe,
+    one marker per schedule: the four universes on one strip."""
+    w, row_h, pad_l, pad_r, pad_t = 860, 30, 230, 20, 36
+    rows = [k for k, _, _ in FACTORS]
+    h = pad_t + row_h * len(rows) + 30
+    tmin, tmax = -3.2, 3.2
+
+    def sx(t):
+        return pad_l + (t - tmin) / (tmax - tmin) * (w - pad_l - pad_r)
+
+    colors = {"SP500": "#1f4e79", "SP400": "#2980b9", "SP600": "#c0392b", "SP1500": "#1e8449"}
+    names = dict((k, n) for k, n, _ in FACTORS)
+    out = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="FF5+UMD alpha t-statistics by universe">']
+    out.append(f'<rect x="{sx(-2):.1f}" y="{pad_t - 10}" width="{sx(2) - sx(-2):.1f}" height="{row_h * len(rows) + 10}" class="band"/>')
+    for t in (-3, -2, -1, 0, 1, 2, 3):
+        out.append(f'<line x1="{sx(t):.1f}" y1="{pad_t - 10}" x2="{sx(t):.1f}" y2="{pad_t + row_h * len(rows)}" class="grid"/>')
+        out.append(f'<text x="{sx(t):.1f}" y="{pad_t - 16}" class="axis" text-anchor="middle">t = {t}</text>')
+    for i, key in enumerate(rows):
+        y = pad_t + i * row_h + row_h / 2
+        out.append(f'<text x="{pad_l - 10}" y="{y + 4}" class="lbl" text-anchor="end">{esc(names[key])}</text>')
+        out.append(f'<line x1="{pad_l}" y1="{y}" x2="{w - pad_r}" y2="{y}" class="grid"/>')
+        for u, ff in ffs.items():
+            c = colors[u]
+            for freq in FREQS:
+                r = ff[(ff.series == "spread") & (ff.factor == key) & (ff.freq == freq)]
+                if r.empty:
+                    continue
+                t = float(r.iloc[0]["FF5+UMD t_alpha"])
+                x = sx(max(min(t, tmax), tmin))
+                title = f"<title>{LABEL[u].replace('&amp;', '&')}, {esc(names[key])}, {freq}: t = {t:.2f}</title>"
+                if freq == "monthly":
+                    out.append(f'<circle cx="{x:.1f}" cy="{y}" r="5" fill="{c}" fill-opacity="0.8">{title}</circle>')
+                elif freq == "quarterly":
+                    out.append(f'<rect x="{x - 5:.1f}" y="{y - 5}" width="10" height="10" fill="{c}" fill-opacity="0.8">{title}</rect>')
+                else:
+                    out.append(f'<path d="M{x:.1f},{y - 6} L{x + 6:.1f},{y + 5} L{x - 6:.1f},{y + 5} Z" fill="{c}" fill-opacity="0.8">{title}</path>')
+    ly = h - 12
+    out.append(f'<circle cx="{pad_l + 6}" cy="{ly}" r="5" fill="#555"/><text x="{pad_l + 16}" y="{ly + 4}" class="lbl">monthly</text>')
+    out.append(f'<rect x="{pad_l + 86}" y="{ly - 5}" width="10" height="10" fill="#555"/><text x="{pad_l + 102}" y="{ly + 4}" class="lbl">quarterly</text>')
+    out.append(f'<path d="M{pad_l + 186},{ly - 6} L{pad_l + 192},{ly + 5} L{pad_l + 180},{ly + 5} Z" fill="#555"/><text x="{pad_l + 198}" y="{ly + 4}" class="lbl">annual</text>')
+    x = pad_l + 270
+    for u in ffs:
+        out.append(f'<text x="{x}" y="{ly + 4}" class="lbl" fill="{colors[u]}">■ {LABEL[u]}</text>')
+        x += 95
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def build_overview(ffs: dict, od: dict, common: dict, today: dt.date) -> str:
+    """The cross-universe page: every universe's verdict side by side,
+    every sort in every universe, the composite spread's path, what the
+    S&P 1500 union is, the database changes and the recommendation."""
+    names = {k: n for k, n, _ in FACTORS}
+    spreads = {u: ff[ff.series == "spread"].copy() for u, ff in ffs.items()}
+    bench = {u: ff[(ff.series == "benchmark-RF") & (ff.factor == "composite") & (ff.freq == "monthly")].iloc[0] for u, ff in ffs.items()}
+    n_tests = sum(len(b) for b in spreads.values())
+    hits = []     # (universe, factor, freq, FF5 t, FF6 t, ann) where either model clears 2
+    raw_hits = []
+    for u, b in spreads.items():
+        for _, r in b.iterrows():
+            if abs(r["FF5 t_alpha"]) >= 2 or abs(r["FF5+UMD t_alpha"]) >= 2:
+                hits.append((u, r.factor, r.freq, float(r["FF5 t_alpha"]), float(r["FF5+UMD t_alpha"]), float(r["FF5+UMD alpha_ann"])))
+            if abs(r["raw_t"]) >= 2:
+                raw_hits.append((u, r.factor, r.freq, float(r["raw_ann"]), float(r["raw_t"])))
+    wrong = [h for h in hits if h[4] < 0]
+    by_chance = max(1, round(0.05 * n_tests))
+    # consistency: a sort that clears |t| 2 in more than one universe
+    per_sort = {}
+    for u, f, fr, t5, t6, a in hits:
+        per_sort.setdefault((f, fr), []).append(u)
+    repeated = {k: v for k, v in per_sort.items() if len(v) > 1}
+    # a sort with the same sign in every universe and |t| > 1 everywhere
+    same_sign = []
+    for f, _, _ in FACTORS:
+        for fr in FREQS:
+            ts = [float(spreads[u][(spreads[u].factor == f) & (spreads[u].freq == fr)].iloc[0]["FF5+UMD t_alpha"]) for u in ffs]
+            if len(ts) == len(ffs) and (all(t > 1 for t in ts) or all(t < -1 for t in ts)):
+                same_sign.append((f, fr, ts))
+
+    def hit_text(h):
+        u, f, fr, t5, t6, a = h
+        return f"{LABEL[u]}: {esc(names[f])}, {fr}, {a * 100:+.1f}% a year, t {t5:.2f} on FF5 and {t6:.2f} with momentum"
+
+    # --- universe table
+    urows = []
+    for u, ff in ffs.items():
+        b, bm = spreads[u], bench[u]
+        dates, rows, dmin, dmax = od[u]["panel"]
+        pr = od[u]["priced"]
+        first_yr = min(pr)
+        last_full = max(y for y in pr if y < today.year)
+        n5 = int((b["FF5 t_alpha"].abs() >= 2).sum())
+        n6 = int((b["FF5+UMD t_alpha"].abs() >= 2).sum())
+        urows.append("<tr>" + "".join([
+            f"<td><a href=\"factor_backtest_{u}_{today.isoformat()}.html\">{LABEL[u]}</a></td>",
+            f"<td>{str(dmin)[:7]}</td>", f"<td>{int(bm.months)}</td>", f"<td>{rows // dates:,}</td>",
+            f"<td>{pr[first_yr]:.0f}% → {pr[last_full]:.0f}%</td>",
+            f"<td>{pct(bm['raw_ann'])}</td>", f"<td>{pct(bm['FF5 alpha_ann'])}</td>", f"<td>{num(bm['FF5 r2'])}</td>", f"<td>{num(bm['FF5+UMD b_SMB'])}</td>",
+            f"<td>{float(b['raw_t'].abs().max()):.2f}</td>", f"<td>{n5} / {n6}</td>"]) + "</tr>")
+
+    # --- every sort in every universe: raw annualised and FF5+UMD alpha t
+    srows = []
+    for key, name, _ in FACTORS:
+        for fr in FREQS:
+            cells = [f"<td>{esc(name)}</td>", f"<td>{fr}</td>"]
+            for u in ffs:
+                r = spreads[u][(spreads[u].factor == key) & (spreads[u].freq == fr)]
+                if r.empty:
+                    cells += ["<td></td>", "<td></td>"]
+                else:
+                    r = r.iloc[0]
+                    cells += [f"<td>{pct(r['raw_ann'])}</td>", tcell(r["FF5+UMD t_alpha"])]
+            srows.append("<tr>" + "".join(cells) + "</tr>")
+
+    suspect = {r[0]: (r[1], r[2]) for r in common["suspect"]}
+    fc = common["fill_cov"]
+    gap = common["gap"]
+    prices_n, prices_cos, pmin, pmax = common["prices"]
+    loaded_at, sym_req, sym_ret, no_listing = common["price_load"]
+    months = {u: int(bench[u].months) for u in ffs}
+    first_priced = {u: (min(od[u]["priced"]), od[u]["priced"][min(od[u]["priced"])]) for u in ffs}
+
+    if not hits and not raw_hits:
+        verdict_head = "Verdict: nothing pays, in any of the four universes."
+    elif len(hits) <= by_chance:
+        verdict_head = (f"Verdict: nothing pays beyond chance, in any of the four universes. {len(hits)} of {n_tests} sorts clear |t| 2 on a factor model, "
+                        f"{len(wrong)} of them sorting the wrong way, against {by_chance} expected from noise at the 5% level.")
+    else:
+        verdict_head = f"Verdict: {len(hits)} of {n_tests} sorts keep an alpha on a factor model; {len(wrong)} sort the wrong way."
+    repeated_text = ("No sort clears |t| 2 in more than one universe." if not repeated else
+                     "; ".join(f"{esc(names[f])} at {fr} rebalancing clears |t| 2 in {' and '.join(LABEL[u] for u in us)}" for (f, fr), us in repeated.items()) + ".")
+    same_sign_text = ("No sort has the same sign with |t| above 1 in all four universes." if not same_sign else
+                      "The sorts with the same sign and |t| above 1 in all four: " + "; ".join(f"{esc(names[f])} at {fr} (t {', '.join(f'{t:.1f}' for t in ts)})" for f, fr, ts in same_sign) + ".")
+    links = "".join(f'<li><a href="factor_backtest_{u}_{today.isoformat()}.html">{LABEL[u]}</a>: {months[u]} months from {str(od[u]["panel"][2])[:7]}, every bucket, alpha and loading.</li>' for u in ffs)
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factor backtests, four universes, {today.isoformat()}</title>
+<style>{CSS}
+svg .one {{ stroke: var(--fg); stroke-width: 1.2; }}
+.grid2 {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }}
+.card {{ border:1px solid var(--rule); border-radius: 8px; padding: 12px 16px; background: var(--head); }}
+.card h3 {{ margin: 0 0 6px; }}
+.card p {{ margin: 4px 0; font-size: 0.95rem; }}
+ol li {{ margin-bottom: 8px; }}
+</style>
+</head>
+<body>
+<main>
+<h1>Do accounting factors pay? The S&amp;P 500, 400, 600 and the three together</h1>
+<p class="sub">Point-in-time fundamentals from SEC DERA, month-end prices, equal-weight quintile sorts rebalanced monthly, quarterly and annually, measured raw and against the Fama-French five factors and momentum, in four universes. Generated {today.isoformat()} from the database by <code>tools/factor_report.py --overview</code>; the per-universe pages carry every bucket, alpha and loading.</p>
+
+<div class="verdict">
+<p><b>{verdict_head}</b> Ten sorts (a composite and nine accounting factors) on three rebalancing schedules in four universes make {n_tests} tests. {('The raw spreads that clear t 2: ' + '; '.join(f"{LABEL[u]}, {esc(names[f])} at {fr} rebalancing, {a * 100:+.1f}% a year, t {t:.2f}" for u, f, fr, a, t in raw_hits) + '. ') if raw_hits else 'No raw top-minus-bottom spread clears t 2 anywhere. '}{('After the factor models: ' + '; '.join(hit_text(h) for h in hits) + '. ') if hits else ''}{repeated_text} {same_sign_text}</p>
+<p>The machinery checks out in every universe: each equal-weight benchmark regresses on the five factors with beta near one, alpha within {max(abs(float(bench[u]['FF5 alpha_ann'])) for u in ffs) * 100:.1f}% of zero and R² of {min(float(bench[u]['FF5 r2']) for u in ffs):.2f} or more, with the size loading rising from {num(bench['SP500']['FF5+UMD b_SMB'])} in the 500 to {num(bench['SP600']['FF5+UMD b_SMB'])} in the 600. The Yahoo returns and the French series agree.</p>
+</div>
+
+<div class="kpis">
+<div class="kpi"><b>4</b><span>universes, {n_tests} tests, two factor models each</span></div>
+<div class="kpi"><b>{len(hits)}</b><span>sorts clear |t| 2 on a model; {len(wrong)} the wrong way</span></div>
+<div class="kpi"><b>{sum(months.values())}</b><span>universe-months, {min(months.values())} to {max(months.values())} a universe</span></div>
+<div class="kpi"><b>{prices_cos:,}</b><span>companies with prices, {prices_n:,} month-end rows</span></div>
+<div class="kpi"><b>{no_listing}</b><span>of {common['members_ever']:,} members ever with no open listing (no prices)</span></div>
+</div>
+
+<h2>1. The four universes side by side</h2>
+<div class="wrap"><table>
+<thead><tr><th>Universe</th><th>Panel from</th><th>Months</th><th>Members a date</th><th>Priced next month, first year → {today.year - 1}</th><th>Benchmark, ann.</th><th>FF5 α</th><th>R²</th><th>SMB</th><th>Max raw |t|</th><th>Alphas past |t| 2, FF5 / FF5+UMD</th></tr></thead>
+<tbody>{''.join(urows)}</tbody></table></div>
+<p class="note">Benchmark: the equal-weight return of every priced member, monthly, minus the bill rate; α and R² from the FF5 fit, SMB from the six-factor fit. Max raw |t| is over the thirty top-minus-bottom spreads of that universe. The S&amp;P 400 history is replayed from 2011 and the S&amp;P 600 from 2018-08, so the 600 and the union are a third as long as the 500.</p>
+
+<h2>2. Every sort in every universe</h2>
+<p>Raw annualised top-minus-bottom spread and the alpha t-statistic after the five factors and momentum, per universe. Shaded when |t| ≥ 2 (strong) or ≥ 1.65 (faint). A real effect would show up with the same sign in more than one universe; read down a row.</p>
+<div class="wrap"><table>
+<thead><tr><th rowspan="2">Factor</th><th rowspan="2">Schedule</th>{''.join(f'<th colspan="2">{LABEL[u]}</th>' for u in ffs)}</tr>
+<tr>{''.join('<th>Raw ann.</th><th>α t</th>' for _ in ffs)}</tr></thead>
+<tbody>{''.join(srows)}</tbody></table></div>
+<figure>{tstat_chart_multi(ffs)}
+<figcaption>FF5+UMD alpha t-statistics for every sort, one colour per universe. {repeated_text}</figcaption></figure>
+
+<h2>3. What the composite spread did</h2>
+<figure>{spread_chart({u: od[u]['spread'] for u in ffs})}
+<figcaption>Growth of a dollar long the composite's top quintile and short its bottom, monthly rebalancing, equal-weight within bucket, each universe from its first panel date. A line that ends near a dollar earned nothing over the period.</figcaption></figure>
+
+<h2>4. What the S&amp;P 1500 panel is</h2>
+<p>Not a fourth index history: on each month end that all three component panels hold, every S&amp;P 500, 400 and 600 member is taken with the factor values already stored for it, one row per company, and the index percentiles and the composite are recomputed over all of them by the sheet's rule (<code>sec_market.build_factor_panel_union</code>). A date any component lacks is refused, so the union begins where the S&amp;P 600 history does, 2018-08. Because the percentiles are over the whole 1,500, a sort now spans sizes: the composite's annual sort loads {num(spreads['SP1500'][(spreads['SP1500'].factor == 'composite') & (spreads['SP1500'].freq == 'annual')].iloc[0]['FF5+UMD b_SMB'])} on SMB, so without a size control part of any spread here is a bet on small versus large. A size-neutral version (sort within size terciles, or value-weight the buckets) is the next step for this universe, not more factors.</p>
+
+<h2>5. Why the spreads are biased down, not up</h2>
+<ul>
+<li><b>Survivors only.</b> Yahoo returns nothing for a delisted ticker, so {no_listing} of the {common['members_ever']:,} companies ever in the S&amp;P 1500 have no prices. Failures and takeovers leave an index from the bottom quintile more than the top; their missing returns flatter Q1 and shrink the measured spread. The share of members with a return the following month in the first panel year: {', '.join(f"{LABEL[u]} {v:.0f}% ({y})" for u, (y, v) in first_priced.items())}. The small caps are the most flattered.</li>
+<li><b>Sixteen months of frozen small-cap membership.</b> The S&amp;P 600 page is unusable from 2019-10 to 2021-02, so the 600 and the union carry the {gap[1]} members seen on both sides of the gap rather than 600 ({gap[0]} just before, {gap[2]} just after): fewer, more persistent companies in 2020.</li>
+<li><b>Equal weight, no size control.</b> Every bucket is equal-weighted, which overweights the smallest members of each universe, and the union sorts across sizes.</li>
+<li><b>{n_tests} tests.</b> At the 5% level, {by_chance} |t| above 2 are expected from noise alone.</li>
+</ul>
+
+<h2>6. The database: fixed for good, and open</h2>
+<div class="grid2">
+<div class="card"><h3>Fixed structurally (2026-10-13)</h3>
+<p><b>Suspect facts.</b> {suspect.get('period_after_filing', (0, 0))[0]:,} facts dated after their own filing ({suspect.get('period_after_filing', (0, 0))[1]:,} filers; Catalent's nine-month income dated 2024-03-31 in a February filing) and {suspect.get('scale', (0, 0))[0]} balance-sheet lines mis-scaled by a thousand or a million (Hill-Rom's FY2021 total assets of 4,999.1 dollars) are refused by every gold table through <code>sec_gold.suspect_fact</code>, decided from the filing alone so a flag never changes later. The quarterly fold refreshes the list before the fact tables. Check 70.</p>
+<p><b>The one-transaction build.</b> Every matview analyses itself as it is built and after every refresh; the peer-statistics predicate is a join. Eleven hours became 48 minutes.</p>
+<p><b>One row per company.</b> The factor sheet cannot count a company twice through a ticker handoff (IR/TT 2020); check 71 pins the three index-months.</p>
+<p><b>The sector every page left blank.</b> Filled by rule as a label, with the proof that every membership interval kept its key (6,342), that the members and tickers on every month end since 2008 are identical (239,662 member-months), and that no company's own peer values moved (55,496 sector rows added, 0 same-key values changed). The S&amp;P 400 panel carries the composite for {fc.get(('SP400', 2017), 0)} members a date in 2017 and the S&amp;P 600 for {fc.get(('SP600', 2018), 0)} in 2018, from none. Check 73: 0 foreign labels, 138 unclassified intervals.</p>
+<p><b>The backtest at 1,500 names.</b> Thirteen minutes a call became seconds, the S&amp;P 500 numbers unchanged to the digit.</p>
+<p><b>Banks judged by the filing's SIC</b> (check 63), so a registrant that changes industry later cannot fail a historical test.</p>
+</div>
+<div class="card"><h3>Open, with its evidence</h3>
+<p><b>Survivorship.</b> {no_listing} delisted members have no prices ({sym_ret:,} of {sym_req:,} listed symbols answered on {loaded_at}; CUK, HCIIP, SATS and TDDWW did not). Polygon's flat files or CRSP close it.</p>
+<p><b>Seats keyed by registrant.</b> A registrant that absorbed another member and kept the seat collapses both into one: BancorpSouth is absent from the S&amp;P 400 between 2018-10-19 and 2021-11-02; the recycled ticker BKR gives Michael Baker the S&amp;P 500 seat from 2017-07-07 to 2019-12; Ashland LLC reappears for 2018-10-19 to 2019-10-02. The fix is a seat keyed by ticker before the CIK-succession cut.</p>
+<p><b>The S&amp;P 600 captures of 2019-10 to 2021-02</b> carry an extra table and are unusable: membership through the gap is frozen at {gap[1]}.</p>
+<p><b>Ticker handoffs</b> are dated at the crosswalk's next capture, not from the filing that announces them.</p>
+<p><b>Value weights and a size control</b> are not built; the backtest is equal-weight only.</p>
+</div>
+</div>
+
+<h2>7. Recommendation</h2>
+<ol>
+<li><b>Close survivorship first.</b> Load delisted members' prices from Polygon's flat files or CRSP. It is the one change that can move the conclusion: the bottom buckets are missing exactly the companies that failed, and the 600 is missing a third of its 2018 members' returns.</li>
+<li><b>Then a size control and value weights</b> in <code>sec_market.backtest</code>, before reading anything into the 1,500: sort within size terciles and value-weight the buckets, so a spread is not a bet on small versus large.</li>
+<li><b>Then the reference layer:</b> seats keyed by ticker before the succession cut, and the 2019 to 2021 S&amp;P 600 captures parsed for what they are. Both have clear proofs (membership counts by date, the named companies above).</li>
+<li><b>Not more factors.</b> Nine accounting factors and a composite found nothing in four universes; a tenth will not. What would be informative is the same sorts with delisting returns in, and value-weighted.</li>
+</ol>
+
+<h2>8. The per-universe reports</h2>
+<ul>{links}</ul>
+<pre>uv run dera load-prices
+uv run dera build-factor-panel --index SP500      # then SP400, SP600, SP1500
+uv run python tools/ff_baseline.py SP500 --download   # then SP400, SP600, SP1500
+uv run python tools/factor_report.py SP500            # then SP400, SP600, SP1500
+uv run python tools/factor_report.py --overview</pre>
+<p class="small">Generated {today.isoformat()} by <code>tools/factor_report.py --overview</code> from PostgreSQL and the baseline CSVs; French data vintage 202608 (<code>data/external/french</code>, not stored in the repository). Prices: Yahoo Finance month-end closes, {pmin} to {pmax}.</p>
 </main>
 </body>
 </html>
@@ -511,19 +881,45 @@ uv run python tools/factor_report.py {index}</pre>
 def main() -> int:
     ap = argparse.ArgumentParser(description="The factor backtest report as one HTML file.")
     ap.add_argument("index", nargs="?", default="SP500")
+    ap.add_argument("--overview", action="store_true", help="the four universes side by side (reads all four baseline CSVs)")
     ap.add_argument("--from", dest="frm", default="2010-01-01")
     ap.add_argument("--ff-csv", default=None)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     today = dt.date.today()
-    ff_csv = Path(args.ff_csv) if args.ff_csv else config.PROJECT_ROOT / "data" / "external" / "french" / f"ff_baseline_{args.index}.csv"
-    out = Path(args.out) if args.out else config.PROJECT_ROOT / "docs" / "reports" / f"factor_backtest_{args.index}_{today.isoformat()}.html"
-    ff = pd.read_csv(ff_csv)
+    french = config.PROJECT_ROOT / "data" / "external" / "french"
+    reports = config.PROJECT_ROOT / "docs" / "reports"
     frm = dt.date.fromisoformat(args.frm)
-    with db.get_conn() as conn:
-        d = load(conn, args.index, frm)
+    if args.overview:
+        ffs = {}
+        for u in UNIVERSES:
+            csv = french / f"ff_baseline_{u}.csv"
+            if not csv.exists():
+                print(f"missing {csv}: run  uv run python tools/ff_baseline.py {u}  first", file=sys.stderr)
+                return 1
+            ffs[u] = pd.read_csv(csv)
+        out = Path(args.out) if args.out else reports / f"factor_backtest_overview_{today.isoformat()}.html"
+        with db.get_conn() as conn:
+            common = {
+                "prices": q(conn, "SELECT count(*), count(DISTINCT cik), min(month_end), max(month_end) FROM sec_market.monthly_price")[0],
+                "price_load": q(conn, """SELECT loaded_at::date, symbols_requested, symbols_returned, members_without_listing
+                                         FROM sec_market.price_load ORDER BY loaded_at DESC LIMIT 1""")[0],
+                "members_ever": q(conn, "SELECT count(DISTINCT cik) FROM sec_reference.index_membership")[0][0],
+                "suspect": q(conn, "SELECT reason, count(*), count(DISTINCT cik) FROM sec_gold.suspect_fact GROUP BY 1 ORDER BY 1"),
+                "fill_cov": fill_coverage(conn),
+                "gap": gap_members(conn),
+            }
+            od = {u: load_overview(conn, u, frm) for u in UNIVERSES}
+        html_text = build_overview(ffs, od, common, today)
+    else:
+        ff_csv = Path(args.ff_csv) if args.ff_csv else french / f"ff_baseline_{args.index}.csv"
+        out = Path(args.out) if args.out else reports / f"factor_backtest_{args.index}_{today.isoformat()}.html"
+        ff = pd.read_csv(ff_csv)
+        with db.get_conn() as conn:
+            d = load(conn, args.index, frm)
+        html_text = build_html(args.index, frm, d, ff, today)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(build_html(args.index, frm, d, ff, today), encoding="utf-8")
+    out.write_text(html_text, encoding="utf-8")
     print(f"wrote {out} ({out.stat().st_size / 1024:.0f} KB)")
     return 0
 

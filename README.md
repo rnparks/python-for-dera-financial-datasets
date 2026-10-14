@@ -282,6 +282,7 @@ uv run python tools/fetch_usgaap_cost_elements.py       # FASB taxonomy: cost-of
 uv run python tools/fetch_usgaap_element_docs.py        # FASB taxonomy: definitions and calc context of elements
 uv run python tools/ff_baseline.py SP500 --download     # factor spreads vs Fama-French 5 factors and momentum (data/external/french)
 uv run python tools/factor_report.py SP500              # the backtest report as one HTML file -> docs/reports/
+uv run python tools/factor_report.py --overview         # the four universes side by side, after the four per-index runs
 ```
 
 ## Keeping the documentation current
