@@ -797,3 +797,18 @@ def test_summarise_counts_counts_significance_sign_and_mean():
     assert out["mean_alpha_t"] == pytest.approx((2.1 - 2.4 + 0.5 - 1.9) / 4)
     empty = score_methods.summarise_counts([])
     assert empty["n"] == 0 and empty["sig_alpha"] == 0
+
+
+def test_legs_by_period_splits_on_the_month_and_annualises():
+    import pandas as pd
+    rows = []
+    for ym, r in (("202411", 0.01), ("202412", 0.01), ("202501", 0.02), ("202502", 0.02)):
+        rows.append({"freq": "monthly", "factor": "composite", "ym": ym, "long_cw": r, "short_cw": 0.0, "spread_cw": r,
+                     "long_vw": 2 * r, "short_vw": 0.0, "spread_vw": 2 * r})
+    rows.append({"freq": "annual", "factor": "composite", "ym": "202501", "long_cw": 9.0, "short_cw": 9.0, "spread_cw": 9.0,
+                 "long_vw": 9.0, "short_vw": 9.0, "spread_vw": 9.0})       # another schedule: ignored
+    out = score_methods.legs_by_period(pd.DataFrame(rows), split_ym="202501")
+    assert out["before"]["months"] == 2 and out["from"]["months"] == 2
+    assert out["before"]["spread_cw"] == pytest.approx(1.01 ** 12 - 1)
+    assert out["from"]["spread_vw"] == pytest.approx(1.04 ** 12 - 1)
+    assert out["from"]["short_cw"] == pytest.approx(0.0)
