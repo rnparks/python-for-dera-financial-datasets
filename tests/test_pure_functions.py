@@ -27,6 +27,7 @@ import check_docs
 import fetch_ticker_history as fth
 import fetch_usgaap_cost_elements as fuce
 import fetch_usgaap_element_docs as fued
+import score_methods
 
 # ---------------------------------------------------------------------
 # filings.classify: anchored, not prefix-matched
@@ -777,3 +778,22 @@ def test_panel_dates_puts_quarter_ends_first_within_range():
             dt.date(2024, 4, 30), dt.date(2024, 6, 28), dt.date(2024, 7, 31)]
     out = prices.panel_dates(ends, since=dt.date(2024, 2, 1), until=dt.date(2024, 6, 30))
     assert out == [dt.date(2024, 3, 28), dt.date(2024, 6, 28), dt.date(2024, 2, 29), dt.date(2024, 4, 30)]
+
+
+# ---------------------------------------------------------------------
+# score_methods.summarise_counts: the report's verdict counts
+# ---------------------------------------------------------------------
+
+def test_summarise_counts_counts_significance_sign_and_mean():
+    rows = [{"raw_t": 2.5, "FF5+UMD t_alpha": 2.1, "raw_ann": 0.04},
+            {"raw_t": -1.0, "FF5+UMD t_alpha": -2.4, "raw_ann": -0.02},
+            {"raw_t": 0.3, "FF5+UMD t_alpha": 0.5, "raw_ann": 0.01},
+            {"raw_t": -2.0, "FF5+UMD t_alpha": -1.9, "raw_ann": -0.03}]
+    out = score_methods.summarise_counts(rows)
+    assert out["n"] == 4
+    assert out["sig_raw"] == 2                 # |t| >= 2 counts both signs, and exactly 2
+    assert out["sig_alpha"] == 2 and out["sig_alpha_pos"] == 1
+    assert out["positive"] == 2
+    assert out["mean_alpha_t"] == pytest.approx((2.1 - 2.4 + 0.5 - 1.9) / 4)
+    empty = score_methods.summarise_counts([])
+    assert empty["n"] == 0 and empty["sig_alpha"] == 0
