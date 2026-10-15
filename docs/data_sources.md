@@ -12,8 +12,9 @@ know what is flowing into them.
 
 ## The short version
 
-Everything here is **free and public**. There is no vendor feed and no licensed
-data. Seven acquisition paths, in rough order of how much they matter:
+Everything here is **free**: nothing is bought, though Yahoo's prices carry no
+licence to redistribute (section 8). Ten acquisition paths, in rough order of
+how much they matter:
 
 | # | Source | Lands in | On disk | Refresh |
 |---|---|---|---|---|
@@ -25,6 +26,9 @@ data. Seven acquisition paths, in rough order of how much they matter:
 | 5 | NYSE trading calendar | `data/reference/trading_calendar.csv` | 256 KB | `tools/build_calendar.py` |
 | 7 | SEC DERA Financial Statement **and Notes** Data Sets (footnotes, with dimensions) | `data/raw_notes/<name>.zip` → `data/exports/notes/notes_facts.parquet` | **27.6 GB** (80 archives, not tracked) | `tools/fetch_notes_datasets.py`, `tools/extract_notes_facts.py` |
 | 6 | FASB US-GAAP taxonomy archives, 2011–2026 | `data/reference/usgaap_cost_elements.csv`, `usgaap_cost_calc_arcs.csv`, `usgaap_element_docs.csv` | small (archives cached in `data/taxonomy/`, not tracked) | `tools/fetch_usgaap_cost_elements.py`, `tools/fetch_usgaap_element_docs.py` |
+| 8 | Yahoo Finance month-end prices (index members) | `sec_market.monthly_price` | in the database only | `dera load-prices` |
+| 9 | Ken French data library (FF5 and momentum) | `data/external/french/` (not tracked) | small | `tools/ff_baseline.py --download` |
+| 10 | Goyal-Welch predictors (Amit Goyal's data page) | `data/external/goyal_welch/` (not tracked) → `macro` | 1.5 MB | `dera load-macro` |
 
 Plus a small set of hand-maintained files described under [Manual inputs](#manual-inputs).
 
@@ -567,6 +571,108 @@ dollar or that did not trade.
 
 **Not in the database.** The series are joined to `sec_market.backtest` output in the tool and nowhere else; a refresh is a re-download.
 
+## 10. Goyal-Welch predictors (Amit Goyal's data page)
+
+**What:** the aggregate-market variables of Welch and Goyal (2008, "A
+Comprehensive Look at the Empirical Performance of Equity Premium Prediction",
+*Review of Financial Studies* 21(4)) and Goyal, Welch and Zafirov (2024, "A
+Comprehensive 2022 Look at the Empirical Performance of Equity Premium
+Prediction", *RFS* 37(11)). The 2008 set: the S&P 500's level and its 12-month
+dividends and earnings, the Dow's book-to-market, bill, long-bond and Aaa/Baa
+yields, bond returns, inflation, net equity issuance, the month's stock variance
+and the CRSP S&P 500 return. The 2024 paper adds 29 more (variance premia,
+illiquidity, sentiment, the output gap, short interest...). Monthly from 1871
+where a series exists, with quarterly and annual sheets alongside. Gu, Kelly and
+Xiu (2020) take their eight macro predictors from this set: dp, ep, bm, ntis,
+tbl, tms, dfy, svar.
+
+**Where:** two workbooks linked from https://sites.google.com/view/agoyal145
+(Google Drive). The combined file ("All data up to 2025, Excel format", the 2008
+and 2024 data in one, full-sample versions only) is the primary source. The
+updated 2008 file ("Updated data (up to 2025)") is the only one carrying D3 and
+E3, the quarterly three-month sums. `uv run dera load-macro` downloads both
+into `data/external/goyal_welch/` (gitignored) and records each file's SHA-256
+and its own last-modified stamp in `macro.gw_load`. The page states no licence
+that we found; cite the papers.
+
+**Capture quality** (2026-10-15): both workbooks were last modified 2026-08-18,
+with data through 2025-12. The combined workbook contributes 77,036 non-empty
+cells (52,770 monthly, 18,952 quarterly, 5,314 annual) and the 2008 one 516
+(D3 and E3). The two share 34,368 cells and agree on every one; the loader
+refuses a vintage in which they do not. Within the combined workbook the
+spreads equal their components on every row (`tms = lty - tbl`,
+`dfy = BAA - AAA`, `dfr = corpr - ltr`), and the monthly sheet's quarter-end
+dividends and earnings equal the quarterly sheet's (check 77).
+
+**Rules.** The workbook is dated by period; whether and from when a value could
+be known is decided per variable in `data/reference/goyal_welch_variables.csv`
+(58 rows, each citing its source) and enforced by `macro.gw_usable`, which
+every accessor reads:
+
+| Timing | Variables | Usable from |
+|---|---|---|
+| `market` (16) | price, ret, retx, AAA, BAA, lty, ltr, corpr, tbl, Rfree, tms, dfy, dfr, b/m, ntis, svar | the first of the next month: strictly after the period's last close, as `sec_market.price_at` |
+| `release_lag` (1) | infl | the first of the month after the following one |
+| `quarter_end` (4) | d12, D3 (lag 0); e12, E3 (lag 3) | quarter-end values only, the first of the month after the quarter plus the lag |
+| `interpolated` (4) | d/p, d/y, e/p, d/e | never: built from the interpolated months |
+| `full_sample` (7) | cay, pce, ogap, sntm, fbm, tchi, shtint | never: estimated on the whole sample (the workbook's ReadMe says so) |
+| `unverified` (26) | the other 2024 variables, eqis, i/k, csp | never, until a row cites a timing rule |
+
+The measurements behind the rules:
+
+- **Dividends and earnings are interpolated between quarter ends.** Every month
+  between quarter ends from 2009 lies exactly on the straight line to the next
+  quarter end: 136 of 136 for each series (check 77 pins it). Welch and Goyal
+  say as much for earnings ("our own estimates based on interpolation of
+  quarterly earnings provided by the S&P Corporation"). October's figure
+  therefore depends on December's, so only quarter-end values are read, and
+  `macro.gkx_state` builds dp and ep from them and the newest usable price.
+- **Earnings wait three months.** Of S&P 500 members' original reports for
+  calendar quarter ends 2010–2025 (`sec_silver.sub_silver`), 10-Ks were
+  tradable a median 53 days after the period (99th percentile 63) and 10-Qs 33
+  (43); 99.88% of 6,863 10-Ks and 99.92% of 20,428 10-Qs within three months.
+- **Inflation waits for BLS.** Welch and Goyal: "released only in the following
+  month, we wait for one month". Here a month's CPI is usable from the first of
+  the month after its release month. One known miss: BLS published no October
+  2025 CPI (the shutdown) and released November's on 2025-12-18. The workbook's
+  October value interpolates the index linearly between September and November
+  (the two monthly changes, −0.10437% and −0.10448%, differ by exactly the ratio
+  that implies), so knowledge dates 2025-12-01 to 2025-12-17 see it before
+  anyone could have. No month-end date does.
+- **Book-to-market carries its own lag.** Welch and Goyal divide the Dow's book
+  value at the end of the previous year (two years back in January and
+  February) by the month-end price, so it is known at the month's close.
+
+Each value is current until its successor was due (one month on for a monthly
+series, three for a quarter-end one) and expires then. A December value read in
+September is not September's state, and the accessors return nothing rather
+than carry it forward. The 2026-08-18 vintage ends at 2025-12, so the state is
+NULL from 2026-02 until Goyal's next update.
+
+**Known limits:**
+- **One vintage, revised.** Every value is as the 2026-08-18 file has it, not
+  as first published: CRSP restatements, and series spliced across sources (lty
+  from FRED from 2022, ltr and corpr from Bloomberg indices, per Goyal's page).
+  A market rate is rarely revised; the national-accounts variables, which are
+  `unverified` here, are revised often.
+- **ntis rests on the authors' description.** Welch and Goyal scale twelve
+  months of NYSE net issues by "the total end-of-year market capitalization"
+  without saying which year-end. If it is the current year's, the scale of a
+  January–November value is a look-ahead; the sign and swings come from the
+  issues. It stays `market` because Gu, Kelly and Xiu use it; setting its
+  timing to `unverified` in the CSV removes it.
+- **The real-time versions of the full-sample variables are not loaded.**
+  Goyal's "Data up to 2025, zipped CSV format" (27 MB zipped, 46 files, 360 MB
+  unzipped) holds, for each of the 29 variables the 2024 paper added, an
+  upper-triangular matrix (eight for sntm and fbm, four for rsvix):
+  observation date by estimation date, 1,200 × 1,200 months for a monthly
+  series. For pce, the last column equals the workbook's full-sample value in
+  all 289 quarters, and the diagonal differs from it in 276 of 277. That reads
+  as each value re-estimated on the data through every later date, with the
+  diagonal the value known at the time, which would make the full-sample
+  variables usable point in time. The reading is not confirmed against the
+  paper for the other series, and loading the diagonals is a separate decision.
+
 ## Manual inputs
 
 | File | Rows | What it is |
@@ -577,6 +683,7 @@ dollar or that did not trade.
 | `wayback_stamps.json` | — | The archive captures the last crosswalk run resolved to, keyed by the probe set that produced them |
 | `GAAP Taxonomy 2024.xlsx` | — | Reference taxonomy, not loaded by the pipeline |
 | `revenue_labels*.xlsx` | — | Scratch analysis of revenue tag labels |
+| `goyal_welch_variables.csv` | 58 | The Goyal-Welch variable catalogue: each variable's native frequency and timing class (whether and from when a point-in-time reader may use it), each row citing the paper, the workbook's ReadMe or a measurement; loads `macro.gw_variable` (`dera load-macro`), and a variable with no row cannot be loaded |
 | `compustat_item_map.csv`, `compustat_quarterly_items.csv` | 160, 13 | Compustat item → US-GAAP tag ladders and formulas, each row citing S&P's and FASB's definitions; evaluated by `dera_pipeline/compustat.py`, documented in `docs/compustat_items.md` |
 
 ---
@@ -645,6 +752,10 @@ Honest gaps, all at the acquisition boundary:
   would not be detected (it can at least be replaced: `dera load --quarter Q
   --force`).
 - **The xlsx reference files have no recorded origin or date.**
+- **The Goyal-Welch workbooks are one revised vintage.** `macro.gw_load` records
+  each file's hash and last-modified stamp, so a load is reproducible from the
+  file, but the values are as revised in that vintage, not as first published
+  (section 10). A reload reports how many stored values the new vintage changed.
 - **`data/raw_notes/` archives are not checksummed** either; each extracted fact
   records the archive it came from (`archive`) and its accession number (`adsh`).
 
@@ -668,6 +779,8 @@ uv run dera build-gold                           # ~26 min
 
 uv run dera fetch-filing-index                   # EDGAR archive, ~1.5 GB
 uv run dera build-security-model                 # security lifecycle
+
+uv run dera load-macro                           # Goyal-Welch workbooks; reports what a new vintage restated
 
 uv run python tools/fetch_ticker_history.py --batch 0   # all captures + live file
 uv run python tools/fetch_sp500_history.py --batch 0    # S&P 500 revisions (resumes)

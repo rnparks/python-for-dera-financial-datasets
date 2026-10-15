@@ -9,7 +9,9 @@ layer with a canonical concept taxonomy (tag priorities ordered by the FASB
 US-GAAP calculation linkbase where it speaks, e.g. gross profit) and peer
 statistics. A separate
 `sec_reference` spine tracks companies, securities and historical universes
-without survivorship bias.
+without survivorship bias, and a `macro` schema, apart from all of it, holds
+the Goyal-Welch aggregate-market predictors (dividend and earnings yields,
+rates, spreads, stock variance) dated by when each value could be known.
 
 **Two things make this different from a plain XBRL loader:**
 
@@ -82,7 +84,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 75 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 78 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -114,6 +116,13 @@ uv run dera build-factor-panel --index SP500 # the factor sheet at every month e
 uv run dera build-factor-panel --index SP400 --since 2011-01-01   # the 400 and 600 from where their replayed histories begin
 uv run dera build-factor-panel --index SP600 --since 2018-08-01
 uv run dera build-factor-panel --index SP1500 --since 2018-08-01  # the three re-ranked together, one row per company; seconds per date
+```
+
+The macro predictors (`macro`, from Amit Goyal's data page, not SEC data; see `docs/data_sources.md` section 10):
+
+```bash
+uv run dera load-macro                       # the Goyal-Welch workbooks as published, about 77,500 cells, seconds; reports what a new vintage restated
+uv run dera load-macro --offline             # reload the workbooks already in data/external/goyal_welch
 ```
 
 Rehearsed end to end on 2026-09-10 by reloading 2026q2 under `--force`: 52
@@ -209,6 +218,16 @@ SELECT * FROM sec_market.backtest_summary('SP500', 'ocf_at', 'quarterly', DATE '
 -- Apple's market cap as knowable on a date: the as-traded month-end close
 -- before it times the cover-page shares knowable on it
 SELECT * FROM sec_market.market_cap_at(320193, DATE '2024-11-15');
+
+-- The macro state a Gu-Kelly-Xiu model conditions on: the eight
+-- Welch-Goyal predictors per month, raw and z-scored against their own
+-- past only. One row per month and no company key: it joins the stock
+-- panel by date and is never ranked across stocks.
+SELECT fp.asof, fp.ticker, fp.gp_at_pct, s.dp, s.tbl, s.tms, s.dp_z, s.tbl_z
+FROM sec_market.factor_panel fp
+JOIN macro.gkx_state(DATE '2010-01-01', DATE '2025-12-31') s
+  ON s.month = date_trunc('month', fp.asof)::DATE
+WHERE fp.index_name = 'SP500' AND fp.asof = DATE '2024-06-28';
 
 -- Who was actually investable then, delisted companies included
 SELECT * FROM sec_reference.universe_at('filers_10k_15m', DATE '2015-06-30');
@@ -333,6 +352,7 @@ dera_pipeline/       # the Python package
 ├── downloader.py   # async retry+semaphore fetcher
 ├── filings.py      # EDGAR bulk submissions → security lifecycle events
 ├── loader.py       # bronze COPY-from-STDIN loader
+├── macro.py        # the Goyal-Welch predictors (macro) and the GKX covariates
 ├── prices.py       # Yahoo month-end prices and the factor panel (sec_market)
 └── reference.py    # CSV → reference table loader
 
@@ -344,11 +364,13 @@ sql/                 # executed in lexical order by directory
 ├── 04_reference/   # universe_sp1500, ticker_map
 ├── 05_spine/       # company spine and dated crosswalk (needs 04 to be loaded first)
 ├── 06_security/    # security model (needs the filing index loaded first)
-└── 07_market/      # sec_market: month-end prices, the factor panel, the backtest (run by load-prices / build-factor-panel)
+├── 07_market/      # sec_market: month-end prices, the factor panel, the backtest (run by load-prices / build-factor-panel)
+└── 08_macro/       # macro: the Goyal-Welch predictors and their point-in-time accessors (run by load-macro)
 
 data/
 ├── raw/            # DERA quarterly dumps      (gitignored, 29 GB)
 ├── edgar/          # EDGAR submissions archive (gitignored, 1.5 GB)
+├── external/       # vendor downloads: Ken French factors, the Goyal-Welch workbooks (gitignored)
 └── reference/      # tracked reference files (the crosswalk is gzipped)
 
 tests/               # pytest, pure functions only

@@ -11,6 +11,7 @@ A bronze/silver/gold medallion pipeline in Postgres. Python is responsible for d
 | Gold | `sec_gold` | `suspect_fact` (the silver rows gold refuses), `fact_asof` (every vintage), `tradable_financials(_pit)`, `canonical_concepts` + `concept_tag_map` + `concept_formula` + `concept_ratio`, `peer_stats`, `share_class_shares`, the `as_of_*` accessor family, `peer_stats_asof()` and the quarterly/trailing functions (`as_of_quarterly()`, `as_of_trailing()`) the earnings-surprise functions (`as_of_surprise()`, `surprise_asof()`) the quarterly-profitability functions (`as_of_profitability()`, `profitability_asof()`), the factor sheet (`factor_sheet_asof()`) and the financial descriptors (`financial_descriptors_asof()`), all computed on demand | `sql/03_gold/*.sql` |
 | Spine | `sec_reference` | `company`, `company_ticker`, `security`, `listing`, `eligibility`, `delisting_event`, `trading_calendar`, `share_class` | `sql/00_reference`, `05_spine`, `06_security` + `dera_pipeline.{reference,filings}` |
 | Market | `sec_market` | `monthly_price` (Yahoo month-end closes for the primary ticker of every company ever in the S&P 1500; split-restated, total-return and reconstructed as-traded), `monthly_return`, `price_at()`, `market_cap_at()`, `factor_panel` (the factor sheet stored per knowledge date), `backtest()` and `backtest_summary()` | `sql/07_market/*.sql` + `dera_pipeline.prices` (`dera load-prices`, `dera build-factor-panel`) |
+| Macro | `macro` | `gw_variable` (the cited timing allowlist), `gw_observation` (the Goyal-Welch workbooks as published), `gw_load`, `gw_usable`, `gw_asof()`, `gkx_state()` (the eight Gu-Kelly-Xiu predictors per month, raw and z-scored over time) | `sql/08_macro/*.sql` + `dera_pipeline.macro` (`dera load-macro`) |
 
 `sec_reference` sits deliberately **outside** the bronze→silver→gold chain.
 `build-silver` opens with `DROP SCHEMA sec_silver CASCADE`, and the calendar,
@@ -213,6 +214,44 @@ or manually:
 REFRESH MATERIALIZED VIEW sec_gold.tradable_financials;
 REFRESH MATERIALIZED VIEW sec_gold.tradable_financials_pit;
 ```
+
+## Macro: one value per month, dated by when it was known
+
+The Goyal-Welch predictors are aggregate-market series: the S&P 500's dividend
+and earnings yields, the Dow's book-to-market, bill and bond rates, credit
+spreads, net equity issuance, inflation, the month's stock variance. Every
+stock shares the same value in a month, so they live in a schema of their own
+with no company key anywhere. A model of the Gu, Kelly and Xiu (2020) kind
+ranks the stock characteristics cross-sectionally into [-1, 1] and multiplies
+each by the macro state, z = (1, x_t) ⊗ c_i,t; the macro values are the
+conditioning variables that let it lean on a characteristic in one regime and
+discount it in another. Ranking a macro value across stocks would turn it into
+a constant. `macro.gkx_state()` returns one row per month and can only join a
+panel by date. `dera_pipeline.macro.gkx_covariates` takes the ranked
+characteristics and the state as separate inputs, and it refuses a macro column
+found in the stock panel, where a ranker could have reached it.
+
+The workbooks are stored as published and dated by period; availability is a
+separate decision, made per variable in `data/reference/goyal_welch_variables.csv`
+and enforced by the view every accessor reads (`macro.gw_usable`):
+
+- A market value (a close, a yield, a realised return) is usable from the
+  first day of the next month, strictly after the period's last session. That
+  is `sec_market.price_at`'s rule, so a month-end rebalance never conditions on
+  its own month's close.
+- Inflation waits one more month, for BLS's release.
+- Dividends and earnings are read only at quarter ends, because the monthly
+  sheet interpolates toward the next quarter end. Earnings wait three months,
+  for the filings that make them.
+- Ratios built from the interpolated months, estimates fitted on the whole
+  sample, and anything without a cited timing rule are never read. They are
+  stored but produce nothing, not a plausible number.
+
+Each value is current until its successor was due and expires then. The
+workbook is updated about once a year, and a year-old December value is not
+this September's state. The only transformation a macro value gets is
+time-series: `gkx_state` z-scores each variable against its own past (expanding,
+or a rolling window), so adding later months cannot move an earlier row (check 78).
 
 ## Metric aliases
 

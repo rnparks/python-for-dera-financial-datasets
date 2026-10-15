@@ -3,7 +3,7 @@
 Run via ``uv run dera ...`` once the package is installed; the
 ``dera`` script is registered in ``pyproject.toml``.
 
-Thirteen subcommands. The medallion pipeline, in order::
+Fourteen subcommands. The medallion pipeline, in order::
 
     uv run dera download
     uv run dera init-db
@@ -50,9 +50,14 @@ Prices (a vendor, not SEC data; schema ``sec_market``)::
     uv run dera build-factor-panel   # the factor sheet at every month end, stored
                                      # for the backtest (sec_market.factor_panel)
 
+Macro predictors (Amit Goyal's data page, not SEC data; schema ``macro``)::
+
+    uv run dera load-macro           # the Goyal-Welch workbooks, as published, with
+                                     # each variable's point-in-time timing class
+
 Verification::
 
-    uv run dera verify        # 75 data-correctness checks
+    uv run dera verify        # 78 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 
@@ -65,7 +70,7 @@ import subprocess
 import sys
 import time
 
-from . import config, db, downloader, filings, loader, prices, reference
+from . import config, db, downloader, filings, loader, macro, prices, reference
 
 
 def _add_range_args(p: argparse.ArgumentParser) -> None:
@@ -589,12 +594,30 @@ def cmd_build_factor_panel(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_load_macro(args: argparse.Namespace) -> int:
+    """Load the Goyal-Welch predictors into the macro schema.
+
+    Runs the macro DDL (idempotent), fetches both workbooks from Amit
+    Goyal's data page (or, with --offline, reuses the ones already in
+    data/external/goyal_welch), refuses a vintage in which they disagree
+    on a shared cell, loads the variable catalogue from
+    data/reference/goyal_welch_variables.csv and replaces the stored
+    observations, reporting how many rows the new vintage added, changed
+    and removed.
+    """
+    with db.get_conn() as conn:
+        db.run_sql_file(conn, macro.ddl_path())
+        summary = macro.load(conn, offline=args.offline)
+    macro.print_summary(summary)
+    return 0
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     r"""Run the point-in-time verification suite.
 
     `tools/verify_pit.sql` had 15 passing checks at the time and was
     invoked from nothing: no test runner, no CI, no CLI path. It now
-    holds 73. A correctness suite
+    holds 78. A correctness suite
     nobody runs is documentation, not a guard. This gives it a command.
 
     It shells out to psql rather than going through psycopg because the
@@ -800,6 +823,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_panel.add_argument("--until", default=None, metavar="YYYY-MM-DD", help="last month end (default: the last complete month)")
     p_panel.add_argument("--rebuild", action="store_true", default=False, help="rebuild dates already in the panel")
     p_panel.set_defaults(func=cmd_build_factor_panel)
+
+    p_macro = sub.add_parser(
+        "load-macro",
+        help="the Goyal-Welch macro predictors from Amit Goyal's data page (schema macro)")
+    p_macro.add_argument(
+        "--offline", action="store_true", default=False,
+        help="reuse the workbooks already in data/external/goyal_welch instead of downloading")
+    p_macro.set_defaults(func=cmd_load_macro)
 
     p_verify = sub.add_parser(
         "verify", help="run the point-in-time verification suite")

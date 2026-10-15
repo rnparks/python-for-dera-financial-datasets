@@ -356,6 +356,12 @@ def test_fetch_live_requires_agent(monkeypatch):
      ["sec_reference.company_ticker", "sec_silver.universe_sp1500"]),
     ("`sec_gold.fact_asof.tradable_from`", ["sec_gold.fact_asof"]),
     ("nothing here", []),
+    # The vendor and macro schemas are checked too; a file named after
+    # one (a directory listing, a module path) is not an object in it.
+    ("FROM sec_market.factor_panel fp JOIN macro.gkx_state(DATE '2010-01-01', NULL) s",
+     ["sec_market.factor_panel", "macro.gkx_state"]),
+    ("├── macro.py        # the loader; see dera_pipeline/macro.py", []),
+    ("`dera_pipeline.macro.gkx_covariates`", []),
 ])
 def test_dbobj_any_regex(line, expected):
     assert check_docs.RE_DBOBJ_ANY.findall(line) == expected
@@ -876,3 +882,128 @@ def test_descriptors_are_signed_and_grouped_and_in_the_sql():
         assert f"('{n}', {'-' if sign < 0 else ''}p.{n}, '{grp}')" in score_methods.SQL_SCORE
     assert "WHEN c.sic_latest BETWEEN 6000 AND 6199 THEN 'banks'" in score_methods.SQL_SCORE
     assert "d.rote" in score_methods.SQL_DESC or "f.rote" in score_methods.SQL_DESC
+
+
+# ---------------------------------------------------------------------------
+# macro: the Goyal-Welch loader's pure parts and the GKX covariates
+# ---------------------------------------------------------------------------
+
+from dera_pipeline import macro  # noqa: E402
+
+
+def test_period_end_is_the_last_calendar_day_of_each_sheets_period():
+    assert macro.period_end(202402, "M") == dt.date(2024, 2, 29)        # leap February
+    assert macro.period_end(202512, "M") == dt.date(2025, 12, 31)
+    assert macro.period_end(20253, "Q") == dt.date(2025, 9, 30)
+    assert macro.period_end(19261, "Q") == dt.date(1926, 3, 31)
+    assert macro.period_end(1871, "A") == dt.date(1871, 12, 31)
+    for code, freq in ((202513, "M"), (20255, "Q"), (202501, "X"), (99901, "M")):
+        with pytest.raises(ValueError):
+            macro.period_end(code, freq)
+
+
+def test_parse_sheet_skips_nan_text_blanks_and_unnamed_columns_and_renames():
+    rows = [
+        ("yyyymm", "Index", "b/m", None),
+        (202511, 6849.09, "NaN", 7.0),           # 'NaN' text and an unnamed column
+        (202512, 6845.5, 0.17113560057998525, None),
+        (None, None, None, None),                # a trailing blank row
+    ]
+    out = macro.parse_sheet(rows, "M", {"Index": "price"})
+    assert out == {
+        ("price", "M", dt.date(2025, 11, 30)): 6849.09,
+        ("price", "M", dt.date(2025, 12, 31)): 6845.5,
+        ("b/m", "M", dt.date(2025, 12, 31)): 0.17113560057998525,
+    }
+
+
+def test_parse_workbook_reads_only_the_three_data_sheets():
+    sheets = {
+        "ReadMe": [("#", "Name"), (2, "price")],
+        "Monthly": [("yyyymm", "price"), (202512, 6845.5)],
+        "Quarterly": [("yyyyq", "price"), (20254, 6845.5)],
+        "Annual": [("yyyy", "price"), (2025, 6845.5)],
+    }
+    out = macro.parse_workbook(sheets)
+    assert set(out) == {("price", "M", dt.date(2025, 12, 31)), ("price", "Q", dt.date(2025, 12, 31)),
+                        ("price", "A", dt.date(2025, 12, 31))}
+
+
+def test_disagreements_and_merge_keep_the_primary_and_add_only_what_it_lacks():
+    k1 = ("price", "M", dt.date(2025, 12, 31))
+    k2 = ("D3", "Q", dt.date(2025, 12, 31))
+    primary = {k1: 6845.5}
+    same = {k1: 6845.5 * (1 + 1e-15), k2: 20.25}
+    assert macro.disagreements(primary, same) == []                   # a last-digit wobble agrees
+    assert macro.disagreements(primary, {k1: 6845.6}) == [(k1, 6845.5, 6845.6)]
+    merged = macro.merge(primary, same)
+    assert merged == {k1: (6845.5, "gwz_combined"), k2: (20.25, "gw2008")}
+
+
+def test_the_catalogue_cites_every_row_and_allows_only_timed_variables():
+    cat = {v.variable: v for v in macro.read_catalogue()}
+    for v in cat.values():
+        assert v.timing in macro.TIMINGS and v.source_note
+        assert (v.timing in macro.USABLE) == (v.lag_months is not None)
+    # The eight Gu-Kelly-Xiu inputs are all readable point in time ...
+    for name in ("price", "d12", "e12", "b/m", "ntis", "tbl", "tms", "dfy", "svar"):
+        assert cat[name].timing in macro.USABLE, name
+    # ... the ratios built from interpolated months and the full-sample
+    # estimates are not, and earnings wait three months.
+    assert {cat[n].timing for n in ("d/p", "e/p", "d/y", "d/e")} == {"interpolated"}
+    assert {cat[n].timing for n in ("cay", "pce", "ogap", "sntm", "fbm", "tchi", "shtint")} == {"full_sample"}
+    assert cat["e12"].lag_months == 3 and cat["E3"].lag_months == 3 and cat["infl"].lag_months == 1
+    # Every name the 2008 workbook is renamed to is catalogued.
+    assert set(macro.GW2008_RENAMES.values()) <= set(cat)
+
+
+def test_read_catalogue_refuses_a_usable_row_without_a_lag(tmp_path):
+    bad = tmp_path / "cat.csv"
+    bad.write_text("variable,description,native_frequency,timing,lag_months,source_note\n"
+                   "tbl,bill rate,M,market,,cited\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="a lag exactly when usable"):
+        macro.read_catalogue(bad)
+
+
+def test_workbook_modified_reads_the_core_properties_stamp(tmp_path):
+    import zipfile
+    path = tmp_path / "book.xlsx"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("docProps/core.xml",
+                    '<cp:coreProperties><dcterms:modified xsi:type="dcterms:W3CDTF">'
+                    "2026-08-18T16:25:17Z</dcterms:modified></cp:coreProperties>")
+    assert macro.workbook_modified(path) == dt.datetime(2026, 8, 18, 16, 25, 17, tzinfo=dt.timezone.utc)
+    with zipfile.ZipFile(tmp_path / "empty.xlsx", "w") as zf:
+        zf.writestr("x.xml", "")
+    assert macro.workbook_modified(tmp_path / "empty.xlsx") is None
+
+
+def test_gkx_covariates_multiply_ranked_characteristics_by_the_raw_state():
+    import math
+
+    import pandas as pd
+    m1, m2, m3 = dt.date(2025, 10, 1), dt.date(2025, 11, 1), dt.date(2025, 12, 1)
+    chars = pd.DataFrame({"month": [m1, m1, m2, m3], "cik": [1, 2, 1, 1],
+                          "gp_at": [-1.0, 1.0, 0.5, 0.0]})
+    states = pd.DataFrame({"month": [m1, m2], "tbl": [0.0392, 0.0382], "dp": [-4.4453, -4.4678]})
+    out = macro.gkx_covariates(chars, states, char_cols=["gp_at"], macro_cols=["tbl", "dp"])
+    assert out["gp_at_x_tbl"].tolist()[:3] == pytest.approx([-0.0392, 0.0392, 0.0191])
+    # The same state for every stock on a date: only the characteristic varies.
+    assert out.loc[out["month"] == m1, "gp_at_x_dp"].tolist() == pytest.approx([4.4453, -4.4453])
+    assert math.isnan(out.loc[3, "gp_at_x_tbl"])              # no state that month: nothing filled
+    assert "tbl" not in out.columns                           # the state itself never enters the stock panel
+
+
+def test_gkx_covariates_refuse_a_ranked_or_per_stock_macro_and_unranked_characteristics():
+    import pandas as pd
+    m1 = dt.date(2025, 10, 1)
+    chars = pd.DataFrame({"month": [m1, m1], "cik": [1, 2], "gp_at": [-1.0, 1.0]})
+    with pytest.raises(ValueError, match="in the stock panel"):
+        macro.gkx_covariates(chars.assign(tbl=[0.1, 0.9]), pd.DataFrame({"month": [m1], "tbl": [0.04]}),
+                             char_cols=["gp_at"], macro_cols=["tbl"])
+    with pytest.raises(ValueError, match="one row per date"):
+        macro.gkx_covariates(chars, pd.DataFrame({"month": [m1, m1], "tbl": [0.04, 0.05]}),
+                             char_cols=["gp_at"], macro_cols=["tbl"])
+    with pytest.raises(ValueError, match="outside"):
+        macro.gkx_covariates(chars.assign(gp_at=[0.2, 0.8 * 3]), pd.DataFrame({"month": [m1], "tbl": [0.04]}),
+                             char_cols=["gp_at"], macro_cols=["tbl"])

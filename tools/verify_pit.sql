@@ -1811,3 +1811,110 @@ FROM (
            (SELECT loss_ratio FROM sec_gold.financial_descriptors_asof(86312, DATE '2025-03-31')) AS trv_loss,
            (SELECT ffo_be FROM sec_gold.financial_descriptors_asof(1045609, DATE '2025-03-31')) AS pld_ffo_be
 ) t;
+
+\echo '=== 76. The Goyal-Welch timing rules, pinned ==='
+-- macro.gw_asof (sql/08_macro/010_goyal_welch.sql) reads only the
+-- allowlisted timing classes. On 2025-11-15 a market series is October's
+-- (usable from 2025-11-01, after the month's last close), inflation
+-- September's (BLS publishes in the following month; usable the month
+-- after that), dividends the September quarter end's and earnings the
+-- June quarter end's (three months for the filings). On 2026-03-15 the
+-- December quarter's earnings are not yet usable (2026-04-01) and every
+-- monthly series is stale (the workbook ends 2025-12, so its December
+-- values expired 2026-02-01) and returns nothing rather than a December
+-- value carried forward. No interpolated, full-sample or unverified
+-- variable appears on any month end 2009-2026.
+SELECT CASE WHEN a.price = DATE '2025-10-31' AND a.tbl = DATE '2025-10-31' AND a.svar = DATE '2025-10-31'
+             AND a.infl = DATE '2025-09-30' AND a.d12 = DATE '2025-09-30' AND a.e12 = DATE '2025-06-30'
+             AND b.e12 = DATE '2025-09-30' AND b.d12 = DATE '2025-12-31' AND b.price IS NULL AND b.infl IS NULL
+             AND c.unusable = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       a.price, a.infl, a.d12, a.e12, b.e12 AS e12_mar26, b.d12 AS d12_mar26, b.price AS price_mar26, c.unusable
+FROM (SELECT MAX(period_end) FILTER (WHERE variable = 'price') AS price,
+             MAX(period_end) FILTER (WHERE variable = 'tbl')   AS tbl,
+             MAX(period_end) FILTER (WHERE variable = 'svar')  AS svar,
+             MAX(period_end) FILTER (WHERE variable = 'infl')  AS infl,
+             MAX(period_end) FILTER (WHERE variable = 'd12')   AS d12,
+             MAX(period_end) FILTER (WHERE variable = 'e12')   AS e12
+      FROM macro.gw_asof(DATE '2025-11-15')) a,
+     (SELECT MAX(period_end) FILTER (WHERE variable = 'price') AS price,
+             MAX(period_end) FILTER (WHERE variable = 'infl')  AS infl,
+             MAX(period_end) FILTER (WHERE variable = 'd12')   AS d12,
+             MAX(period_end) FILTER (WHERE variable = 'e12')   AS e12
+      FROM macro.gw_asof(DATE '2026-03-15')) b,
+     (SELECT COUNT(*) AS unusable
+      FROM generate_series(DATE '2009-01-31', DATE '2026-09-30', INTERVAL '1 month') d,
+           LATERAL macro.gw_asof(d::DATE) g
+      JOIN macro.gw_variable v USING (variable)
+      WHERE v.timing NOT IN ('market', 'release_lag', 'quarter_end')
+         OR g.usable_from > d::DATE OR g.period_end >= d::DATE) c;
+
+\echo '=== 77. The Goyal-Welch workbook agrees with itself, and still interpolates ==='
+-- The spreads equal their components on every row of every sheet
+-- (tms = lty - tbl, dfy = BAA - AAA, dfr = corpr - ltr), and the monthly
+-- sheet's quarter-end dividends and earnings equal the quarterly sheet's.
+-- The last count is the measurement the quarter_end rule rests on: from
+-- 2009 every month between quarter ends lies exactly on the straight line
+-- to the NEXT quarter end (136 of 136 for each, 272 in all, on
+-- 2026-10-15), so a monthly value depends on a figure not yet known. If
+-- a new vintage stops interpolating, this fails and the rule should be
+-- revisited, not the check loosened.
+WITH o AS (SELECT variable AS v, frequency AS f, period_end AS p, value AS x FROM macro.gw_observation),
+spreads AS (
+    SELECT COUNT(*) AS n,
+           COUNT(*) FILTER (WHERE abs(t.x - (a.x - b.x)) > 1e-12) AS bad
+    FROM o t
+    JOIN (VALUES ('tms', 'lty', 'tbl'), ('dfy', 'BAA', 'AAA'), ('dfr', 'corpr', 'ltr')) r(s, l, k) ON r.s = t.v
+    JOIN o a ON a.v = r.l AND a.f = t.f AND a.p = t.p
+    JOIN o b ON b.v = r.k AND b.f = t.f AND b.p = t.p
+),
+quarter_ends AS (
+    SELECT COUNT(*) AS n, COUNT(*) FILTER (WHERE m.x <> q.x) AS bad
+    FROM o m JOIN o q ON q.v = m.v AND q.f = 'Q' AND q.p = m.p
+    WHERE m.v IN ('d12', 'e12') AND m.f = 'M'
+),
+interpolated AS (
+    SELECT COUNT(*) AS n,
+           COUNT(*) FILTER (WHERE abs(m.x - (q0.x + (EXTRACT(MONTH FROM m.p)::INTEGER % 3) / 3.0 * (q1.x - q0.x)))
+                                  <= 1e-9 * greatest(1, abs(m.x))) AS on_line
+    FROM o m
+    JOIN o q0 ON q0.v = m.v AND q0.f = 'M'
+             AND q0.p = (date_trunc('month', m.p) - make_interval(months => EXTRACT(MONTH FROM m.p)::INTEGER % 3)
+                         + INTERVAL '1 month - 1 day')::DATE
+    JOIN o q1 ON q1.v = m.v AND q1.f = 'M'
+             AND q1.p = (date_trunc('month', q0.p) + INTERVAL '4 months - 1 day')::DATE
+    WHERE m.v IN ('d12', 'e12') AND m.f = 'M' AND m.p >= DATE '2009-01-01'
+      AND EXTRACT(MONTH FROM m.p)::INTEGER % 3 <> 0
+)
+SELECT CASE WHEN s.n > 5000 AND s.bad = 0 AND q.n > 1200 AND q.bad = 0 AND b.n >= 272 AND b.on_line = b.n
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       s.n AS spread_rows, s.bad AS spread_bad, q.n AS quarter_end_rows, q.bad AS quarter_end_bad,
+       b.n AS months_between, b.on_line
+FROM spreads s, quarter_ends q, interpolated b;
+
+\echo '=== 78. The macro state cannot see the future, and has one row per month ==='
+-- macro.gkx_state is the Gu-Kelly-Xiu macro state, one row per calendar
+-- month and no company key, so it joins a stock panel by date and is
+-- never ranked across stocks. Its z-scores are against each variable's
+-- own past only: computed to 2015-06 and to 2025-12, every month to
+-- 2015-06 is identical in every column, raw and normalised, under both
+-- the expanding and a 120-month window. And no month reads a price or
+-- market rate from its own month or later, dividends from a quarter not
+-- yet ended, or earnings from a quarter less than three months old.
+WITH a  AS (SELECT * FROM macro.gkx_state(DATE '1990-01-01', DATE '2015-06-30')),
+     b  AS (SELECT * FROM macro.gkx_state(DATE '1990-01-01', DATE '2025-12-31')),
+     ar AS (SELECT * FROM macro.gkx_state(DATE '1990-01-01', DATE '2015-06-30', 120, 60)),
+     br AS (SELECT * FROM macro.gkx_state(DATE '1990-01-01', DATE '2025-12-31', 120, 60)),
+     s  AS (SELECT * FROM macro.gkx_state(DATE '1800-01-01', DATE '2026-09-30'))
+SELECT CASE WHEN e.compared = 306 AND e.moved = 0 AND r.compared = 306 AND r.moved = 0
+             AND f.months = f.distinct_months AND f.future = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       e.compared, e.moved, r.moved AS moved_rolling, f.months, f.future
+FROM (SELECT COUNT(*) AS compared, COUNT(*) FILTER (WHERE a::TEXT IS DISTINCT FROM b::TEXT) AS moved
+      FROM a JOIN b USING (month)) e,
+     (SELECT COUNT(*) AS compared, COUNT(*) FILTER (WHERE ar::TEXT IS DISTINCT FROM br::TEXT) AS moved
+      FROM ar JOIN br USING (month)) r,
+     (SELECT COUNT(*) AS months, COUNT(DISTINCT month) AS distinct_months,
+             COUNT(*) FILTER (WHERE price_period >= month OR market_period >= month OR d12_period >= month
+                                 OR e12_period >= (month - INTERVAL '3 months')::DATE) AS future
+      FROM s) f;

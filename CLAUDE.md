@@ -23,13 +23,14 @@ one document. A confidently wrong doc is worse than no doc.
 | The crosswalk, index history, spine or security derivation | `docs/data_sources.md` (capture quality, rules), then `dera rebuild-reference` |
 | A share-class mapping | `data/reference/share_class_map.csv` with a cited source_note; prefer `tools/fetch_cover_page_classes.py` |
 | An index constituent no rule resolves | `data/reference/index_cik_overrides.csv` with a cited source_note, then `dera rebuild-reference`; a redundant row fails check 61 |
+| A Goyal-Welch variable's timing | `data/reference/goyal_welch_variables.csv` with a cited source_note, then `dera load-macro`; `docs/data_sources.md` section 10 |
 | A pure Python function | `tests/test_pure_functions.py` |
 
 ### Before committing
 
 ```bash
 uv run dera verify-docs    # object names (prose and SQL), paths, CLI commands, cross-links
-uv run dera verify         # 75 data-correctness checks
+uv run dera verify         # 78 data-correctness checks
 uv run pytest              # unit tests, no database
 uv run ruff check .        # what CI runs
 ```
@@ -58,6 +59,12 @@ do not exist: roadmap proposals, or historical names quoted verbatim.
 - **Enforce structurally.** Invariants belong in CHECK constraints, not
   conventions. The `sec_reference.eligibility` constraints caught a real defect
   the first time they met production data.
+- **Macro values are never ranked across stocks.** A Goyal-Welch variable
+  is one number per month that every stock shares; it enters a model raw or
+  z-scored over time (`macro.gkx_state`), as the conditioning state that
+  multiplies the cross-sectionally ranked characteristics, never through a
+  ranker. The `macro` schema has no company key, so the state can only join
+  a panel by date.
 - **No default knowledge date.** The `as_of_*` family requires one, so a
   look-ahead has to be written on purpose.
 - Never force-push; always new commits.

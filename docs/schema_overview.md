@@ -9,7 +9,7 @@ document is the map.
 
 ---
 
-## The five schemas
+## The six schemas
 
 ```
 sec_raw          bronze    41 GB   raw SEC text, all TEXT, no constraints
@@ -17,6 +17,7 @@ sec_raw          bronze    41 GB   raw SEC text, all TEXT, no constraints
         └─ sec_gold  gold  43 GB   query-facing views, concepts, peer stats
    sec_reference  spine   412 MB   companies, securities, universes, calendar
    sec_market     prices   185 MB   month-end closes (Yahoo), the factor panel, the backtest
+macro             macro     11 MB   the Goyal-Welch aggregate-market predictors (2026-10-15)
 ```
 
 164 GB in all (2026-10-14). 6.5 GB of it is free space inside
@@ -261,6 +262,35 @@ Fama-French market at a correlation of 0.93 over 2010-2026 (beta 1.14, the
 equal-weight tilt), which is the sanity check that the series are the right
 companies in the right units.
 
+## `macro` — the Goyal-Welch predictors
+
+Not SEC data and not about any one company: the aggregate-market variables of
+Welch and Goyal (2008) and Goyal, Welch and Zafirov (2024) as Amit Goyal
+publishes them, one value per month, quarter or year that every stock shares.
+Its own schema, outside the `sec_*` chain, so nothing in `sec_gold` or
+`sec_market` depends on it. Loaded by `uv run dera load-macro`; DDL in
+`sql/08_macro/010_goyal_welch.sql`. As of 2026-10-15 (workbook vintage
+2026-08-18, data through 2025-12).
+
+| Object | Kind | Rows | What it is |
+|---|---|---|---|
+| `gw_variable` | table | 58 | One row per variable: description, native frequency, and the timing class that decides whether and from when an accessor may read it (`market`, `release_lag`, `quarter_end` are usable; `interpolated`, `full_sample`, `unverified` never are), each row citing its source. Loaded from `data/reference/goyal_welch_variables.csv` |
+| `gw_observation` | table | 77,552 | Every non-empty cell of the combined workbook's Monthly, Quarterly and Annual sheets (77,036), plus the quarterly D3 and E3 only the updated 2008 workbook carries (516); `float8`, the workbook's own values; dated by period, not availability |
+| `gw_load` | table | 1 per workbook per load | Which file, its SHA-256 and last-modified stamp (the vintage), and how many stored rows the load added, changed and removed |
+| `gw_usable` | view | 24,648 | The observations a point-in-time reader may use, each with `usable_from` and `valid_until` (when its successor was due) |
+
+Functions: `gw_usable_from(period_end, lag_months)` (the first of the month
+after the period, plus the lag), `gw_asof(asof)` (every usable variable's
+current value on a knowledge date, nothing for a stale one) and
+`gkx_state(from, to, window_months, min_months)` (the eight Gu-Kelly-Xiu macro
+predictors per calendar month, raw and z-scored against their own past only).
+
+**No company key, on purpose.** A macro value is the same for every stock, so
+there is no cross-section to rank it in; `gkx_state` returns one row per month
+and joins a stock panel by date (`s.month = date_trunc('month', fp.asof)`). A
+model ranks the characteristics across stocks and multiplies them by the
+macro state as it is (`dera_pipeline.macro.gkx_covariates`).
+
 ## Which table should I read?
 
 | I want to… | Read | Not |
@@ -273,6 +303,7 @@ companies in the right units.
 | Resolve one metric across companies | `get_canonical()` | raw XBRL tags |
 | Know when a security began or stopped trading | `sec_reference.security` | `company_ticker` |
 | Count shares per class for a market cap | `share_class_shares` | `shares_outstanding_at()` alone |
+| Condition on the macro state as knowable then | `macro.gkx_state()`, `macro.gw_asof()` | `macro.gw_observation` (dated by period) |
 
 Two rules worth internalising. **`peer_stats` is not availability-correct** — it
 is built from restated values with moments computed over the finished panel, so
@@ -284,7 +315,7 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 75 checks; exits non-zero on any FAIL
+uv run dera verify     # 78 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 

@@ -41,19 +41,29 @@ from dera_pipeline import config, db
 
 IGNORE_MARKER = "check-docs:ignore"
 
+# The schemas whose names are checked. sec_market and macro hold vendor
+# and macro data rather than filings, and were added when the macro
+# schema arrived (sec_market had gone unchecked since it was created).
+SCHEMAS = r"(?:sec_(?:raw|silver|gold|reference|market)|macro)"
+# ...and a file named after a schema (macro.py in a directory listing) is
+# not an object in it.
+NOT_A_FILE = r"(?!(?:py|sql|md|csv)\b)"
+
 # `sec_gold.peer_stats`, `sec_reference.universe_at()`, and the
 # three-part column form `sec_gold.fact_asof.tradable_from`.
 RE_DBOBJ = re.compile(
-    r"`(sec_(?:raw|silver|gold|reference)\.[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?)\(?\)?`")
+    rf"`({SCHEMAS}\.{NOT_A_FILE}[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?)\(?\)?`")
 
 # Any schema-qualified name anywhere on the line, backticked or not: a
 # call with arguments such as `sec_gold.as_of_snapshot('AAPL', ...)`, a
 # FROM clause inside a ```sql fence, a name in prose. The backticked
 # pattern above only matched a bare name, which left every SQL example
 # in the docs unchecked -- including a README quickstart that returned
-# fifteen NULLs. Two-part names only; columns stay with RE_DBOBJ.
+# fifteen NULLs. Two-part names only; columns stay with RE_DBOBJ. Not
+# after a slash, so a path such as dera_pipeline/macro.py is not read as
+# an object in the macro schema.
 RE_DBOBJ_ANY = re.compile(
-    r"(?<![\w.])(sec_(?:raw|silver|gold|reference)\.[a-z_][a-z0-9_]*)(?![\w])")
+    rf"(?<![\w./])({SCHEMAS}\.{NOT_A_FILE}[a-z_][a-z0-9_]*)(?![\w])")
 
 # Backticked repo-relative paths.
 RE_PATH = re.compile(
@@ -72,19 +82,19 @@ RE_LINK = re.compile(r"\[[^\]]*\]\((?!https?:|#)([^)#]+)")
 
 
 def db_inventory(conn) -> set[str]:
-    """Every schema-qualified object and column name in the sec_* schemas."""
+    """Every schema-qualified object and column name in the checked schemas."""
     names: set[str] = set()
     with conn.cursor() as cur:
         cur.execute("""
             SELECT n.nspname || '.' || c.relname
             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname LIKE 'sec\\_%' AND c.relkind IN ('r','m','v','p')
+            WHERE (n.nspname LIKE 'sec\\_%' OR n.nspname = 'macro') AND c.relkind IN ('r','m','v','p')
         """)
         names.update(r[0] for r in cur.fetchall())
         cur.execute("""
             SELECT n.nspname || '.' || p.proname
             FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-            WHERE n.nspname LIKE 'sec\\_%'
+            WHERE (n.nspname LIKE 'sec\\_%' OR n.nspname = 'macro')
         """)
         names.update(r[0] for r in cur.fetchall())
         # pg_attribute, not information_schema.columns: the latter omits
@@ -95,7 +105,7 @@ def db_inventory(conn) -> set[str]:
             FROM pg_attribute a
             JOIN pg_class c ON c.oid = a.attrelid
             JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname LIKE 'sec\\_%'
+            WHERE (n.nspname LIKE 'sec\\_%' OR n.nspname = 'macro')
               AND c.relkind IN ('r','m','v','p')
               AND a.attnum > 0 AND NOT a.attisdropped
         """)
