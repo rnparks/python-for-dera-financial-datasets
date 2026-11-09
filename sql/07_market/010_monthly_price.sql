@@ -36,6 +36,17 @@
 -- the roadmap's paid source (Polygon flat files) is still the one that
 -- closes it.
 --
+-- ONE EXCEPTION FOLLOWS THE TICKER, NOT THE CIK. A share-for-share
+-- successor issuer (a holding-company reorganisation or redomicile that
+-- converted every share into one share of a new registrant under the
+-- same ticker; data/reference/successor_issuers.csv, each row citing its
+-- 8-K12B) did not change the security, so the series before the
+-- reorganisation is stored under the predecessor too, up to its handoff
+-- (prices.succession_windows). Exxon Mobil (34088) had no row in any
+-- month until 2026-11-09: XOM's open listing belonged to ExxonMobil
+-- Holdings (2115436), which has no filing in DERA yet and so no security
+-- row. Check 80.
+--
 -- One month's rows for 1,700 companies are about 1,700 rows; the whole
 -- table since 2008 is well under 100 MB.
 

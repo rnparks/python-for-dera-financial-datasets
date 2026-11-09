@@ -15,6 +15,17 @@ Yahoo still had any, would belong to the wrong company. The members
 with no open listing (acquired, taken private, failed) are counted and
 reported; they are the survivorship gap, and no free source closes it.
 
+One exception follows the ticker rather than the CIK: a share-for-share
+successor issuer (a holding-company reorganisation or redomicile that
+converted every share into one share of a new registrant under the same
+ticker; ``data/reference/successor_issuers.csv``, each row citing its
+8-K12B). The security did not change, so Yahoo's series is the
+predecessor's before the reorganisation and the successor's after, and
+the predecessor gets the months up to its handoff. Without this Exxon
+Mobil (34088) had no price in any month of 2009-2026: its open listing
+had passed to ExxonMobil Holdings (2115436), a registrant with no
+filing in DERA yet and so no security row.
+
 What it stores
 --------------
 Yahoo's split-restated close, its dividend-and-split-adjusted close
@@ -64,6 +75,18 @@ class Listing:
     ticker: str
     valid_from: dt.date
     first_trade_date: dt.date | None
+    # The month ends this CIK is given, inclusive; None is unbounded. Only
+    # a share-for-share succession sets them (``succession_windows``).
+    attrib_from: dt.date | None = None
+    attrib_to: dt.date | None = None
+
+
+@dataclass(frozen=True)
+class Succession:
+    old_cik: int
+    new_cik: int
+    ticker: str
+    effective_date: dt.date
 
 
 @dataclass(frozen=True)
@@ -135,6 +158,40 @@ def reconstruct_raw_close(
     return out
 
 
+def read_successions(lines: Iterable[str]) -> list[Succession]:
+    """Parse ``successor_issuers.csv`` (header included). Every row must
+    cite its filing: a row without a source_note is refused, not loaded."""
+    import csv
+    out = []
+    for row in csv.DictReader(lines):
+        if not (row.get("source_note") or "").strip():
+            raise ValueError(f"successor_issuers.csv: {row.get('ticker')} has no source_note")
+        out.append(Succession(int(row["old_cik"]), int(row["new_cik"]),
+                              row["ticker"].strip().upper(),
+                              dt.date.fromisoformat(row["effective_date"])))
+    return out
+
+
+def succession_windows(
+    effective: dt.date, handoff: dt.date | None, month_ends: Iterable[dt.date],
+) -> tuple[dt.date | None, dt.date | None]:
+    """The month ends on either side of a share-for-share succession.
+
+    The predecessor keeps every month end up to and including the first
+    one on or after the later of the reorganisation and the crosswalk's
+    handoff, so the month it last held the seat still has a closing
+    price for its return. The successor starts at the last month end
+    before the reorganisation, so its first month has a prior close.
+    The overlap is the point: each side has a complete first or last
+    month, and the membership decides which CIK is held on any date.
+    Returns (predecessor's last month end, successor's first)."""
+    ends = sorted(month_ends)
+    switch = max(effective, handoff) if handoff else effective
+    pred_last = next((m for m in ends if m >= switch), None)
+    succ_first = next((m for m in reversed(ends) if m < effective), None)
+    return pred_last, succ_first
+
+
 def chunks(seq: Sequence[str], size: int) -> Iterable[Sequence[str]]:
     for i in range(0, len(seq), size):
         yield seq[i:i + size]
@@ -180,6 +237,43 @@ def members_without_open_listing(conn: psycopg.Connection) -> int:
     with conn.cursor() as cur:
         cur.execute(sql)
         return int(cur.fetchone()[0])
+
+
+def successions_path():
+    return config.REFERENCE_DIR / "successor_issuers.csv"
+
+
+def succession_listings(
+    conn: psycopg.Connection, successions: Sequence[Succession],
+    month_ends: Iterable[dt.date], have: Iterable[Listing],
+) -> list[Listing]:
+    """The listings a share-for-share succession adds: the predecessor,
+    when it was an index member, for the months up to its handoff; and
+    the successor from the month before the reorganisation, but only when
+    it has no open listing of the ticker already (a registrant with no
+    filing in DERA yet has no security row, so ``member_listings`` cannot
+    see it: ExxonMobil Holdings until its first 10-Q)."""
+    ends = list(month_ends)
+    held = {(lst.cik, lst.ticker) for lst in have}
+    out: list[Listing] = []
+    with conn.cursor() as cur:
+        for sc in successions:
+            cur.execute("""
+                SELECT (SELECT MAX(handoff_date) FROM sec_reference.cik_succession
+                         WHERE old_cik = %(o)s AND new_cik = %(n)s AND ticker = %(t)s),
+                       EXISTS (SELECT 1 FROM sec_reference.index_membership WHERE cik = %(o)s),
+                       EXISTS (SELECT 1 FROM sec_reference.index_membership WHERE cik = %(n)s),
+                       (SELECT MIN(first_trade_date) FROM sec_reference.security WHERE cik = %(o)s)
+            """, {"o": sc.old_cik, "n": sc.new_cik, "t": sc.ticker})
+            handoff, old_member, new_member, old_first = cur.fetchone()
+            pred_last, succ_first = succession_windows(sc.effective_date, handoff, ends)
+            if old_member and pred_last and (sc.old_cik, sc.ticker) not in held:
+                out.append(Listing(sc.old_cik, sc.ticker, sc.effective_date, old_first,
+                                   attrib_to=pred_last))
+            if new_member and succ_first and (sc.new_cik, sc.ticker) not in held:
+                out.append(Listing(sc.new_cik, sc.ticker, sc.effective_date, None,
+                                   attrib_from=succ_first))
+    return out
 
 
 def trading_sessions(conn: psycopg.Connection) -> list[dt.date]:
@@ -262,6 +356,10 @@ def build_rows(
             continue
         if listing.first_trade_date and me < listing.first_trade_date:
             continue
+        if listing.attrib_from and me < listing.attrib_from:
+            continue
+        if listing.attrib_to and me > listing.attrib_to:
+            continue
         dated.append((me, b))
     dated.sort(key=lambda x: x[0])
     closes = [(me, b["close"]) for me, b in dated]
@@ -328,12 +426,20 @@ def record_load(conn: psycopg.Connection, summary: dict) -> None:
 def load_prices(
     conn: psycopg.Connection, *, since: dt.date = DEFAULT_SINCE,
     tickers: Sequence[str] | None = None, chunk: int = DEFAULT_CHUNK,
-    today: dt.date | None = None, log=print,
+    today: dt.date | None = None, until: dt.date | None = None, log=print,
 ) -> dict:
     """Fetch and upsert month-end prices for the member universe (or the
-    given tickers), and record the load. Returns the summary."""
+    given tickers), and record the load. *until* caps the last month end
+    written, so a backfill of a few tickers can stop where the table
+    does. Returns the summary."""
     today = today or dt.date.today()
+    month_ends = complete_month_ends(month_end_sessions(trading_sessions(conn)), today)
+    if until:
+        month_ends = {k: v for k, v in month_ends.items() if v <= until}
     listings = member_listings(conn)
+    with open(successions_path(), encoding="utf-8") as fh:
+        successions = read_successions(fh)
+    listings += succession_listings(conn, successions, month_ends.values(), listings)
     if tickers:
         wanted = {t.strip().upper() for t in tickers}
         listings = [lst for lst in listings if lst.ticker.upper() in wanted]
@@ -341,7 +447,6 @@ def load_prices(
     for lst in listings:
         by_symbol.setdefault(yahoo_symbol(lst.ticker), []).append(lst)
     symbols = sorted(by_symbol)
-    month_ends = complete_month_ends(month_end_sessions(trading_sessions(conn)), today)
     log(f"{len(listings)} open listings of index members, {len(symbols)} symbols; "
         f"months complete through {max(month_ends.values()) if month_ends else None}")
 

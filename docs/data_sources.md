@@ -61,7 +61,12 @@ FY2021 10-K; refused by `sec_gold.suspect_fact`) or a share count a thousand- or
 million-fold off (Reinsurance Group of America's 10-Qs carry 85,310,598,000,000
 issued shares against 85,310,598 on its 10-Ks; refused by
 `shares_outstanding_at` against the filing's own net income over EPS, check 74;
-2026-10-14).
+2026-10-14). A fourth is not an error but reads like a share count when it is
+not one: `CommonStockSharesIssued` includes treasury shares. McDonald's tags no
+outstanding count at all, only 1,660.6M issued against ~945M in treasury, and
+Exxon Mobil's 10-Qs of 2013-2015 tagged issued and treasury only;
+`shares_outstanding_at` subtracts the treasury count where the filing's own
+income statement confirms the result (check 79; 2026-11-09).
 
 ## 2. EDGAR bulk submissions archive
 
@@ -534,10 +539,44 @@ known artifact (InvenTrust, September 2021, a pre-listing series Yahoo carries
 badly); the return view already drops any month whose prior close was under a
 dollar or that did not trade.
 
+**Capture quality, successor issuers** (2026-11-09): Exxon Mobil (34088)
+had no price in any month 2009-2026 and sat in the S&P 500 panel unpriced
+on all 198 dates, so every backtest had silently dropped it. XOM's open
+listing had passed (2026-07-16 in the crosswalk; 2026-07-01 in the
+reorganisation) to ExxonMobil Holdings (2115436), a registrant with no
+filing in DERA yet and so no security row, and a closed listing is never
+requested. The same rule had left the predecessor of every holding-company
+reorganisation unpriced before its handoff: Google Inc 2009-2015, BlackRock
+(1364742) 2011-2024, Apache 2009-2021, Old Disney, Cigna, Xerox and
+Broadcom 2009-2019, among 17. Backfilled 2026-11-09 with
+`dera load-prices --tickers ... --until 2026-09-30`: 2,516 company-months
+for the 17 predecessors and ExxonMobil Holdings; no existing row's
+as-traded close or monthly return moved (694 adjusted closes were rewritten
+by Yahoo's dividend rescaling, ratios unchanged).
+
 **Rules**:
 - Only OPEN listings are requested. Yahoo returns nothing for a delisted
   ticker and re-keys a reused ticker to its current holder, so a closed
   listing's series, if any came back, would belong to the wrong company.
+- One exception, an allowlist: a share-for-share successor issuer
+  (`data/reference/successor_issuers.csv`). When a holding-company
+  reorganisation or redomicile converted every share into one share of a
+  new registrant under the same ticker, the security did not change and
+  Yahoo's series before the reorganisation is the predecessor's. The
+  predecessor gets every month end up to the first one on or after the later
+  of the reorganisation and the crosswalk's handoff; a successor with no
+  security row yet gets every month end from the last one before the
+  reorganisation (`prices.succession_windows`, unit-tested). Candidates are
+  the `sec_reference.cik_succession` handoffs whose successor filed an
+  8-K12B or 8-K12G3 (successor issuer, Rule 12g-3); each row cites that
+  filing's one-for-one clause. The filing alone is not enough, which is why
+  this is a list and not a rule: a merger that forms a new holding company
+  files one too, and its exchange ratio for the predecessor's holders is
+  not one. Excluded on that ground, from the same candidates: DowDuPont
+  (DuPont holders received 1.282 shares), Uniti (0.6029), Baker Hughes
+  (one share plus a $17.50 special dividend). Spin-offs that hand a ticker
+  to another company (AA, IR, CR) file no 8-K12B and stay unpriced under
+  the old registrant, which is right: Yahoo's series is the other company's.
 - Only the PRIMARY ticker of a company (`sec_reference.company_ticker.is_primary`):
   the listing table also carries preferred series, baby bonds, rights and
   second share classes under plain tickers, whose Yahoo series are sparse or
@@ -559,7 +598,20 @@ dollar or that did not trade.
   future failures loses them from the measurement.
 - One price per company: a dual-class issuer's second class is valued at the
   primary class's price in `market_cap_at`; `sec_gold.share_class_shares` is
-  the place to refine that.
+  the place to refine that. An UNLISTED class that `sec_reference.share_class`
+  does not map is not counted at all: Airbnb, Ralph Lauren and EchoStar's
+  Class B (measured 2026-11-09). Visa was the largest such case, its Class B
+  and C and convertible preferred left out, so its count was Class A alone,
+  63-87% of the company; since 2026-11-09 its Class A row carries
+  `as_converted_eps` and its count is each filing's net income over Class A
+  basic EPS, within 1% of Visa's own diluted as-converted Class A count at
+  every half-year 2010-2026 (check 81). That is the economic value of all of
+  Visa's equity; a vendor that counts the listed class only (CRSP's shares
+  outstanding for V) will read lower by design.
+- Recent delistings are not backfilled: AvalonBay, Electronic Arts and
+  Webster left SEC's ticker file in August 2026 and Yahoo answers for them
+  only through 2026-08 (asked 2026-11-09); their histories went unrequested
+  by the 2026-10-12 load because their listings were already closed.
 - Yahoo's data carry no licence for redistribution; this is a personal
   research copy.
 

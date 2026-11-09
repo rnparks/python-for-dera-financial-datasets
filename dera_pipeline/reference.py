@@ -353,6 +353,7 @@ def load_share_class_map(conn: psycopg.Connection, csv_path: Path) -> int:
                 nn(r.get("effective_to")),
                 nn(r.get("source")) or "mapped_filing",
                 nn(r.get("source_note")),
+                (r.get("as_converted_eps") or "false").strip().lower() == "true",
             ))
 
     if not rows:
@@ -368,7 +369,8 @@ def load_share_class_map(conn: psycopg.Connection, csv_path: Path) -> int:
             # text format is the correct choice rather than a workaround.
             "COPY sec_reference.share_class "
             "(cik, class_label, ticker, prices_with_ticker, conversion_ratio, "
-            " is_excluded, effective_from, effective_to, source, source_note) "
+            " is_excluded, effective_from, effective_to, source, source_note, "
+            " as_converted_eps) "
             "FROM STDIN"
         ) as cp:
             for row in rows:

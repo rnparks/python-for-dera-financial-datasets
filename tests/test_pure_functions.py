@@ -779,6 +779,52 @@ def test_build_rows_maps_months_to_last_session_and_clips_before_first_trade():
     assert rows[0].adj_close == 11.0 and rows[1].volume == 7
 
 
+def test_succession_windows_overlap_by_one_month_each_side():
+    # Exxon: reorganised 2026-07-01, the crosswalk moved XOM on 2026-07-16.
+    ends = [dt.date(2026, 5, 29), dt.date(2026, 6, 30), dt.date(2026, 7, 31), dt.date(2026, 8, 31)]
+    pred_last, succ_first = prices.succession_windows(dt.date(2026, 7, 1), dt.date(2026, 7, 16), ends)
+    assert pred_last == dt.date(2026, 7, 31)    # the month it last held the seat has a close
+    assert succ_first == dt.date(2026, 6, 30)   # the successor's first month has a prior close
+    # A crosswalk that dates the handoff a quarter late keeps the predecessor priced to then.
+    # (No month end before 2026-05-15 in the list, so the successor has no start here.)
+    late = prices.succession_windows(dt.date(2026, 5, 15), dt.date(2026, 8, 3), ends)
+    assert late == (dt.date(2026, 8, 31), None)
+    # No crosswalk handoff: the reorganisation alone decides.
+    assert prices.succession_windows(dt.date(2026, 7, 1), None, ends)[0] == dt.date(2026, 7, 31)
+
+
+def test_build_rows_clips_to_the_attribution_window():
+    listing = prices.Listing(cik=34088, ticker="XOM", valid_from=dt.date(2026, 7, 1),
+                             first_trade_date=None, attrib_to=dt.date(2026, 7, 31))
+    bars = [{"ym": (2026, m), "close": 100.0 + m, "adj": 100.0 + m, "volume": 1, "split": 0.0}
+            for m in (6, 7, 8)]
+    ends = {(2026, 6): dt.date(2026, 6, 30), (2026, 7): dt.date(2026, 7, 31), (2026, 8): dt.date(2026, 8, 31)}
+    assert [r.month_end for r in prices.build_rows(listing, "XOM", bars, ends)] == \
+        [dt.date(2026, 6, 30), dt.date(2026, 7, 31)]
+    succ = prices.Listing(cik=2115436, ticker="XOM", valid_from=dt.date(2026, 7, 1),
+                          first_trade_date=None, attrib_from=dt.date(2026, 7, 31))
+    assert [r.month_end for r in prices.build_rows(succ, "XOM", bars, ends)] == \
+        [dt.date(2026, 7, 31), dt.date(2026, 8, 31)]
+
+
+def test_read_successions_parses_and_refuses_an_uncited_row():
+    good = ["old_cik,new_cik,ticker,effective_date,form,adsh,source_note",
+            '34088,2115436,xom,2026-07-01,8-K12B,0001193125-26-291990,"one for one"']
+    (sc,) = prices.read_successions(good)
+    assert (sc.old_cik, sc.new_cik, sc.ticker, sc.effective_date) == (34088, 2115436, "XOM", dt.date(2026, 7, 1))
+    bad = [good[0], "1,2,ABC,2020-01-01,8-K12B,x,"]
+    with pytest.raises(ValueError):
+        prices.read_successions(bad)
+
+
+def test_successor_issuers_csv_is_cited_and_one_row_per_handoff():
+    with open(prices.successions_path(), encoding="utf-8") as fh:
+        rows = prices.read_successions(fh)
+    assert len(rows) >= 17
+    assert len({(r.old_cik, r.new_cik, r.ticker) for r in rows}) == len(rows)
+    assert any(r.old_cik == 34088 and r.new_cik == 2115436 and r.ticker == "XOM" for r in rows)
+
+
 def test_panel_dates_puts_quarter_ends_first_within_range():
     ends = [dt.date(2024, 1, 31), dt.date(2024, 2, 29), dt.date(2024, 3, 28),
             dt.date(2024, 4, 30), dt.date(2024, 6, 28), dt.date(2024, 7, 31)]

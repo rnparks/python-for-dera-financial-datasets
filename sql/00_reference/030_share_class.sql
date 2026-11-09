@@ -72,6 +72,20 @@ CREATE TABLE sec_reference.share_class (
     -- Usually 1. Must be cited in source_note, never assumed.
     conversion_ratio    NUMERIC,
     is_excluded         BOOLEAN NOT NULL DEFAULT FALSE,
+    -- AS-CONVERTED BY EPS. TRUE on the listed class of an issuer whose
+    -- other classes (and participating preferred) convert into it at
+    -- rates that move, so no fixed conversion_ratio can be cited: Visa's
+    -- Class B converted at 0.57 Class A in FY2010, 1.65 after the 2015
+    -- split, 1.56 in FY2025, its Class C at 4, its Series A, B and C
+    -- preferred at their own rates, and the preferred counts are tagged
+    -- only to the nearest million. Every class shares the income on an
+    -- as-converted basis, so a filing's net income over this class's
+    -- basic EPS is the whole company in this class's units, and that
+    -- over this class's basic weighted average is the multiplier
+    -- sec_gold.shares_outstanding_at applies to this class's instant
+    -- count (055). The issuer's other classes stay unmapped: mapping them
+    -- too would count them twice.
+    as_converted_eps    BOOLEAN NOT NULL DEFAULT FALSE,
 
     -- Tickers move between issuers and classes are created and retired,
     -- so the mapping is dated like everything else in sec_reference.
@@ -94,6 +108,11 @@ CREATE TABLE sec_reference.share_class (
     -- its reference class, which is an assumption, not a fact.
     CONSTRAINT share_class_ratio_required CHECK (
         prices_with_ticker IS NULL OR conversion_ratio IS NOT NULL
+    ),
+    -- Only a listed class can carry the as-converted multiplier: it is
+    -- the class the whole company is expressed in and priced at.
+    CONSTRAINT share_class_as_converted_listed CHECK (
+        NOT as_converted_eps OR ticker IS NOT NULL
     ),
     CONSTRAINT share_class_source_known CHECK (
         source IN ('mapped_filing', 'mapped_exchange', 'mapped_vendor')

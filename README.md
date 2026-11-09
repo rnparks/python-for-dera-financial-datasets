@@ -84,7 +84,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 78 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 81 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -111,7 +111,8 @@ uv run dera verify                           # the correctness suite
 Prices and the backtest (`sec_market`, a vendor, not SEC data; see `docs/data_sources.md` section 8):
 
 ```bash
-uv run dera load-prices                      # month-end closes for the primary ticker of every company ever in the S&P 1500 (Yahoo, ~10 min)
+uv run dera load-prices                      # month-end closes for the primary ticker of every company ever in the S&P 1500 (Yahoo, ~10 min); a share-for-share successor's ticker also prices its predecessor (data/reference/successor_issuers.csv)
+uv run dera load-prices --tickers XOM,BLK --until 2026-09-30   # backfill a few tickers, stopping where the table stops
 uv run dera build-factor-panel --index SP500 # the factor sheet at every month end since 2010, stored for the backtest (~100 s per date)
 uv run dera build-factor-panel --index SP400 --since 2011-01-01   # the 400 and 600 from where their replayed histories begin
 uv run dera build-factor-panel --index SP600 --since 2018-08-01

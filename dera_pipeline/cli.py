@@ -46,7 +46,8 @@ refill.
 Prices (a vendor, not SEC data; schema ``sec_market``)::
 
     uv run dera load-prices          # month-end closes for the primary ticker of every
-                                     # company that was ever an S&P 1500 member (Yahoo)
+                                     # company that was ever an S&P 1500 member (Yahoo);
+                                     # --tickers XOM,BLK --until 2026-09-30 backfills a few
     uv run dera build-factor-panel   # the factor sheet at every month end, stored
                                      # for the backtest (sec_market.factor_panel)
 
@@ -57,7 +58,7 @@ Macro predictors (Amit Goyal's data page, not SEC data; schema ``macro``)::
 
 Verification::
 
-    uv run dera verify        # 78 data-correctness checks
+    uv run dera verify        # 81 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 
@@ -554,18 +555,21 @@ def cmd_load_prices(args: argparse.Namespace) -> int:
 
     Runs the sec_market DDL (idempotent), then fetches monthly bars for
     every open listing of every company that was ever an S&P 1500
-    member, reconstructs the as-traded close from the split ratios, and
+    member (and, across a cited share-for-share succession, the
+    predecessor's months: data/reference/successor_issuers.csv),
+    reconstructs the as-traded close from the split ratios, and
     upserts into sec_market.monthly_price. Prints how many symbols
     answered and how many members have no open listing, which is the
     survivorship gap no free source closes.
     """
     since = dt.date.fromisoformat(args.since) if args.since else prices.DEFAULT_SINCE
+    until = dt.date.fromisoformat(args.until) if args.until else None
     tickers = [t for t in (args.tickers or "").split(",") if t.strip()] or None
     with db.get_conn() as conn:
         db.run_sql_file(conn, prices.ddl_path())
         conn.commit()
         summary = prices.load_prices(
-            conn, since=since, tickers=tickers, chunk=args.chunk)
+            conn, since=since, tickers=tickers, chunk=args.chunk, until=until)
     prices.print_summary(summary)
     return 0 if summary["symbols_returned"] else 1
 
@@ -810,6 +814,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_prices.add_argument(
         "--tickers", default=None,
         help="comma-separated subset of listing tickers (default: every open listing)")
+    p_prices.add_argument(
+        "--until", default=None, metavar="YYYY-MM-DD",
+        help="last month end to write (default: every complete month); a backfill of a "
+             "few tickers stops where the table does")
     p_prices.add_argument(
         "--chunk", type=int, default=prices.DEFAULT_CHUNK,
         help="symbols per vendor request")

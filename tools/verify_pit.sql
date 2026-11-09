@@ -1918,3 +1918,112 @@ FROM (SELECT COUNT(*) AS compared, COUNT(*) FILTER (WHERE a::TEXT IS DISTINCT FR
              COUNT(*) FILTER (WHERE price_period >= month OR market_period >= month OR d12_period >= month
                                  OR e12_period >= (month - INTERVAL '3 months')::DATE) AS future
       FROM s) f;
+
+\echo '=== 79. An issued count is not an outstanding count: treasury shares come off ==='
+-- CommonStockSharesIssued includes treasury shares. McDonald's tags no
+-- outstanding count, only 1,660.6M issued (~945M in treasury), and the
+-- ladder read that on every date 2009-2026, a market cap 2.3 times too
+-- large; Exxon Mobil's 10-Qs of 2013-2015 tagged issued (8,019M) and
+-- treasury only; Wells Fargo, McKesson and Deere likewise, each by a
+-- different tag or only on some dates. On 2026-11-09, 59-92 members of
+-- the S&P 1500 per date read more than 30% above their own weighted
+-- average this way. shares_outstanding_at now subtracts the treasury
+-- count (055_shares_outstanding.sql) where the filing's own income
+-- statement confirms the net figure, so a filer whose "issued" is
+-- already net is left alone: PepsiCo tags "issued, net of repurchased"
+-- 1,368M beside 499M repurchased, and subtracting again would halve it.
+-- And a subtraction never rescues a mis-scaled count: W. R. Berkley's
+-- 2012 10-Qs tag issued and treasury both a thousand-fold large, and
+-- their difference (284 times the EPS count, inside the scale band) read
+-- as a $1.5 trillion company until the count as filed was tested too.
+SELECT CASE WHEN mcd BETWEEN 700e6 AND 740e6 AND mcd_method = 'issued_less_treasury'
+             AND xom BETWEEN 4.2e9 AND 4.4e9 AND wfc BETWEEN 2.9e9 AND 3.2e9
+             AND mck BETWEEN 115e6 AND 135e6 AND pep BETWEEN 1.3e9 AND 1.4e9
+             AND wrb BETWEEN 120e6 AND 150e6
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       round(mcd / 1e6, 1) AS mcd_m, mcd_method, round(xom / 1e6) AS xom_2014_m, round(wfc / 1e6) AS wfc_m,
+       round(mck / 1e6, 1) AS mck_m, round(pep / 1e6) AS pep_m, round(wrb / 1e6, 1) AS wrb_2012_m
+FROM (
+    SELECT (SELECT shares FROM sec_gold.shares_outstanding_at(63908, DATE '2024-06-30')) AS mcd,
+           (SELECT method FROM sec_gold.shares_outstanding_at(63908, DATE '2024-06-30')) AS mcd_method,
+           (SELECT shares FROM sec_gold.shares_outstanding_at(34088, DATE '2014-06-30')) AS xom,
+           (SELECT shares FROM sec_gold.shares_outstanding_at(72971, DATE '2026-06-30')) AS wfc,
+           (SELECT shares FROM sec_gold.shares_outstanding_at(927653, DATE '2025-06-30')) AS mck,
+           (SELECT shares FROM sec_gold.shares_outstanding_at(77476, DATE '2026-06-30')) AS pep,
+           (SELECT shares FROM sec_gold.shares_outstanding_at(11544, DATE '2012-09-28')) AS wrb
+) t;
+
+\echo '=== 80. A share-for-share successor issuer prices its predecessor, once ==='
+-- Exxon Mobil (34088) had no price in any month 2009-2026: XOM's open
+-- listing belonged to ExxonMobil Holdings (2115436), which has no filing
+-- in DERA yet and so no security row, and the loader requests open
+-- listings only. Every holding-company reorganisation's predecessor was
+-- unpriced the same way (Google Inc, BlackRock 1364742, Apache, Old
+-- Disney, Cigna...). data/reference/successor_issuers.csv lists the
+-- one-for-one ones, each citing its 8-K12B; the loader prices the
+-- predecessor up to its handoff. Pinned: Exxon, BlackRock and Google Inc
+-- priced on every S&P 500 panel date they hold; no security priced under
+-- both CIKs of a succession on one panel date (a double weight); and a
+-- spin-off that handed its ticker to another company stays unpriced
+-- under the old registrant (Alcoa Inc and AA, Ingersoll-Rand plc and IR).
+SELECT CASE WHEN x.unpriced = 0 AND x.dates >= 198 AND b.unpriced = 0 AND g.unpriced = 0
+             AND d.n = 0 AND s.n = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       x.dates AS xom_dates, x.unpriced AS xom_unpriced, b.unpriced AS blk_unpriced, g.unpriced AS google_unpriced,
+       d.n AS double_priced, s.n AS spin_off_rows
+FROM (SELECT COUNT(*) AS dates, COUNT(*) FILTER (WHERE p.close_raw IS NULL) AS unpriced
+      FROM sec_market.factor_panel f LEFT JOIN LATERAL sec_market.price_at(f.cik, f.asof) p ON TRUE
+      WHERE f.index_name = 'SP500' AND f.cik IN (34088, 2115436)) x,
+     (SELECT COUNT(*) FILTER (WHERE p.close_raw IS NULL) AS unpriced
+      FROM sec_market.factor_panel f LEFT JOIN LATERAL sec_market.price_at(f.cik, f.asof) p ON TRUE
+      WHERE f.index_name = 'SP500' AND f.cik = 1364742) b,
+     (SELECT COUNT(*) FILTER (WHERE p.close_raw IS NULL) AS unpriced
+      FROM sec_market.factor_panel f LEFT JOIN LATERAL sec_market.price_at(f.cik, f.asof) p ON TRUE
+      WHERE f.index_name = 'SP500' AND f.cik = 1288776) g,
+     (SELECT COUNT(*) AS n
+      FROM sec_reference.cik_succession cs
+      JOIN sec_market.monthly_price a ON a.cik = cs.old_cik AND a.ticker = cs.ticker
+      JOIN sec_market.monthly_price o ON o.cik = cs.new_cik AND o.ticker = cs.ticker AND o.month_end = a.month_end
+      JOIN sec_market.factor_panel fa ON fa.cik = cs.old_cik AND fa.asof > a.month_end AND fa.asof <= a.month_end + 45
+      JOIN sec_market.factor_panel fb ON fb.cik = cs.new_cik AND fb.index_name = fa.index_name AND fb.asof = fa.asof) d,
+     (SELECT COUNT(*) AS n FROM sec_market.monthly_price
+      WHERE (cik, ticker) IN ((4281, 'AA'), (1466258, 'IR'), (30554, 'DD'), (1620280, 'UNIT'))) s;
+
+\echo '=== 81. Visa is counted as converted: every class and the preferred, in Class A units ==='
+-- Visa's Class B and C and its Series A, B and C preferred convert into
+-- Class A at rates that move (B: 0.57 in FY2010, 1.65 after the 2015
+-- split, 1.56 in FY2025), and only Class A was mapped, so Visa's count
+-- was Class A alone, 63-87% of the company, and its market cap 13-37%
+-- low on every date. share_class.as_converted_eps on Class A makes the
+-- count the filing's net income over Class A basic EPS, the company in
+-- Class A units (055). Pinned against Visa's own diluted as-converted
+-- Class A weighted average of the same period as knowable then (a later
+-- filing restates 2014 four-fold for the 2015 split), before and after
+-- the split (ours is basic, so a hair lower: options); and no issuer with
+-- the flag has a second mapped class it would count twice.
+SELECT CASE WHEN a.method = 'class_sum_as_converted' AND a.shares / a.diluted BETWEEN 0.98 AND 1.005
+             AND b.shares / b.diluted BETWEEN 0.98 AND 1.005 AND d.n = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       round(a.shares / 1e6) AS visa_2026_m, round(a.diluted / 1e6) AS visa_diluted_2026_m,
+       round(b.shares / 1e6) AS visa_2014_m, round(b.diluted / 1e6) AS visa_diluted_2014_m, d.n AS double_mapped
+FROM (SELECT s.shares, s.method,
+             (SELECT w.value FROM sec_silver.num_silver w
+               WHERE w.cik = 1403161 AND w.tag = 'WeightedAverageNumberOfDilutedSharesOutstanding'
+                 AND w.segments = 'ClassOfStock=CommonClassA;' AND w.value_date = s.value_date
+                 AND w.tradable_from <= DATE '2026-06-30'
+                 AND (w.superseded_tradable > DATE '2026-06-30' OR w.superseded_tradable IS NULL)
+               ORDER BY w.qtrs, w.tradable_from DESC LIMIT 1) AS diluted
+      FROM sec_gold.shares_outstanding_at(1403161, DATE '2026-06-30') s) a,
+     (SELECT s.shares,
+             (SELECT w.value FROM sec_silver.num_silver w
+               WHERE w.cik = 1403161 AND w.tag = 'WeightedAverageNumberOfDilutedSharesOutstanding'
+                 AND w.segments = 'ClassOfStock=CommonClassA;' AND w.value_date = s.value_date
+                 AND w.tradable_from <= DATE '2014-06-30'
+                 AND (w.superseded_tradable > DATE '2014-06-30' OR w.superseded_tradable IS NULL)
+               ORDER BY w.qtrs, w.tradable_from DESC LIMIT 1) AS diluted
+      FROM sec_gold.shares_outstanding_at(1403161, DATE '2014-06-30') s) b,
+     (SELECT COUNT(*) AS n FROM sec_reference.share_class f
+       JOIN sec_reference.share_class o ON o.cik = f.cik AND o.class_label <> f.class_label AND NOT o.is_excluded
+        AND o.effective_from < COALESCE(f.effective_to, DATE '9999-12-31')
+        AND f.effective_from < COALESCE(o.effective_to, DATE '9999-12-31')
+      WHERE f.as_converted_eps) d;

@@ -235,7 +235,7 @@ filing and which from Yahoo. Loaded by `uv run dera load-prices` and
 
 | Object | Kind | Rows | What it is |
 |---|---|---|---|
-| `monthly_price` | table | 303.8K | One row per company, primary ticker and month end, 2009-01 to the last complete month, for the 1,693 companies ever in the S&P 1500 whose primary ticker is still listed. `close_split_adj` is Yahoo's split-restated close, `adj_close` its total-return index, `close_raw` the as-traded close reconstructed from the split ratios (Apple July 2020: 106.26, 102.80, 425.04) |
+| `monthly_price` | table | 306.3K (2026-11-09) | One row per company, primary ticker and month end, 2009-01 to the last complete month, for the 1,711 companies ever in the S&P 1500 whose primary ticker is still listed, or whose ticker a share-for-share successor issuer still lists (`data/reference/successor_issuers.csv`: Exxon Mobil, Google Inc, BlackRock, Apache and 13 more, priced to their handoff). `close_split_adj` is Yahoo's split-restated close, `adj_close` its total-return index, `close_raw` the as-traded close reconstructed from the split ratios (Apple July 2020: 106.26, 102.80, 425.04) |
 | `price_load` | table | 1 per load | When the vendor was asked, how many symbols answered, how many members have no open listing |
 | `monthly_return` | view | — | `ret_1m` per company and month from `adj_close`; NULL across a gap, when either month did not trade, or when the prior close was under a dollar |
 | `factor_panel` | table | 500 / 400 / 600 per date, 1,500 for the union | `sec_gold.factor_sheet_asof` stored per (index, knowledge date, company) for SP500 (2010 on), SP400 (2011 on) and SP600 (2018 on, the replayed histories); `SP1500` is the union of the three on a date, one row per company, with the percentiles and composite recomputed over all of them by the sheet's rule (`build_factor_panel_union`, 2026-10-13); CHECKs refuse any row whose period or availability is after its own knowledge date |
@@ -252,9 +252,10 @@ the equal-weight benchmark and the top-minus-bottom spread) and
 return, t-statistic, annualised return, Sharpe ratio, hit rate).
 
 **Survivorship.** Yahoo returns nothing for a delisted ticker and re-keys a
-reused one to its current holder, so only open listings are loaded: 718 of the
-2,417 companies ever in the S&P 1500 have no listed security today (acquired,
-taken private, failed) and no prices here. Every bucket in a backtest holds
+reused one to its current holder, so only open listings are loaded (and,
+across a cited share-for-share reorganisation, the predecessor of one): 718 of
+the 2,417 companies ever in the S&P 1500 have no listed security today
+(acquired, taken private, failed) and no prices here. Every bucket in a backtest holds
 survivors only; the spread between buckets is less exposed than a bucket's
 level, not immune. The paid source the roadmap names (Polygon flat files) is
 what closes this. The equal-weight return of the priced companies tracks the
@@ -315,7 +316,7 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 78 checks; exits non-zero on any FAIL
+uv run dera verify     # 81 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 
