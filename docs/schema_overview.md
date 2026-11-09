@@ -236,13 +236,16 @@ filing and which from Yahoo. Loaded by `uv run dera load-prices` and
 | Object | Kind | Rows | What it is |
 |---|---|---|---|
 | `monthly_price` | table | 306.3K (2026-11-09) | One row per company, primary ticker and month end, 2009-01 to the last complete month, for the 1,711 companies ever in the S&P 1500 whose primary ticker is still listed, or whose ticker a share-for-share successor issuer still lists (`data/reference/successor_issuers.csv`: Exxon Mobil, Google Inc, BlackRock, Apache and 13 more, priced to their handoff). `close_split_adj` is Yahoo's split-restated close, `adj_close` its total-return index, `close_raw` the as-traded close reconstructed from the split ratios (Apple July 2020: 106.26, 102.80, 425.04) |
+| `split_event` | table | 1,730 (2026-11-09) | Every split of every listing whose monthly bars carry one, dated to the first session on the new basis (Yahoo's split history), with its ratio; `market_cap_at` puts a share count and a price on one split basis with it |
 | `price_load` | table | 1 per load | When the vendor was asked, how many symbols answered, how many members have no open listing |
 | `monthly_return` | view | — | `ret_1m` per company and month from `adj_close`; NULL across a gap, when either month did not trade, or when the prior close was under a dollar |
 | `factor_panel` | table | 500 / 400 / 600 per date, 1,500 for the union | `sec_gold.factor_sheet_asof` stored per (index, knowledge date, company) for SP500 (2010 on), SP400 (2011 on) and SP600 (2018 on, the replayed histories); `SP1500` is the union of the three on a date, one row per company, with the percentiles and composite recomputed over all of them by the sheet's rule (`build_factor_panel_union`, 2026-10-13); CHECKs refuse any row whose period or availability is after its own knowledge date |
 
 Functions: `price_at(cik, asof)` (the newest month-end close strictly before
 the date, within 45 days), `market_cap_at(cik, asof)` (that close times the
-cover-page shares knowable on the date, from `sec_gold.shares_outstanding_at`),
+shares knowable on the date, from `sec_gold.shares_outstanding_at`, put on the
+close's split basis: every `split_event` between the count's filing and the
+month end, returned as `split_adjustment`),
 `build_factor_panel(index, asof)` (one knowledge date of the panel; `SP1500` dispatches to `build_factor_panel_union(name, components[], asof)`, the re-rank of the stored component rows, which refuses a date any component lacks),
 `backtest(index, factor, freq, from, to, buckets)` (sort the panel into equal
 buckets on each rebalance date, monthly, quarterly or annual, hold
@@ -316,7 +319,7 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 81 checks; exits non-zero on any FAIL
+uv run dera verify     # 82 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 

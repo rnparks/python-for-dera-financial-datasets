@@ -58,7 +58,7 @@ Macro predictors (Amit Goyal's data page, not SEC data; schema ``macro``)::
 
 Verification::
 
-    uv run dera verify        # 81 data-correctness checks
+    uv run dera verify        # 82 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 

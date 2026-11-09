@@ -2027,3 +2027,40 @@ FROM (SELECT s.shares, s.method,
         AND o.effective_from < COALESCE(f.effective_to, DATE '9999-12-31')
         AND f.effective_from < COALESCE(o.effective_to, DATE '9999-12-31')
       WHERE f.as_converted_eps) d;
+
+\echo '=== 82. A share count and a price are on one split basis ==='
+-- A share count is on the split basis of the day it was filed, a month-end
+-- close on the basis of every split to that month end; multiplied across
+-- a split they are wrong by its ratio. Apple read $553B in September 2020
+-- (4-for-1 on 2020-08-31); Nvidia $288-304B from July to October 2024
+-- (10-for-1 on 2024-06-10, and its 10-Qs carry no instant count, so the
+-- pre-split 10-K count stood); Alphabet $28.6 trillion in July 2022 (a
+-- post-split count filed 2022-07-27 against the pre-split June close).
+-- market_cap_at applies every split in sec_market.split_event between the
+-- count's filing and the price's month end (sql/07_market/010). Pinned:
+-- the three, and the dated splits agree with the month and ratio of every
+-- split Yahoo's monthly bars carry (three small listings Yahoo gives no
+-- date for: BioLife 2014, MSG Sports 2020, Leslie's 2025).
+WITH m AS (
+    SELECT p.ticker, p.month_end, LAG(p.split_factor_after) OVER w / p.split_factor_after AS month_ratio
+    FROM sec_market.monthly_price p WINDOW w AS (PARTITION BY p.cik, p.ticker ORDER BY p.month_end)
+), mm AS (
+    SELECT DISTINCT ticker, month_end, month_ratio FROM m
+    WHERE month_ratio IS NOT NULL AND abs(month_ratio - 1) > 1e-6
+), e AS (
+    SELECT ticker, date_trunc('month', split_date) AS mon, exp(sum(ln(ratio))) AS ratio
+    FROM sec_market.split_event GROUP BY 1, 2
+), s AS (
+    SELECT COUNT(*) FILTER (WHERE e.ticker IS NULL) AS undated,
+           COUNT(*) FILTER (WHERE e.ticker IS NOT NULL AND abs(e.ratio / mm.month_ratio - 1) > 0.001) AS mismatch
+    FROM mm LEFT JOIN e ON e.ticker = mm.ticker AND e.mon = date_trunc('month', mm.month_end)
+)
+SELECT CASE WHEN nvda BETWEEN 2.5e12 AND 3.6e12 AND aapl BETWEEN 1.8e12 AND 2.6e12
+             AND googl BETWEEN 1.1e12 AND 1.8e12 AND s.mismatch = 0 AND s.undated <= 3
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       round(nvda / 1e9) AS nvda_2024_07_bn, round(aapl / 1e9) AS aapl_2020_09_bn, round(googl / 1e9) AS googl_2022_07_bn,
+       s.undated, s.mismatch
+FROM s,
+     (SELECT (SELECT market_cap FROM sec_market.market_cap_at(1045810, DATE '2024-07-31')) AS nvda,
+             (SELECT market_cap FROM sec_market.market_cap_at(320193, DATE '2020-09-30')) AS aapl,
+             (SELECT market_cap FROM sec_market.market_cap_at(1652044, DATE '2022-07-29')) AS googl) c;

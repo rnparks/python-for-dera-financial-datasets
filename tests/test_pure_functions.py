@@ -1053,3 +1053,87 @@ def test_gkx_covariates_refuse_a_ranked_or_per_stock_macro_and_unranked_characte
     with pytest.raises(ValueError, match="outside"):
         macro.gkx_covariates(chars.assign(gp_at=[0.2, 0.8 * 3]), pd.DataFrame({"month": [m1], "tbl": [0.04]}),
                              char_cols=["gp_at"], macro_cols=["tbl"])
+
+
+# ---------------------------------------------------------------------
+# audit: the market-cap checks (pure functions over the audit input)
+# ---------------------------------------------------------------------
+
+from dera_pipeline import audit  # noqa: E402
+
+
+def _detail(rows):
+    import pandas as pd
+    cols = ["asof", "cik", "indexes", "price_ticker", "close_raw", "split_factor_after",
+            "shares", "shares_value_date", "split_adjustment", "market_cap"]
+    return pd.DataFrame(rows, columns=cols)
+
+
+def test_shares_vs_own_average_flags_issued_read_as_outstanding():
+    import pandas as pd
+    d = _detail([
+        (dt.date(2024, 6, 28), 63908, "SP500", "MCD", 255.0, 1.0, 1660.6e6, dt.date(2024, 3, 31), 1.0, 0.0),
+        (dt.date(2024, 6, 28), 320193, "SP500", "AAPL", 190.0, 1.0, 15.3e9, dt.date(2024, 3, 31), 1.0, 0.0),
+    ])
+    refs = pd.DataFrame({"cik": [63908, 320193], "shares_value_date": [dt.date(2024, 3, 31)] * 2,
+                         "basic_avg": [721.0e6, 15.4e9], "implied": [720.0e6, float("nan")]})
+    out = audit.check_shares_vs_own_average(d, refs)
+    assert list(out["cik"]) == [63908] and out["check"].iloc[0] == "shares_vs_own_counts"
+
+
+def test_shares_vs_own_counts_forgives_a_mis_scaled_reference():
+    import pandas as pd
+    # McDonald's tags some averages in millions; net income over EPS agrees
+    # with the count, so the count is not flagged.
+    d = _detail([(dt.date(2024, 6, 28), 63908, "SP500", "MCD", 255.0, 1.0, 720.7e6,
+                  dt.date(2024, 3, 31), 1.0, 0.0)])
+    refs = pd.DataFrame({"cik": [63908], "shares_value_date": [dt.date(2024, 3, 31)],
+                         "basic_avg": [721.0], "implied": [721.5e6]})
+    assert audit.check_shares_vs_own_average(d, refs).empty
+
+
+def test_share_continuity_sees_through_a_split_and_catches_a_jump():
+    d = _detail([
+        # Nvidia across its 10-for-1: the as-filed count is pre-split, the
+        # adjustment and the split factor put both months on one basis.
+        (dt.date(2024, 5, 31), 1045810, "SP500", "NVDA", 864.0, 10.0, 2464e6, dt.date(2024, 1, 31), 1.0, 2.1e12),
+        (dt.date(2024, 6, 28), 1045810, "SP500", "NVDA", 1096.0, 10.0, 2464e6, dt.date(2024, 1, 31), 1.0, 2.7e12),
+        (dt.date(2024, 7, 31), 1045810, "SP500", "NVDA", 123.5, 1.0, 2464e6, dt.date(2024, 1, 31), 10.0, 3.0e12),
+        # W. R. Berkley: a thousand-fold count for one month.
+        (dt.date(2012, 8, 31), 11544, "SP400", "WRB", 38.0, 1.0, 137e6, dt.date(2012, 3, 31), 1.0, 5.2e9),
+        (dt.date(2012, 9, 28), 11544, "SP400", "WRB", 38.0, 1.0, 39e9, dt.date(2012, 6, 30), 1.0, 1.5e12),
+    ])
+    # A bar before the split carries split_factor_after 10 (the later split
+    # restates it); after it, 1, and the count's split adjustment carries
+    # the 10: on one basis, 24,640M throughout.
+    out = audit.check_share_continuity(d)
+    assert list(out["cik"]) == [11544]
+
+
+def test_concentration_rejects_a_dominant_cap():
+    d = _detail([
+        (dt.date(2012, 9, 28), 11544, "SP400,SP1500", "WRB", 38.0, 1.0, 39e9, dt.date(2012, 6, 30), 1.0, 1.5e12),
+        (dt.date(2012, 9, 28), 1, "SP400,SP1500", "A", 10.0, 1.0, 1e9, dt.date(2012, 6, 30), 1.0, 1e10),
+        (dt.date(2012, 9, 28), 2, "SP400,SP1500", "B", 10.0, 1.0, 1e9, dt.date(2012, 6, 30), 1.0, 1e10),
+    ])
+    out = audit.check_concentration(d)
+    assert set(out["cik"]) == {11544} and set(out["severity"]) == {"reject"}
+
+
+def test_returns_flags_both_tails():
+    import pandas as pd
+    r = pd.DataFrame({"cik": [1, 2, 3], "ticker": ["A", "B", "C"],
+                      "month_end": [dt.date(2020, 3, 31)] * 3, "ret_1m": [1.5, -0.6, 0.2]})
+    assert list(audit.check_returns(r)["cik"]) == [1, 2]
+
+
+def test_split_event_rows_one_per_ticker_and_drops_non_splits():
+    events = {"GOOG": [(dt.date(2022, 7, 18), 20.0), (dt.date(2015, 4, 27), 1.0)],
+              "XOM": [(dt.date(2001, 7, 19), 2.0)]}
+    rows = prices.split_event_rows(events, {"GOOG": {"GOOG"}, "XOM": {"XOM"}})
+    assert rows == [("GOOG", "GOOG", dt.date(2022, 7, 18), 20.0), ("XOM", "XOM", dt.date(2001, 7, 19), 2.0)]
+    # A symbol pricing two spine tickers (a predecessor and its successor)
+    # gives each its own row; a ratio of 0 is no split.
+    rows = prices.split_event_rows({"XOM": [(dt.date(2001, 7, 19), 2.0), (dt.date(2005, 1, 3), 0.0)]},
+                                   {"XOM": {"XOM", "XOM2"}})
+    assert [r[0] for r in rows] == ["XOM", "XOM2"]

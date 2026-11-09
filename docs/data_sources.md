@@ -586,8 +586,20 @@ by Yahoo's dividend rescaling, ratios unchanged).
   from `sec_reference.trading_calendar`.
 - Point in time: `sec_market.price_at(cik, asof)` returns the newest month end
   strictly before the knowledge date; `market_cap_at` multiplies it by the
-  cover-page shares knowable on the date (`sec_gold.shares_outstanding_at`),
-  as-traded price times as-filed count.
+  shares knowable on the date (`sec_gold.shares_outstanding_at`), as-traded
+  price times as-filed count, put on one split basis.
+- Splits are dated to the day. A share count is on the split basis of the day
+  it was filed (a filing after a split restates its counts), a month-end close
+  on the basis of every split to that month end, and Yahoo's monthly bars say
+  only which month a split fell in. `dera load-prices` also fetches Yahoo's
+  split history (the first session on the new basis) for every symbol whose
+  bars carry a split, into `sec_market.split_event`; `market_cap_at` applies
+  every split between the count's filing and the price's month end. Before
+  this (2026-11-09) Apple read $553B in September 2020, Nvidia $288-304B from
+  July to October 2024, and Alphabet $28.6 trillion in July 2022. 1,730 dated
+  splits for 457 tickers; they agree in month and ratio with 668 of the 671
+  splits the monthly bars carry since 2009, and Yahoo gives no date for the
+  other three (BioLife 2014, MSG Sports 2020, Leslie's 2025). Check 82.
 
 **Known limits**:
 - **Survivorship.** 718 of the 2,417 companies ever in the S&P 1500 have no

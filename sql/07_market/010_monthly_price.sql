@@ -79,6 +79,34 @@ COMMENT ON TABLE sec_market.monthly_price IS
 
 -- Every load, so a reader can tell when the vendor was last asked and
 -- how much of the universe answered.
+-- SPLITS, DATED TO THE DAY. A share count is on the split basis of the
+-- day it was filed (a filing after a split restates its counts: Nvidia's
+-- FY2025 10-K carries 2024-01-31 at 24,643M, the FY2024 10-K at 2,464M);
+-- a month-end close is on the basis of every split up to that month end.
+-- Multiplying the two across a split is wrong by the split ratio: Apple
+-- read $553B in September 2020 (4-for-1 on 2020-08-31), Nvidia $288-304B
+-- from July to October 2024 (10-for-1 on 2024-06-10; its 10-Qs carry no
+-- instant count, so the pre-split 10-K count stood for a year). Yahoo's
+-- monthly bars say which month a split fell in, not the day, and a split
+-- and a filing in the same month are then ambiguous; so the day comes
+-- from Yahoo's split history (yfinance Ticker.splits: the first session
+-- on the new basis), fetched by `dera load-prices` for every symbol whose
+-- monthly bars carry a split, and market_cap_at applies it. Check 82.
+CREATE TABLE IF NOT EXISTS sec_market.split_event (
+    ticker          TEXT        NOT NULL,   -- the spine's listing ticker, as in monthly_price
+    yahoo_symbol    TEXT        NOT NULL,
+    split_date      DATE        NOT NULL,   -- first session on the new basis
+    ratio           NUMERIC     NOT NULL,   -- new shares per old (0.1 for a 1-for-10 reverse split)
+    source          TEXT        NOT NULL DEFAULT 'yahoo',
+    fetched_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (ticker, split_date),
+    CHECK (ratio > 0 AND ratio <> 1)
+);
+
+COMMENT ON TABLE sec_market.split_event IS
+    'Stock splits to the day (Yahoo split history), for every listing whose monthly bars carry one; '
+    'market_cap_at puts a share count and a price on one split basis with them.';
+
 CREATE TABLE IF NOT EXISTS sec_market.price_load (
     loaded_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     source              TEXT        NOT NULL,
@@ -138,29 +166,42 @@ COMMENT ON FUNCTION sec_market.price_at(INTEGER, DATE) IS
     'total-return index; the ticker the spine assigns on the date preferred.';
 
 -- Market capitalisation as knowable on a date: the as-traded close of
--- the newest month end before it, times the cover-page share count
--- knowable on it. One price for every class (the primary ticker's), so
--- a dual-class issuer with a differently priced second class is
+-- the newest month end before it, times the share count knowable on it
+-- put on that close's split basis: every split dated after the day the
+-- count was filed and on or before the month end multiplies it, every
+-- split dated after the month end and on or before the filing divides it
+-- (a count filed after the price was struck, across a split between
+-- them). One price for every class (the primary ticker's), so a
+-- dual-class issuer with a differently priced second class is
 -- approximate; the per-class table (sec_gold.share_class_shares) is the
 -- place to refine it.
 DROP FUNCTION IF EXISTS sec_market.market_cap_at(INTEGER, DATE);
 CREATE FUNCTION sec_market.market_cap_at(p_cik INTEGER, p_asof DATE)
 RETURNS TABLE (ticker TEXT, month_end DATE, close_raw NUMERIC,
                shares NUMERIC, shares_value_date DATE, shares_tradable_from DATE,
-               market_cap NUMERIC)
+               split_adjustment NUMERIC, market_cap NUMERIC)
 LANGUAGE sql STABLE AS $$
     SELECT pr.ticker, pr.month_end, pr.close_raw,
            sh.shares, sh.value_date, sh.tradable_from,
-           pr.close_raw * sh.shares AS market_cap
+           sa.adj AS split_adjustment,
+           pr.close_raw * sh.shares * sa.adj AS market_cap
     FROM sec_market.price_at(p_cik, p_asof) pr
     CROSS JOIN LATERAL (
         SELECT s.shares, s.value_date, s.tradable_from
         FROM sec_gold.shares_outstanding_at(p_cik, p_asof) s
         LIMIT 1
     ) sh
+    CROSS JOIN LATERAL (
+        SELECT COALESCE(EXP(SUM(LN(se.ratio)) FILTER (WHERE se.split_date > sh.tradable_from
+                                                         AND se.split_date <= pr.month_end)), 1)
+             / COALESCE(EXP(SUM(LN(se.ratio)) FILTER (WHERE se.split_date > pr.month_end
+                                                         AND se.split_date <= sh.tradable_from)), 1) AS adj
+        FROM sec_market.split_event se
+        WHERE se.ticker = pr.ticker
+    ) sa
     WHERE sh.shares > 0;
 $$;
 
 COMMENT ON FUNCTION sec_market.market_cap_at(INTEGER, DATE) IS
-    'As-traded month-end close before p_asof times the cover-page shares knowable on p_asof; '
-    'nothing when either is missing.';
+    'As-traded month-end close before p_asof times the shares knowable on p_asof, put on the '
+    'close''s split basis (split_event dated after the count was filed); nothing when either is missing.';

@@ -36,6 +36,13 @@ the cover-page share counts in the filings are the shares that existed
 then, and a split-restated price times an unrestated count is wrong by
 the split.
 
+Splits, dated
+-------------
+A share count is on the split basis of the day it was filed; a month-end
+close on the basis of every split to that month end. ``market_cap_at``
+reconciles the two with ``sec_market.split_event``, the day of every split
+the monthly bars carry, fetched here from Yahoo's split history.
+
 Point in time
 -------------
 A month's row is written only once that month's last NYSE session has
@@ -192,6 +199,22 @@ def succession_windows(
     return pred_last, succ_first
 
 
+def split_event_rows(
+    events: dict[str, Sequence[tuple[dt.date, float]]],
+    tickers_by_symbol: dict[str, Iterable[str]],
+) -> list[tuple[str, str, dt.date, float]]:
+    """(ticker, yahoo_symbol, split_date, ratio) for every split of every
+    symbol, once per spine ticker the symbol prices; a ratio of 1, or one
+    that is not positive, is no split and is dropped."""
+    out = set()
+    for sym, evs in events.items():
+        for ticker in tickers_by_symbol.get(sym, ()):
+            for d, r in evs:
+                if r and r > 0 and abs(r - 1) > 1e-9:
+                    out.add((ticker, sym, d, float(r)))
+    return sorted(out)
+
+
 def chunks(seq: Sequence[str], size: int) -> Iterable[Sequence[str]]:
     for i in range(0, len(seq), size):
         yield seq[i:i + size]
@@ -338,6 +361,44 @@ def fetch_monthly(
     return out
 
 
+def fetch_split_events(symbols: Sequence[str], log=print) -> dict[str, list[tuple[dt.date, float]]]:
+    """Every split Yahoo records for each symbol, dated to the first
+    session on the new basis (yfinance ``Ticker.splits``). Monthly bars say
+    only which month a split fell in; ``market_cap_at`` needs the day."""
+    import yfinance as yf
+
+    out: dict[str, list[tuple[dt.date, float]]] = {}
+    for i, sym in enumerate(symbols, start=1):
+        try:
+            sp = yf.Ticker(sym).splits
+        except Exception as exc:  # noqa: BLE001  (a vendor error skips one symbol)
+            log(f"  splits {sym}: {exc}")
+            continue
+        out[sym] = [(d.date(), float(r)) for d, r in sp.items()]
+        if i % 100 == 0:
+            log(f"  splits: {i} of {len(symbols)} symbols")
+    return out
+
+
+def write_split_events(conn: psycopg.Connection, rows: Sequence[tuple[str, str, dt.date, float]]) -> int:
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        cur.executemany("""
+            INSERT INTO sec_market.split_event (ticker, yahoo_symbol, split_date, ratio, source, fetched_at)
+            VALUES (%s, %s, %s, %s, 'yahoo', now())
+            ON CONFLICT (ticker, split_date) DO UPDATE SET
+                yahoo_symbol = EXCLUDED.yahoo_symbol, ratio = EXCLUDED.ratio, fetched_at = now()
+        """, rows)
+    return len(rows)
+
+
+def load_split_events(conn: psycopg.Connection, tickers_by_symbol: dict[str, Iterable[str]], log=print) -> int:
+    """Fetch and upsert the dated splits of the given symbols."""
+    events = fetch_split_events(sorted(tickers_by_symbol), log=log)
+    return write_split_events(conn, split_event_rows(events, tickers_by_symbol))
+
+
 # ----------------------------------------------------------------------
 # Assembly
 # ----------------------------------------------------------------------
@@ -456,6 +517,10 @@ def load_prices(
         for lst in by_symbol[sym]:
             rows.extend(build_rows(lst, sym, series, month_ends))
     written = write_rows(conn, rows)
+    # The day of every split the monthly bars carry, for market_cap_at.
+    split_symbols = {sym: {lst.ticker for lst in by_symbol[sym]}
+                     for sym, series in bars.items() if any(b["split"] for b in series)}
+    splits = load_split_events(conn, split_symbols, log=log) if split_symbols else 0
     missing = sorted(set(symbols) - set(bars))
     summary = {
         "symbols_requested": len(symbols),
@@ -465,7 +530,8 @@ def load_prices(
         "last_month": max((r.month_end for r in rows), default=None),
         "members_without_listing": members_without_open_listing(conn),
         "missing_symbols": missing,
-        "note": f"since {since}; {len(missing)} symbols returned nothing",
+        "note": f"since {since}; {len(missing)} symbols returned nothing; {splits} dated splits",
+        "split_events": splits,
     }
     record_load(conn, summary)
     return summary
