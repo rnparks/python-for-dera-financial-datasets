@@ -24,6 +24,7 @@ one document. A confidently wrong doc is worse than no doc.
 | A share-class mapping | `data/reference/share_class_map.csv` with a cited source_note; prefer `tools/fetch_cover_page_classes.py` |
 | An index constituent no rule resolves | `data/reference/index_cik_overrides.csv` with a cited source_note, then `dera rebuild-reference`; a redundant row fails check 61 |
 | A Goyal-Welch variable's timing | `data/reference/goyal_welch_variables.csv` with a cited source_note, then `dera load-macro`; `docs/data_sources.md` section 10 |
+| An issuer stating its share counts per unit of the whole company (Berkshire's equivalent Class A share) | `data/reference/share_unit.csv` by filing date, citing the filing's unit and conversion sentences, then `dera rebuild-reference`; check 85 |
 | A share-for-share successor issuer (same ticker, one new share per old) | `data/reference/successor_issuers.csv` citing the 8-K12B's one-for-one clause, then `dera load-prices --tickers T --until <last month in the table>`; check 80 |
 | A pure Python function | `tests/test_pure_functions.py` |
 
@@ -31,7 +32,7 @@ one document. A confidently wrong doc is worse than no doc.
 
 ```bash
 uv run dera verify-docs    # object names (prose and SQL), paths, CLI commands, cross-links
-uv run dera verify         # 82 data-correctness checks
+uv run dera verify         # 85 data-correctness checks
 uv run pytest              # unit tests, no database
 uv run ruff check .        # what CI runs
 ```

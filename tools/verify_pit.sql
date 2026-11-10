@@ -2064,3 +2064,104 @@ FROM s,
      (SELECT (SELECT market_cap FROM sec_market.market_cap_at(1045810, DATE '2024-07-31')) AS nvda,
              (SELECT market_cap FROM sec_market.market_cap_at(320193, DATE '2020-09-30')) AS aapl,
              (SELECT market_cap FROM sec_market.market_cap_at(1652044, DATE '2022-07-29')) AS googl) c;
+
+\echo '=== 83. Cover-page counts referee the share ladder, and fill what DERA drops ==='
+-- DERA drops Lockheed Martin's and General Dynamics' share facts whole, so
+-- neither had a market cap on any date; Aflac's, Colgate's and Everest's
+-- counts were their issued shares, treasury included (1.7 times what was
+-- outstanding). sec_reference.cover_share_count holds every 10-K and 10-Q
+-- cover count of the index companies, from SEC's XBRL frames API, timed by
+-- its filing (dera load-cover-shares). shares_outstanding_at refuses a
+-- balance-sheet count that both its filing's cover count and its net
+-- income over EPS contradict by more than a fifth, and uses a cover count
+-- when nothing else survives, never for a mapped multi-class issuer
+-- (Berkshire's undimensioned cover is its Class A alone). Pinned on
+-- 2024-06-28; Nordson, whose 10-K issued count (98M against 58M
+-- outstanding) had no same-filing cover in the frames, so the referee is
+-- the first cover within 200 days after it; and every stored cover count
+-- carries its filing's tradable_from.
+SELECT CASE WHEN lmt BETWEEN 220e6 AND 260e6 AND lmt_method = 'cover_page'
+             AND gd BETWEEN 260e6 AND 290e6 AND afl BETWEEN 540e6 AND 620e6
+             AND cl BETWEEN 780e6 AND 860e6 AND brk_method IS DISTINCT FROM 'cover_page'
+             AND ndsn BETWEEN 50e6 AND 65e6
+             AND t.n > 90000 AND t.companies > 2200 AND t.mistimed = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       round(lmt / 1e6, 1) AS lmt_m, lmt_method, round(gd / 1e6, 1) AS gd_m, round(afl / 1e6, 1) AS afl_m,
+       round(cl / 1e6, 1) AS cl_m, brk_method, round(ndsn / 1e6, 1) AS ndsn_2021_m, t.n AS cover_rows, t.companies, t.mistimed
+FROM (SELECT (SELECT shares FROM sec_gold.shares_outstanding_at(936468, DATE '2024-06-28')) AS lmt,
+             (SELECT method FROM sec_gold.shares_outstanding_at(936468, DATE '2024-06-28')) AS lmt_method,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(40533, DATE '2024-06-28')) AS gd,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(4977, DATE '2024-06-28')) AS afl,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(21665, DATE '2024-06-28')) AS cl,
+             (SELECT method FROM sec_gold.shares_outstanding_at(1067983, DATE '2012-12-31')) AS brk_method,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(72331, DATE '2021-11-30')) AS ndsn) p,
+     (SELECT COUNT(*) AS n, COUNT(DISTINCT c.cik) AS companies,
+             COUNT(*) FILTER (WHERE s.tradable_from IS DISTINCT FROM c.tradable_from) AS mistimed
+      FROM sec_reference.cover_share_count c LEFT JOIN sec_silver.sub_silver s ON s.adsh = c.adsh) t;
+
+\echo '=== 84. A class sum is the whole company: every class the filer reports, the unlisted ones mapped ==='
+-- An unlisted class that converts share for share into the listed one
+-- was not counted: Nike's Class A (298M), UPS's Class A (126M), Airbnb's
+-- and Ralph Lauren's Class B, Comcast's Class B, and before 2016 its
+-- listed Class A Special (CMCSK), filed under four labels. Each is now a
+-- cited share_class row (data/reference/share_class_map.csv). And a sum
+-- that leaves out a mapped class the filer reports at the same date is
+-- refused (055): Molson Coors tags its Class B as issued but, on 78
+-- dates, not as outstanding, so its outstanding sum was 2.6M of ~210M.
+-- A class tagged as capital stock counts as common when it is
+-- dimensioned by class: Google Inc's Class C of 2014-2015 is
+-- CapitalStockSharesOutstanding, and Google read at half its size.
+-- Pinned within a fifth of each company's own net income over EPS.
+SELECT CASE WHEN tap BETWEEN 190e6 AND 230e6 AND nke BETWEEN 1.4e9 AND 1.65e9 AND ups BETWEEN 800e6 AND 900e6
+             AND abnb BETWEEN 590e6 AND 680e6 AND rl BETWEEN 58e6 AND 70e6 AND cmcsa_2014 BETWEEN 2.45e9 AND 2.75e9
+             AND goog_inc BETWEEN 650e6 AND 720e6
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       round(goog_inc / 1e6) AS google_inc_2015_m, round(tap / 1e6, 1) AS tap_2020_m, round(nke / 1e6) AS nke_m, round(ups / 1e6) AS ups_m, round(abnb / 1e6) AS abnb_m,
+       round(rl / 1e6, 1) AS rl_m, round(cmcsa_2014 / 1e6) AS cmcsa_2014_m
+FROM (SELECT (SELECT shares FROM sec_gold.shares_outstanding_at(24545, DATE '2020-06-30')) AS tap,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(320187, DATE '2024-06-28')) AS nke,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(1090727, DATE '2024-06-28')) AS ups,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(1559720, DATE '2024-06-28')) AS abnb,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(1037038, DATE '2024-06-28')) AS rl,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(1166691, DATE '2014-06-30')) AS cmcsa_2014,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(1288776, DATE '2015-06-30')) AS goog_inc) t;
+
+\echo ''
+\echo '=== 85. Berkshire is the whole company on every date: its equivalent Class A units converted ==='
+-- Berkshire states its weighted averages and EPS per equivalent Class A
+-- share, both classes together, undimensioned to 2015 and tagged
+-- ClassOfStock=CommonClassA in 2016-2017. Read as shares and priced at
+-- BRK-B, the company was 1/1,500 of itself from 2010 to 2017 ($0.1-0.3B),
+-- and in May-July 2012, when every knowable count was tagged a
+-- million-fold large, 92% of the S&P 500. sec_reference.share_unit
+-- (data/reference/share_unit.csv, cited) converts a unit into 1,500
+-- BRK-B, 30 before the 2010-01-21 Class B split, by filing date; the
+-- per-A EPS anchors the scale guard; and an average restated a
+-- million-fold, which its own filing refutes, no longer hides the
+-- original its filing confirms (055). Every
+-- month end from 2010 has a cap between $150B and $1.3T, no month moves
+-- it more than a quarter (the steepest real month is 17%), February
+-- 2010 is on the pre-split basis (46.6M B, multiplied by the split in
+-- market_cap_at), and the units table is cited and has no overlap.
+SELECT CASE WHEN c.n >= 200 AND c.min_cap > 150e9 AND c.max_cap < 1.3e12 AND c.max_step < 0.25
+             AND feb2010 BETWEEN 46e6 AND 47e6 AND jun2012 BETWEEN 2.45e9 AND 2.5e9
+             AND jun2016 BETWEEN 2.45e9 AND 2.5e9 AND u.n = 2 AND u.uncited = 0 AND u.overlaps = 0
+            THEN 'PASS' ELSE 'FAIL' END AS status,
+       c.n AS months, round(c.min_cap / 1e9) AS min_cap_b, round(c.max_cap / 1e9) AS max_cap_b,
+       round(c.max_step, 3) AS max_log_step, round(feb2010 / 1e6, 1) AS feb2010_m,
+       round(jun2012 / 1e9, 3) AS jun2012_b, round(jun2016 / 1e9, 3) AS jun2016_b, u.n AS unit_rows
+FROM (SELECT COUNT(*) AS n, MIN(market_cap) AS min_cap, MAX(market_cap) AS max_cap,
+             MAX(ABS(LN(market_cap / prev_cap))) FILTER (WHERE prev_cap > 0) AS max_step
+      FROM (SELECT m.market_cap, LAG(m.market_cap) OVER (ORDER BY dd.d) AS prev_cap
+            FROM generate_series(DATE '2010-01-31', DATE '2026-10-31', INTERVAL '1 month') g(d0)
+            CROSS JOIN LATERAL (SELECT (date_trunc('month', g.d0) + INTERVAL '1 month - 1 day')::date AS d) dd
+            CROSS JOIN LATERAL sec_market.market_cap_at(1067983, dd.d) m) s) c,
+     (SELECT (SELECT shares FROM sec_gold.shares_outstanding_at(1067983, DATE '2010-02-26')) AS feb2010,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(1067983, DATE '2012-06-29')) AS jun2012,
+             (SELECT shares FROM sec_gold.shares_outstanding_at(1067983, DATE '2016-06-30')) AS jun2016) p,
+     (SELECT COUNT(*) AS n,
+             COUNT(*) FILTER (WHERE length(trim(source_note)) < 40) AS uncited,
+             (SELECT COUNT(*) FROM sec_reference.share_unit a JOIN sec_reference.share_unit b
+                ON a.cik = b.cik AND a.filed_from < b.filed_from
+               AND (a.filed_to IS NULL OR a.filed_to > b.filed_from)) AS overlaps
+      FROM sec_reference.share_unit) u;

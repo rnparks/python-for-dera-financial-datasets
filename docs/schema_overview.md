@@ -116,6 +116,8 @@ construction: it holds every CIK that ever filed, not the ones that survived.
 | `index_sighting` | 224,536 | The sightings after the S&P 1000 rule: rows of an oversized early S&P 600 capture that the same month's S&P 400 page also lists are removed |
 | `index_capture` | 459 | One row per capture with its size and partial flag (16 partial: the S&P 600 captures that are not a list of about 600) |
 | `index_observation_resolved` | 214,443 | The same sightings with a CIK per run: from the page (150,851), the dated crosswalk (59,101), a name the company bore at the time (4,043), the allowlist (125) or the neighbouring run across partial captures (81); 242 unresolved |
+| `cover_share_count` | 95,366 (2026-11-09) | Every 10-K and 10-Q cover's undimensioned shares outstanding for the companies ever in an index, from SEC's XBRL frames API (`dera load-cover-shares`), timed by its filing's `tradable_from`; a referee and the last resort for `sec_gold.shares_outstanding_at` |
+| `share_unit` | 2 (2026-11-09) | Issuers whose weighted-average share counts and basic EPS state the whole company per unit of one class, by filing date (`data/reference/share_unit.csv`, each row citing the filing): Berkshire's equivalent Class A share, 30 BRK-B before the 2010-01-21 Class B split, 1,500 after, until its counts are tagged `EquivalentClassA`/`EquivalentClassB` from 2017-11-06; `sec_gold.shares_outstanding_at` converts with it (check 85) |
 | `index_cik_override` | 8 | Hand-resolved constituent runs, (index, ticker, first sighting) → CIK, each row citing its evidence (`data/reference/index_cik_overrides.csv`); applied only where the page, the crosswalk and the name failed, and check 61 fails a redundant row |
 | `index_membership_unresolved` | 36 | Tickers no rule resolved to a CIK, listed rather than guessed (S&P 500 25, S&P 400 8, S&P 600 3): companies that never filed XBRL, page errors and ghost rows; none has facts in DERA |
 | **`index_membership`** | **6,342** | **Dated membership with GICS as of the interval, all three indexes replayed**: S&P 500 1,864 intervals over 841 companies, S&P 400 2,155 over 1,046, S&P 600 2,323 over 1,160; 61 intervals re-keyed to a predecessor registrant by `cik_succession` (34 cut at the handoff, 27 at the successor's first EDGAR filing); no interval starts before its registrant's first filing by the page's "date added"; no snapshot rows remain |
@@ -126,7 +128,7 @@ construction: it holds every CIK that ever filed, not the ones that survived.
 | `eligibility` | 36,199 | Universe membership intervals with reasons in and out: `filers_10k_15m` 17,700, `filers_10k_15m_strict` 17,635 (1,832 of them entering at a 424B pricing rather than a first periodic report), `sp500` 864 |
 | `delisting_event` | 7,119 | Outcomes: 4,498 exchange notices (Form 25), 2,621 deregistrations (Form 15) |
 | `corporate_action` | 0 | Declared, unpopulated |
-| `share_class` | 99 | Share class → ticker allowlist (66 CIKs): 27 hand-mapped rows plus 72 derived from 10-K cover pages, every row citing its filing |
+| `share_class` | 110 (2026-11-09) | Share class → ticker allowlist (67 CIKs): 27 hand-mapped rows, 72 derived from 10-K cover pages, and 11 unlisted, since-retired or two-listing classes mapped 2026-11-09 (Nike A, UPS A, Airbnb B, Ralph Lauren B, Comcast B and its Special class under four labels, Urstadt Biddle's UBA and UBP), every row citing its filing; `as_converted_eps` marks Visa's Class A |
 | `company_label` | *(view)* | Best-known display name per CIK — joined by both `tradable_financials` matviews |
 | `trading_calendar` | 4,947 | NYSE sessions to 2028-09-01, for availability arithmetic |
 | `security_event_raw` | 905,049 | Staging: raw EDGAR lifecycle events |
@@ -319,7 +321,7 @@ crosswalk cannot resolve on that date raises rather than returning empty rows.
 ## Verifying
 
 ```bash
-uv run dera verify     # 82 checks; exits non-zero on any FAIL
+uv run dera verify     # 85 checks; exits non-zero on any FAIL
 uv run pytest          # unit tests for the pure Python
 ```
 

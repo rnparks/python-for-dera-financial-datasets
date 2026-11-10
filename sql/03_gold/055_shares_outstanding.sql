@@ -63,9 +63,9 @@
 -- panel: 81% of filings with a share fact have an anchor (both facts
 -- present and non-zero); the rule refuses 1,812 instant counts of 276
 -- companies in 657 filings and 7,024 weighted averages. A filing
--- without an anchor (Berkshire dimensions its EPS by class, so its
--- million-fold A-equivalent averages of 2011-12 had none) meets a
--- second test: a consolidated count is refused when ANY other knowable
+-- without an anchor (Berkshire's million-fold A-equivalent averages of
+-- 2011-12 had none until its per-unit EPS, tagged by class, was read as
+-- the anchor through sec_reference.share_unit) meets a second test: a consolidated count is refused when ANY other knowable
 -- filing carries the same tag within 400 days more than 333 times off
 -- it. That refuses the right values beside the wrong ones (a median
 -- cannot arbitrate: the mis-scaled filing's comparatives supersede the
@@ -112,24 +112,62 @@ RETURNS TABLE (
 )
 LANGUAGE sql STABLE AS $$
     WITH k AS (SELECT sec_gold.shift_sessions(p_asof, p_buffer_sessions) AS d),
-    -- Every share-count fact knowable as of the date, including the
-    -- per-class rows that the consolidated filter normally discards.
-    visible AS (
-        SELECT n.tag, n.value, n.value_date, n.tradable_from, n.segments, n.qtrs, n.adsh
-        FROM sec_silver.num_silver n, k
+    -- WHOLE-COMPANY UNITS (sec_reference.share_unit). Berkshire states
+    -- its weighted averages and EPS per equivalent Class A share, both
+    -- classes together, undimensioned until 2015 and as
+    -- ClassOfStock=CommonClassA in 2016-2017; one unit is 1,500 BRK-B
+    -- (30 before the 2010-01-21 B split). Read as shares and priced at
+    -- BRK-B the company was 1/1,500 of itself from 2010 to 2017. Inside
+    -- a row's filing window such a count is the whole company and is
+    -- multiplied into BRK-B shares; the issuer's other undimensioned
+    -- counts there are dropped (its undimensioned cover count is its
+    -- Class A alone).
+    unit AS (
+        SELECT u.unit_member, u.shares_per_unit, u.filed_from, u.filed_to
+        FROM sec_reference.share_unit u
+        WHERE u.cik = p_cik
+    ),
+    -- Every share-count fact knowable as of the date, every vintage,
+    -- including the per-class rows that the consolidated filter normally
+    -- discards. A class tagged as CAPITAL stock is read as common stock
+    -- when it is dimensioned by class (so only a mapped class can reach a
+    -- sum): Google Inc's Class C of 2014-2015 is
+    -- CapitalStockSharesOutstanding, and without it Google read at half
+    -- its size for 15 months. Undimensioned capital stock can include
+    -- preferred and stays out.
+    facts AS (
+        SELECT CASE WHEN n.segments IS NOT NULL AND n.tag = 'CapitalStockSharesOutstanding' THEN 'CommonStockSharesOutstanding'
+                    WHEN n.segments IS NOT NULL AND n.tag = 'CapitalStockSharesIssued' THEN 'CommonStockSharesIssued'
+                    ELSE n.tag END AS tag,
+               n.value * COALESCE(u.shares_per_unit, 1) AS value, n.value_date, n.tradable_from,
+               CASE WHEN u.shares_per_unit IS NOT NULL THEN NULL ELSE n.segments END AS segments,
+               n.qtrs, n.adsh, n.superseded_tradable,
+               -- The vintage that superseded this one (silver's own order).
+               LEAD(n.value * COALESCE(u.shares_per_unit, 1)) OVER w AS next_value,
+               LEAD(n.adsh) OVER w AS next_adsh
+        FROM sec_silver.num_silver n
+        CROSS JOIN k
+        LEFT JOIN unit u
+          ON n.tradable_from >= u.filed_from AND (u.filed_to IS NULL OR n.tradable_from < u.filed_to)
+         AND n.tag LIKE 'WeightedAverage%'
+         AND (n.segments IS NULL OR n.segments = 'ClassOfStock=' || u.unit_member || ';')
         WHERE n.cik = p_cik
+          AND NOT (n.segments IS NULL AND u.shares_per_unit IS NULL
+                   AND EXISTS (SELECT 1 FROM unit u2
+                               WHERE n.tradable_from >= u2.filed_from
+                                 AND (u2.filed_to IS NULL OR n.tradable_from < u2.filed_to)))
           AND n.coreg IS NULL
           AND n.value IS NOT NULL
           AND n.uom = 'shares'
-          AND n.tag IN (
-              'EntityCommonStockSharesOutstanding',
-              'CommonStockSharesOutstanding',
-              'CommonStockSharesIssued',
-              'WeightedAverageNumberOfDilutedSharesOutstanding',
-              'WeightedAverageNumberOfSharesOutstandingBasic'
-          )
+          AND (n.tag IN (
+                  'EntityCommonStockSharesOutstanding',
+                  'CommonStockSharesOutstanding',
+                  'CommonStockSharesIssued',
+                  'WeightedAverageNumberOfDilutedSharesOutstanding',
+                  'WeightedAverageNumberOfSharesOutstandingBasic')
+               OR (n.segments IS NOT NULL AND n.tag IN ('CapitalStockSharesOutstanding', 'CapitalStockSharesIssued')))
           AND n.tradable_from <= k.d
-          AND (n.superseded_tradable > k.d OR n.superseded_tradable IS NULL)
+        WINDOW w AS (PARTITION BY n.tag, n.value_date, n.qtrs, n.segments ORDER BY n.known_at, n.adsh)
     ),
     -- Treasury shares at a balance-sheet date, knowable as of the date:
     -- subtracted from an issued count. Kept out of `visible` so a
@@ -162,6 +200,32 @@ LANGUAGE sql STABLE AS $$
           AND n.tradable_from <= k.d
           AND (n.superseded_tradable > k.d OR n.superseded_tradable IS NULL)
     ),
+    -- Cover-page counts (sec_reference.cover_share_count, from SEC's XBRL
+    -- frames API) knowable on the date: a referee for the balance-sheet
+    -- counts below, and the last resort when there is no other count.
+    cover AS (
+        SELECT c.adsh, c.cover_date, c.shares, c.tradable_from
+        FROM sec_reference.cover_share_count c, k
+        WHERE c.cik = p_cik AND c.tradable_from <= k.d
+    ),
+    -- The newest share count implied by any knowable filing's income
+    -- statement within about 500 days: the reference a last-resort cover
+    -- count must agree with (filers mis-scale covers too: Sempra's of
+    -- 2009-09-30 reads 246 trillion shares, Regency Centers' of 2011-05-04
+    -- 82 billion).
+    implied_any AS (
+        SELECT ABS(ni.value / eps.value) AS implied
+        FROM sec_silver.num_silver ni
+        JOIN sec_silver.num_silver eps
+          ON eps.adsh = ni.adsh AND eps.cik = ni.cik AND eps.value_date = ni.value_date
+         AND eps.qtrs = ni.qtrs AND eps.tag = 'EarningsPerShareBasic'
+         AND eps.segments IS NULL AND eps.coreg IS NULL AND ABS(eps.value) >= 0.01, k
+        WHERE ni.cik = p_cik AND ni.tag = 'NetIncomeLoss' AND ni.segments IS NULL AND ni.coreg IS NULL
+          AND ni.value <> 0 AND ni.tradable_from <= k.d AND ni.value_date >= k.d - 500
+          AND (ni.superseded_tradable > k.d OR ni.superseded_tradable IS NULL)
+        ORDER BY ni.value_date DESC, ni.qtrs DESC
+        LIMIT 1
+    ),
     -- The filing's own share count implied by its income statement: net
     -- income over basic EPS at the longest period of the latest period
     -- end the filing reports, knowable with the filing. The income line
@@ -169,13 +233,16 @@ LANGUAGE sql STABLE AS $$
     -- available to common, ProfitLoss and continuing operations (PG&E
     -- files only the second and third); the per-share line the first of
     -- basic, basic-and-diluted, continuing-operations basic and diluted.
-    -- Only undimensioned facts: an issuer whose EPS is per one class
-    -- (Berkshire, per Class A) dimensions it and so has no anchor here,
-    -- which is right, since its summed count is in another class's units.
+    -- Only undimensioned facts, except inside a share_unit window, where
+    -- the EPS tagged with the unit's member is the whole company's per
+    -- unit too, and the implied count is converted like the counts:
+    -- Berkshire's 10-Qs of 2011-2012 tag their equivalent Class A
+    -- averages a million-fold large (1,650,944,000,000) and their EPS
+    -- only per Class A, and without this anchor nothing refused them.
     anchor AS (
-        SELECT DISTINCT ON (adsh) adsh, ni / eps AS implied
+        SELECT DISTINCT ON (adsh) adsh, ni / eps * per_unit AS implied
         FROM (
-            SELECT n.adsh, n.value_date, n.qtrs,
+            SELECT n.adsh, n.value_date, n.qtrs, COALESCE(MAX(u.shares_per_unit), 1) AS per_unit,
                    COALESCE(MAX(n.value) FILTER (WHERE n.tag = 'NetIncomeLoss'),
                             MAX(n.value) FILTER (WHERE n.tag = 'NetIncomeLossAvailableToCommonStockholdersBasic'),
                             MAX(n.value) FILTER (WHERE n.tag = 'ProfitLoss'),
@@ -184,19 +251,59 @@ LANGUAGE sql STABLE AS $$
                             MAX(n.value) FILTER (WHERE n.tag = 'EarningsPerShareBasicAndDiluted'),
                             MAX(n.value) FILTER (WHERE n.tag = 'IncomeLossFromContinuingOperationsPerBasicShare'),
                             MAX(n.value) FILTER (WHERE n.tag = 'EarningsPerShareDiluted')) AS eps
-            FROM sec_silver.num_silver n, k
+            FROM sec_silver.num_silver n
+            CROSS JOIN k
+            LEFT JOIN unit u
+              ON n.tradable_from >= u.filed_from AND (u.filed_to IS NULL OR n.tradable_from < u.filed_to)
             WHERE n.cik = p_cik
-              AND n.coreg IS NULL AND n.segments IS NULL AND n.value IS NOT NULL
+              AND n.coreg IS NULL AND n.value IS NOT NULL
+              AND (n.segments IS NULL
+                   OR (n.tag = 'EarningsPerShareBasic' AND n.segments = 'ClassOfStock=' || u.unit_member || ';'))
               AND n.tag IN ('NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic', 'ProfitLoss',
                             'IncomeLossFromContinuingOperations',
                             'EarningsPerShareBasic', 'EarningsPerShareBasicAndDiluted',
                             'IncomeLossFromContinuingOperationsPerBasicShare', 'EarningsPerShareDiluted')
               AND n.tradable_from <= k.d
-              AND n.adsh IN (SELECT adsh FROM visible)
+              AND (n.adsh IN (SELECT adsh FROM facts) OR n.adsh IN (SELECT adsh FROM cover))
             GROUP BY n.adsh, n.value_date, n.qtrs
         ) f
         WHERE ni IS NOT NULL AND eps IS NOT NULL AND ni <> 0 AND ABS(eps) >= 0.01
         ORDER BY adsh, qtrs DESC, value_date DESC
+    ),
+    -- A RESTATEMENT ITS OWN FILING REFUTES DOES NOT SUPERSEDE. A later
+    -- filing's comparative replaces the earlier figure for the same
+    -- period, and when the comparative is the one mis-scaled the right
+    -- figure vanishes: Berkshire's 10-Q of 2012-05-07 restates the
+    -- quarter of 2011-03-31 as 1,648,411,000,000 equivalent A shares, the
+    -- 10-Q of 2011-05-09 had 1,648,411, and with every count of the
+    -- year between mis-scaled the same way, May to July 2012 fell back to
+    -- a count of 2010 (3% short). The original stays visible when the
+    -- restatement is a thousand-fold off it, the restating filing's own
+    -- net income over EPS refutes the restatement (333 times or more)
+    -- and the original filing's confirms the original within a fifth.
+    -- Both anchors are required: without them nothing says which of the
+    -- two is wrong, and the restatement supersedes as before. Weighted
+    -- averages only, because net income over EPS IS a weighted average,
+    -- so it confirms one; it bounds only the scale of an instant count,
+    -- and an instant count a comparative had hidden can be wrong in
+    -- another way: Nabors' 10-K issued count of 2015-2016 includes the
+    -- ~50M shares its subsidiaries hold (its cover counts exclude them
+    -- from 2016: 283M against 333.5M), and reinstated it read 18% high
+    -- for 21 months (found by the snapshot diff, 2026-11-10). CASE, not
+    -- AND: no division may see a zero.
+    visible AS (
+        SELECT f.tag, f.value, f.value_date, f.tradable_from, f.segments, f.qtrs, f.adsh
+        FROM facts f
+        CROSS JOIN k
+        LEFT JOIN anchor ao ON ao.adsh = f.adsh AND f.superseded_tradable <= k.d
+        LEFT JOIN anchor ar ON ar.adsh = f.next_adsh AND f.superseded_tradable <= k.d
+        WHERE f.superseded_tradable > k.d OR f.superseded_tradable IS NULL
+           OR CASE WHEN f.tag LIKE 'WeightedAverage%'
+                         AND f.value > 0 AND f.next_value > 0 AND ao.implied IS NOT NULL AND ar.implied IS NOT NULL
+                   THEN (f.next_value / f.value >= 333 OR f.value / f.next_value >= 333)
+                    AND ABS(f.value / ao.implied) BETWEEN 0.8 AND 1.25
+                    AND ABS(f.next_value / ar.implied) NOT BETWEEN 1.0 / 333 AND 333
+                   ELSE FALSE END
     ),
     -- AS-CONVERTED BY EPS (sec_reference.share_class.as_converted_eps).
     -- For an issuer whose other classes and participating preferred
@@ -336,6 +443,29 @@ LANGUAGE sql STABLE AS $$
         -- for the quarter plus 2,155,918,015 for six months) instead of
         -- 2.155B. The ladder then takes the shortest period.
         GROUP BY v.value_date, v.tag, v.qtrs
+        -- COMPLETE SUMS ONLY. A sum that leaves out a mapped class the
+        -- filer reports at the same date, under any instant share tag, is
+        -- a part, not the whole: Molson Coors tags its Class B as issued
+        -- but, on 78 dates, not as outstanding, and its outstanding sum
+        -- was its 2.6M Class A alone, 1.3% of the company. Required are
+        -- the mapped classes the filer reports, not every mapped label:
+        -- Comcast named its Special class four ways over the years, one
+        -- per filing.
+        HAVING COUNT(DISTINCT sc.class_label) >= (
+            SELECT COUNT(DISTINCT sc2.class_label)
+            FROM visible v2
+            JOIN sec_reference.share_class sc2
+              ON sc2.cik = p_cik
+             AND v2.segments = 'ClassOfStock=' || sc2.class_label || ';'
+             AND NOT sc2.is_excluded
+             AND v2.value_date >= sc2.effective_from
+             AND (sc2.effective_to IS NULL OR v2.value_date < sc2.effective_to)
+            WHERE v2.value_date = v.value_date
+              AND (v2.tag = v.tag
+                   OR (v.tag IN ('CommonStockSharesOutstanding', 'CommonStockSharesIssued')
+                       AND v2.tag IN ('CommonStockSharesOutstanding', 'CommonStockSharesIssued')))
+              AND (v2.qtrs = v.qtrs OR v2.tag IN ('CommonStockSharesOutstanding', 'CommonStockSharesIssued'))
+        )
     ),
     -- An issued count, consolidated or summed over mapped classes, has
     -- the treasury taken from it: the same balance-sheet date first, else
@@ -368,11 +498,30 @@ LANGUAGE sql STABLE AS $$
                     WHEN t.treasury IS NULL           THEN c.method
                     WHEN c.method = 'consolidated'    THEN 'issued_less_treasury'
                     ELSE 'class_sum_less_treasury' END AS method,
-               c.rung, c.qtrs, c.implied, c.same_tag_far, c.shares AS gross_shares
+               c.rung, c.qtrs, c.implied, c.same_tag_far, c.shares AS gross_shares, c.adsh
         FROM (
             SELECT * FROM consolidated
             UNION ALL
             SELECT * FROM by_class
+            UNION ALL
+            -- The last resort: a cover-page count, rung 10, chosen only when
+            -- no other candidate survives (Lockheed Martin and General
+            -- Dynamics, whose share facts DERA drops; a count refused below).
+            -- Not for an issuer in the share-class mapping, whose
+            -- undimensioned cover may count one class (Berkshire's is its
+            -- Class A, 941,481 shares); not when the cover is more than 400
+            -- days old on the knowledge date; and only within a factor of
+            -- two of the newest knowable count its net income over EPS
+            -- implies, so a last resort is never the plausible-looking
+            -- wrong answer (without that reference, nothing).
+            SELECT cv.shares, cv.cover_date, cv.tradable_from,
+                   'EntityCommonStockSharesOutstanding'::TEXT, 'cover_page'::TEXT, 10,
+                   0, a.implied, FALSE, cv.adsh, FALSE
+            FROM cover cv LEFT JOIN anchor a ON a.adsh = cv.adsh
+            CROSS JOIN k CROSS JOIN implied_any ia
+            WHERE cv.cover_date >= k.d - 400
+              AND cv.shares / ia.implied BETWEEN 0.5 AND 2
+              AND NOT EXISTS (SELECT 1 FROM sec_reference.share_class sc WHERE sc.cik = p_cik)
         ) c
         -- A flagged issuer's count is the as-converted count of the
         -- filing its class count came from, dated at that count's period
@@ -413,9 +562,33 @@ LANGUAGE sql STABLE AS $$
            OR (ac.a_equiv IS NOT NULL AND c.source_tag NOT LIKE 'WeightedAverage%')
     ),
     laddered AS (
-        SELECT l.*, MAX(l.value_date) OVER () AS newest_period
+        SELECT l.*, MAX(l.value_date) FILTER (WHERE l.rung <> 10) OVER () AS newest_period,
+                    MAX(l.value_date) FILTER (WHERE l.rung = 10) OVER () AS newest_cover
         FROM netted l
         WHERE l.shares > 0
+          -- CONTRADICTED TWICE. A balance-sheet or class-summed count that
+          -- its own filing's cover count AND its own net income over EPS
+          -- both put more than a fifth away is refused: Aflac's 1,359M
+          -- issued against a cover of 560M and an EPS count of 513M,
+          -- Colgate, Nordson, Everest, Citrix (whose "outstanding" is its
+          -- issued count). One reference is not enough, since a merger
+          -- moves one of them legitimately: the cover is dated weeks after
+          -- the period end, the EPS count is the period's average. In 92%
+          -- of the counts refused the two references agree with each
+          -- other within a fifth (measured 2026-11-09).
+          -- The referee cover is the filing's own, else, when the frames
+          -- kept another filing's count for that quarter, the first cover
+          -- dated within 200 days after the count (Nordson's 10-K issued
+          -- count, 98M against 58M outstanding, had no same-filing cover).
+          AND NOT (l.rung <= 5 AND l.implied IS NOT NULL
+                   AND ABS(l.shares / l.implied) NOT BETWEEN 0.8 AND 1.25
+                   AND EXISTS (SELECT 1 FROM (
+                                   SELECT cv.shares FROM cover cv
+                                   WHERE cv.adsh = l.adsh
+                                      OR cv.cover_date BETWEEN l.value_date AND l.value_date + 200
+                                   ORDER BY (cv.adsh = l.adsh) DESC, cv.cover_date
+                                   LIMIT 1) r
+                               WHERE l.shares / r.shares NOT BETWEEN 0.8 AND 1.25))
           -- The scale guard: nothing over a count a thousand-fold off
           -- its own filing's net income over EPS; without that anchor,
           -- nothing over a tag the company's nearby filings contradict.
@@ -437,7 +610,15 @@ LANGUAGE sql STABLE AS $$
     -- first; then the most recent period, the most trustworthy rung, and
     -- the shortest period for an average (qtrs 1 is closer to a point in
     -- time than qtrs 4).
-    ORDER BY (rung <= 5 AND value_date >= newest_period - 400) DESC,
+    -- A count more than 400 days older than the newest knowable cover
+    -- count is stale and ranks below it: once Colgate's issued counts are
+    -- refused, its newest surviving balance-sheet count is from 2009.
+    -- Otherwise a cover count is the last resort: an instant count within
+    -- 400 days of the newest period first, as before, then the newest
+    -- period, the most trustworthy rung and the shortest average.
+    ORDER BY (rung <> 10 AND newest_cover IS NOT NULL AND value_date < newest_cover - 400) ASC,
+             (rung <= 5 AND value_date >= newest_period - 400) DESC,
+             (rung = 10) ASC,
              value_date DESC,
              rung ASC,
              qtrs ASC
@@ -447,16 +628,22 @@ $$;
 COMMENT ON FUNCTION sec_gold.shares_outstanding_at(INTEGER, DATE, INTEGER) IS
     'Share count knowable on p_asof, by priority ladder with mapped '
     'share-class summation. method: consolidated | issued_less_treasury | '
-    'class_sum_mapped | class_sum_less_treasury | class_sum_as_converted; an '
+    'class_sum_mapped | class_sum_less_treasury | class_sum_as_converted | '
+    'cover_page; an '
     'issued count has the treasury shares of the same balance-sheet date '
     'subtracted; an issuer flagged as_converted_eps in share_class is the '
     'filing''s net income over its listed class''s basic EPS, the company '
-    'in that class''s units (Visa). '
+    'in that class''s units (Visa); a balance-sheet count contradicted by '
+    'both its filing''s cover count and its net income over EPS is refused, '
+    'and a cover-page count (cover_share_count) is the last resort. '
     'A count more than 333 times, or less than a 333rd of, the filing''s '
     'own net income over basic EPS is refused as mis-scaled; without that '
     'anchor, a count contradicted that far by the same tag in another '
-    'filing within 400 days is refused. '
-    'An instant count within 400 days of the newest period beats a '
+    'filing within 400 days is refused; a weighted average its own filing '
+    'refutes that far does not supersede an original its filing confirms. '
+    'Counts a filer states per unit of the whole company (share_unit: '
+    'Berkshire''s equivalent Class A share) are converted into the priced '
+    'class. An instant count within 400 days of the newest period beats a '
     'weighted average. NOT sufficient for market cap on multi-class '
     'issuers - that needs each class priced separately (177 of 1,569 '
     'tracked companies hold more than one listed ticker, 2026-09-04); '

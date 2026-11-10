@@ -84,7 +84,7 @@ Expect roughly **140 GB** of Postgres and **31 GB** on disk for a full build.
 
 ```bash
 uv run dera run-all        # download + load + silver + gold
-uv run dera verify         # 82 data-correctness checks; non-zero exit on failure
+uv run dera verify         # 85 data-correctness checks; non-zero exit on failure
 uv run pytest              # unit tests for the pure Python (no database)
 ```
 
@@ -122,6 +122,7 @@ uv run dera build-factor-panel --index SP1500 --since 2018-08-01  # the three re
 The macro predictors (`macro`, from Amit Goyal's data page, not SEC data; see `docs/data_sources.md` section 10):
 
 ```bash
+uv run dera load-cover-shares                # every 10-K/10-Q cover's shares outstanding for index companies, from SEC's XBRL frames API (~72 requests); --offline reloads the cache
 uv run dera load-macro                       # the Goyal-Welch workbooks as published, about 77,500 cells, seconds; reports what a new vintage restated
 uv run dera load-macro --offline             # reload the workbooks already in data/external/goyal_welch
 ```

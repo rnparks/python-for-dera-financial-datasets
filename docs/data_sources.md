@@ -29,6 +29,7 @@ how much they matter:
 | 8 | Yahoo Finance month-end prices (index members) | `sec_market.monthly_price` | in the database only | `dera load-prices` |
 | 9 | Ken French data library (FF5 and momentum) | `data/external/french/` (not tracked) | small | `tools/ff_baseline.py --download` |
 | 10 | Goyal-Welch predictors (Amit Goyal's data page) | `data/external/goyal_welch/` (not tracked) → `macro` | 1.5 MB | `dera load-macro` |
+| 11 | SEC XBRL frames API: cover-page share counts | `data/external/sec_frames/` (not tracked) → `sec_reference.cover_share_count` | 39 MB | `dera load-cover-shares` |
 
 Plus a small set of hand-maintained files described under [Manual inputs](#manual-inputs).
 
@@ -66,7 +67,15 @@ not one: `CommonStockSharesIssued` includes treasury shares. McDonald's tags no
 outstanding count at all, only 1,660.6M issued against ~945M in treasury, and
 Exxon Mobil's 10-Qs of 2013-2015 tagged issued and treasury only;
 `shares_outstanding_at` subtracts the treasury count where the filing's own
-income statement confirms the result (check 79; 2026-11-09).
+income statement confirms the result (check 79; 2026-11-09). A fifth is a
+unit: Berkshire Hathaway states its weighted averages and EPS per
+"equivalent Class A share", both classes together, undimensioned to 2015
+and tagged `ClassOfStock=CommonClassA` in 2016-2017, so read as shares and
+priced at BRK-B the company was 1/1,500 of itself from 2010 to 2017;
+`data/reference/share_unit.csv` gives the unit (1,500 BRK-B, 30 before the
+2010-01-21 Class B split) by filing date, citing the filings, and its 10-Qs
+of 2011-2012 tag the same averages a million-fold large, each restating the
+last (check 85; 2026-11-09).
 
 ## 2. EDGAR bulk submissions archive
 
@@ -611,8 +620,12 @@ by Yahoo's dividend rescaling, ratios unchanged).
 - One price per company: a dual-class issuer's second class is valued at the
   primary class's price in `market_cap_at`; `sec_gold.share_class_shares` is
   the place to refine that. An UNLISTED class that `sec_reference.share_class`
-  does not map is not counted at all: Airbnb, Ralph Lauren and EchoStar's
-  Class B (measured 2026-11-09). Visa was the largest such case, its Class B
+  does not map is not counted at all. Mapped on 2026-11-09, each row citing
+  the 10-K sentence that converts it share for share into the listed class:
+  Nike's Class A, UPS's Class A, Airbnb's, Ralph Lauren's and Comcast's
+  Class B, Comcast's listed Class A Special (CMCSK, to 2015, under four
+  labels) and Urstadt Biddle's two listed classes (UBA, UBP); left: EchoStar's and Duolingo's Class B, EZCORP's voting class
+  (check 84). Visa was the largest such case, its Class B
   and C and convertible preferred left out, so its count was Class A alone,
   63-87% of the company; since 2026-11-09 its Class A row carries
   `as_converted_eps` and its count is each filing's net income over Class A
@@ -737,11 +750,57 @@ NULL from 2026-02 until Goyal's next update.
   variables usable point in time. The reading is not confirmed against the
   paper for the other series, and loading the diagonals is a separate decision.
 
+## 11. SEC XBRL frames API (cover-page share counts)
+
+**What**: the common shares outstanding every 10-K and 10-Q states on its
+cover, as of a date a few weeks after the period end
+(`dei:EntityCommonStockSharesOutstanding`, undimensioned), with the
+accession number of the filing that states it. One request per calendar
+quarter (`https://data.sec.gov/api/xbrl/frames/dei/EntityCommonStockSharesOutstanding/shares/CY2024Q2I.json`)
+returns every filer's count; `uv run dera load-cover-shares` fetches CY2009Q1I
+to the last complete quarter (cached in `data/external/sec_frames/`; the two
+newest refetched each run, since late filers keep adding to a quarter) and
+replaces `sec_reference.cover_share_count`.
+
+**Why**: DERA's data sets almost never carry the cover count (917 such facts
+in all of `sec_raw`), and they drop some filers' share facts whole: every one
+of Lockheed Martin's and General Dynamics' 10-Q and 10-K facts in DERA is in
+USD (632 of 632 in Lockheed's 2026 Q2 10-Q), so neither had a share count or
+a market cap on any date, while SEC's API has 70 cover counts for each.
+
+**Capture quality** (2026-11-09): 71 frames, 298,568 counts for 15,227
+filers; kept for the companies ever in an index whose filing is in DERA (the
+filing's `tradable_from` is the count's): 95,366 counts for 2,276 of the
+2,417 companies. Our share counts agreed with the cover count knowable on the
+date within a fifth on 98.2% of panel company-dates before the counts were
+used.
+
+**Rules**:
+- A per-class cover (Alphabet, Visa) is dimensioned and is not in the frames;
+  the share-class mapping covers those issuers, and for them the
+  undimensioned cover, when there is one, may count a single class
+  (Berkshire's is its Class A), so the ladder never uses it.
+- `sec_gold.shares_outstanding_at` uses the counts twice: a balance-sheet
+  count that both its own filing's cover count and its net income over EPS
+  contradict by more than a fifth is refused (Aflac's, Colgate's, Everest's
+  issued counts, Citrix's "outstanding" one), and a cover count dated within
+  400 days is the last resort when nothing else survives, provided the newest
+  knowable count implied by net income over EPS puts it within a factor of
+  two (filers mis-scale covers too: Sempra's of 2009-09-30 reads 246 trillion
+  shares, Regency Centers' of 2011-05-04 82 billion). Over every panel
+  company-date: 1,089 filled for 51 companies (99.3% within a fifth of the
+  cover knowable on the date), 2,252 changed for 100 (2,207 closer to the
+  cover count, 43 further by a fraction), 227,587 unchanged, one emptied
+  (Hershey, a date whose only count both references refuse) (check 83).
+- The frames API returns one fact per filer per quarter, the last filed; an
+  amended cover replaces the original in its quarter.
+
 ## Manual inputs
 
 | File | Rows | What it is |
 |---|---|---|
-| `share_class_map.csv` | 99 across 66 CIKs | Share class → ticker allowlist: 27 hand-mapped rows citing filings, 72 derived from 10-K cover pages by `tools/fetch_cover_page_classes.py` |
+| `share_class_map.csv` | 110 across 67 CIKs (2026-11-09) | Share class → ticker allowlist: 38 hand-mapped rows citing filings, 72 derived from 10-K cover pages by `tools/fetch_cover_page_classes.py` |
+| `share_unit.csv` | 2 (2026-11-09) | Issuers whose weighted averages and EPS state the whole company per unit of one class, by filing date, each row citing the filing: Berkshire's equivalent Class A share, 30 BRK-B before the 2010-01-21 Class B split and 1,500 after, to the 10-Q of 2017-08-07; loads `sec_reference.share_unit` (`dera rebuild-reference`); check 85 |
 | `index_cik_overrides.csv` | 8 | Constituent runs no rule resolves, (index, ticker, first sighting) → CIK, each row citing its evidence; loads `sec_reference.index_cik_override`, applied only where the page, the crosswalk and the name failed (check 61 fails a redundant row) |
 | `tickers.csv` | 10,221 | Legacy CIK ↔ ticker crosswalk (December 2025). Loads `sec_silver.ticker_map` only; no longer a fallback for anything |
 | `wayback_stamps.json` | — | The archive captures the last crosswalk run resolved to, keyed by the probe set that produced them |
@@ -845,6 +904,7 @@ uv run dera fetch-filing-index                   # EDGAR archive, ~1.5 GB
 uv run dera build-security-model                 # security lifecycle
 
 uv run dera load-macro                           # Goyal-Welch workbooks; reports what a new vintage restated
+uv run dera load-cover-shares                    # cover-page share counts from SEC's XBRL frames API, after a new quarter
 
 uv run python tools/fetch_ticker_history.py --batch 0   # all captures + live file
 uv run python tools/fetch_sp500_history.py --batch 0    # S&P 500 revisions (resumes)

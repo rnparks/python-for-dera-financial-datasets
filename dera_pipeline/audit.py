@@ -135,25 +135,29 @@ def check_shares_vs_own_average(detail: pd.DataFrame, references: pd.DataFrame,
                                 low: float = 0.8, high: float = 1.25) -> pd.DataFrame:
     """Step 4. The chosen share count against the filer's own counts of the
     same period (``references``: cik, shares_value_date, basic_avg,
-    implied = net income over basic EPS). A count is flagged only when it
-    is outside [low, high] of EVERY reference present, because a filer
-    mis-scales a weighted average as readily as a share count: issued read
+    implied = net income over basic EPS, cover = the cover-page count). A
+    count is flagged only when it is outside [low, high] of EVERY reference
+    present, because a filer mis-scales a weighted average as readily as a
+    share count, and a REIT's net income carries its minority interest: issued read
     as outstanding (McDonald's 2.3), an unmapped class (Visa 0.7), a scale
     error. A merger inside the period moves an instant count away from the
     period's averages legitimately; the exceptions file says so. The count
     is put on the references' split basis (its split adjustment is about
     the price, so it is not applied here)."""
     m = detail.merge(references, on=["cik", "shares_value_date"], how="inner")
-    refs = m[["basic_avg", "implied"]].where(m[["basic_avg", "implied"]] > 0)
+    cols = [c for c in ("basic_avg", "implied", "cover") if c in m.columns]
+    refs = m[cols].where(m[cols] > 0)
     m = m[refs.notna().any(axis=1)]
     refs = refs.loc[m.index]
     ratios = refs.rdiv(m["shares"], axis=0)
     inside = ((ratios >= low) & (ratios <= high)).any(axis=1)
-    m = m.assign(ratio_to_avg=ratios["basic_avg"], ratio_to_implied=ratios["implied"])
+    m = m.assign(ratio_to_avg=ratios["basic_avg"], ratio_to_implied=ratios["implied"],
+                 ratio_to_cover=ratios["cover"] if "cover" in ratios else float("nan"))
     bad = m[~inside]
     return _flags(bad, "shares_vs_own_counts", "flag",
                   lambda x: "count / own average = " + x["ratio_to_avg"].round(3).astype(str)
-                            + ", / NI over EPS = " + x["ratio_to_implied"].round(3).astype(str))
+                            + ", / NI over EPS = " + x["ratio_to_implied"].round(3).astype(str)
+                            + ", / cover = " + x["ratio_to_cover"].round(3).astype(str))
 
 
 def check_share_continuity(detail: pd.DataFrame, low: float = 0.8, high: float = 1.25) -> pd.DataFrame:
@@ -200,33 +204,55 @@ def check_concentration(detail: pd.DataFrame, max_share: float = 0.15) -> pd.Dat
                   lambda x: x["index_name"] + " share " + (100 * x["index_share"]).round(1).astype(str) + "%")
 
 
-# Two references from the filer's own statements, because either alone
-# can be mis-scaled by the filer (McDonald's tags some weighted averages in
-# millions: 711.1 shares): the basic weighted average of the period ending
-# at the count's date, and net income over basic EPS of that period.
+# Three references from the filer's own statements, because any one can
+# be mis-scaled or mis-defined by the filer (McDonald's tags some weighted
+# averages in millions; a REIT's net income includes its operating
+# partnership's minority interest, so net income over EPS overstates its
+# shares by a quarter): the basic weighted average of the period ending at
+# the count's date, net income over basic EPS of that period, and the
+# newest cover-page count (sec_reference.cover_share_count) knowable on the
+# first date the count was used, dated within 200 days after it.
 REFERENCE_SQL = """
-SELECT d.cik, d.vd AS shares_value_date, w.value AS basic_avg, e.implied
+SELECT d.cik, d.vd AS shares_value_date, w.value AS basic_avg, e.implied, c.shares AS cover
 FROM unnest(%(cik)s::int[], %(vd)s::date[], %(asof)s::date[]) AS d(cik, vd, asof)
+-- A filing inside a sec_reference.share_unit window (Berkshire to 2017)
+-- states its averages and EPS per unit of the whole company,
+-- undimensioned or tagged with the unit's class member; the references
+-- are converted as the share ladder converts the counts.
 LEFT JOIN LATERAL (
-    SELECT n.value FROM sec_silver.num_silver n
-    WHERE n.cik = d.cik AND n.coreg IS NULL AND n.segments IS NULL AND n.uom = 'shares'
+    SELECT n.value * COALESCE(u.shares_per_unit, 1) AS value
+    FROM sec_silver.num_silver n
+    LEFT JOIN sec_reference.share_unit u
+      ON u.cik = n.cik AND n.tradable_from >= u.filed_from
+     AND (u.filed_to IS NULL OR n.tradable_from < u.filed_to)
+    WHERE n.cik = d.cik AND n.coreg IS NULL AND n.uom = 'shares'
+      AND (n.segments IS NULL OR n.segments = 'ClassOfStock=' || u.unit_member || ';')
       AND n.tag = 'WeightedAverageNumberOfSharesOutstandingBasic' AND n.value > 0
       AND n.value_date BETWEEN d.vd - 100 AND d.vd
       AND n.tradable_from <= d.asof
       AND (n.superseded_tradable > d.asof OR n.superseded_tradable IS NULL)
     ORDER BY n.value_date DESC, n.qtrs ASC LIMIT 1) w ON TRUE
 LEFT JOIN LATERAL (
-    SELECT ABS(ni.value / eps.value) AS implied
+    SELECT ABS(ni.value / eps.value) * COALESCE(u.shares_per_unit, 1) AS implied
     FROM sec_silver.num_silver ni
+    LEFT JOIN sec_reference.share_unit u
+      ON u.cik = ni.cik AND ni.tradable_from >= u.filed_from
+     AND (u.filed_to IS NULL OR ni.tradable_from < u.filed_to)
     JOIN sec_silver.num_silver eps
       ON eps.adsh = ni.adsh AND eps.cik = ni.cik AND eps.value_date = ni.value_date AND eps.qtrs = ni.qtrs
-     AND eps.tag = 'EarningsPerShareBasic' AND eps.segments IS NULL AND eps.coreg IS NULL
+     AND eps.tag = 'EarningsPerShareBasic' AND eps.coreg IS NULL
+     AND (eps.segments IS NULL OR eps.segments = 'ClassOfStock=' || u.unit_member || ';')
      AND ABS(eps.value) >= 0.05
     WHERE ni.cik = d.cik AND ni.tag = 'NetIncomeLoss' AND ni.segments IS NULL AND ni.coreg IS NULL
       AND ni.value <> 0 AND ni.value_date BETWEEN d.vd - 100 AND d.vd
       AND ni.tradable_from <= d.asof
       AND (ni.superseded_tradable > d.asof OR ni.superseded_tradable IS NULL)
     ORDER BY ni.value_date DESC, ni.qtrs DESC LIMIT 1) e ON TRUE
+LEFT JOIN LATERAL (
+    SELECT cv.shares FROM sec_reference.cover_share_count cv
+    WHERE cv.cik = d.cik AND cv.tradable_from <= d.asof
+      AND cv.cover_date BETWEEN d.vd AND d.vd + 200
+    ORDER BY cv.cover_date LIMIT 1) c ON TRUE
 """
 
 
@@ -242,11 +268,12 @@ def share_references(detail: pd.DataFrame) -> pd.DataFrame:
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute(REFERENCE_SQL, {"cik": [int(c) for c in k["cik"]],
                                         "vd": list(k["shares_value_date"]), "asof": list(k["asof"])})
-            return pd.DataFrame(cur.fetchall(), columns=["cik", "shares_value_date", "basic_avg", "implied"])
+            return pd.DataFrame(cur.fetchall(), columns=["cik", "shares_value_date", "basic_avg", "implied", "cover"])
 
     with ThreadPoolExecutor(max_workers=WORKERS) as ex:
         parts = list(ex.map(run, [c for c in chunks if len(c)]))
     out = pd.concat(parts, ignore_index=True)
     out["basic_avg"] = out["basic_avg"].astype(float)
     out["implied"] = out["implied"].astype(float)
+    out["cover"] = out["cover"].astype(float)
     return out

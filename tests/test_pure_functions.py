@@ -283,6 +283,50 @@ def test_read_index_cik_overrides_rejects_a_duplicate_run(tmp_path):
 
 
 # ---------------------------------------------------------------------
+# reference.read_share_units: one cited unit per filing date, or none
+# ---------------------------------------------------------------------
+
+def _write_units(path: Path, rows: list[list[str]]) -> Path:
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["cik", "unit_member", "priced_ticker", "shares_per_unit",
+                    "filed_from", "filed_to", "source_note"])
+        w.writerows(rows)
+    return path
+
+
+def test_read_share_units_round_trip(tmp_path):
+    path = _write_units(tmp_path / "u.csv", [
+        ["1067983", " CommonClassA ", "BRK-B", "30", "1900-01-01", "2010-01-21", "thirty B per A"],
+        ["1067983", "CommonClassA", "BRK-B", "1500", "2010-01-21", "", "1,500 B per A"],
+    ])
+    assert reference.read_share_units(path) == [
+        (1067983, "CommonClassA", "BRK-B", 30.0, dt.date(1900, 1, 1), dt.date(2010, 1, 21), "thirty B per A"),
+        (1067983, "CommonClassA", "BRK-B", 1500.0, dt.date(2010, 1, 21), None, "1,500 B per A"),
+    ]
+
+
+@pytest.mark.parametrize("rows, message", [
+    ([["1067983", "CommonClassA", "BRK-B", "1500", "2010-01-21", "", "  "]], "no source_note"),
+    ([["1067983", "CommonClassA", "BRK-B", "30", "1900-01-01", "", "open-ended"],
+      ["1067983", "CommonClassA", "BRK-B", "1500", "2010-01-21", "", "second"]], "overlap"),
+    ([["1067983", "CommonClassA", "BRK-B", "30", "1900-01-01", "2010-02-01", "late end"],
+      ["1067983", "CommonClassA", "BRK-B", "1500", "2010-01-21", "", "second"]], "overlap"),
+])
+def test_read_share_units_refuses_uncited_and_overlapping_rows(tmp_path, rows, message):
+    with pytest.raises(ValueError, match=message):
+        reference.read_share_units(_write_units(tmp_path / "u.csv", rows))
+
+
+def test_share_unit_csv_is_berkshire_split_at_the_class_b_split():
+    rows = reference.read_share_units(config.REFERENCE_DIR / "share_unit.csv")
+    assert [(r[0], r[3], r[4], r[5]) for r in rows] == [
+        (1067983, 30.0, dt.date(1900, 1, 1), dt.date(2010, 1, 21)),
+        (1067983, 1500.0, dt.date(2010, 1, 21), dt.date(2017, 11, 6)),
+    ]
+
+
+# ---------------------------------------------------------------------
 # fetch_ticker_history: normalisation, file handling, no fabricated rows
 # ---------------------------------------------------------------------
 
@@ -1137,3 +1181,26 @@ def test_split_event_rows_one_per_ticker_and_drops_non_splits():
     rows = prices.split_event_rows({"XOM": [(dt.date(2001, 7, 19), 2.0), (dt.date(2005, 1, 3), 0.0)]},
                                    {"XOM": {"XOM", "XOM2"}})
     assert [r[0] for r in rows] == ["XOM", "XOM2"]
+
+
+# ---------------------------------------------------------------------
+# cover_shares: SEC frames API parsing (no network)
+# ---------------------------------------------------------------------
+
+from dera_pipeline import cover_shares  # noqa: E402
+
+
+def test_frame_names_stop_before_the_current_quarter():
+    names = cover_shares.frame_names(dt.date(2026, 11, 9), first_year=2026)
+    assert names == ["CY2026Q1I", "CY2026Q2I", "CY2026Q3I"]
+    assert cover_shares.frame_names(dt.date(2026, 1, 2), first_year=2025)[-1] == "CY2025Q4I"
+
+
+def test_parse_frame_keeps_positive_counts_with_their_filing():
+    payload = {"data": [
+        {"accn": "0000936468-24-000095", "cik": 936468, "end": "2024-07-19", "val": 238358003},
+        {"accn": "x", "cik": 1, "end": "2024-07-19", "val": 0},
+        {"cik": 2, "end": "2024-07-19", "val": 5},
+    ]}
+    assert cover_shares.parse_frame("CY2024Q2I", payload) == [
+        (936468, "0000936468-24-000095", dt.date(2024, 7, 19), 238358003, "CY2024Q2I")]

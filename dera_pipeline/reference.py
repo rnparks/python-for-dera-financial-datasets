@@ -378,15 +378,63 @@ def load_share_class_map(conn: psycopg.Connection, csv_path: Path) -> int:
     return len(rows)
 
 
+def read_share_units(csv_path: Path) -> list[tuple]:
+    """Rows of data/reference/share_unit.csv as
+    (cik, unit_member, priced_ticker, shares_per_unit, filed_from,
+    filed_to, source_note). Refuses an uncited row and two windows of one
+    issuer that overlap: a filing must have one unit, or none."""
+    rows: list[tuple] = []
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        for r in csv.DictReader(f):
+            note = (r.get("source_note") or "").strip()
+            if not note:
+                raise ValueError(f"{csv_path}: share_unit row for CIK {r.get('cik')} has no source_note")
+            to = (r.get("filed_to") or "").strip()
+            rows.append((
+                int(r["cik"]),
+                r["unit_member"].strip(),
+                r["priced_ticker"].strip(),
+                float(r["shares_per_unit"]),
+                dt.date.fromisoformat(r["filed_from"].strip()),
+                dt.date.fromisoformat(to) if to else None,
+                note,
+            ))
+    by_cik: dict[int, list[tuple]] = {}
+    for row in rows:
+        by_cik.setdefault(row[0], []).append(row)
+    for cik, windows in by_cik.items():
+        windows.sort(key=lambda w: w[4])
+        for a, b in zip(windows, windows[1:]):
+            if a[5] is None or a[5] > b[4]:
+                raise ValueError(f"{csv_path}: CIK {cik} share_unit windows overlap at {b[4]}")
+    return rows
+
+
+def load_share_units(conn: psycopg.Connection, csv_path: Path) -> int:
+    """Load data/reference/share_unit.csv → sec_reference.share_unit,
+    creating the table first (sql/00_reference/035_share_unit.sql) so a
+    database built before it existed gains it here."""
+    db.run_sql_file(conn, config.SQL_DIR / "00_reference" / "035_share_unit.sql")
+    rows = read_share_units(csv_path)
+    with conn.cursor() as cur:
+        with cur.copy(
+            "COPY sec_reference.share_unit (cik, unit_member, priced_ticker, shares_per_unit, "
+            "filed_from, filed_to, source_note) FROM STDIN"
+        ) as cp:
+            for row in rows:
+                cp.write_row(row)
+    return len(rows)
+
+
 def load_calendar_only(conn: psycopg.Connection) -> int:
     """Load the pre-silver reference data, in `sec_reference`.
 
-    Three tables, not one: the trading calendar (required — `sub_silver`
+    Four tables, not one: the trading calendar (required — `sub_silver`
     resolves `tradable_from` against it during its own build), plus the
-    ticker-history observations and the share-class map, both optional
-    and skipped with a message when their CSVs are absent.
+    ticker-history observations, the share-class map and the share units,
+    all optional and skipped with a message when their CSVs are absent.
 
-    All three live in `sec_reference` precisely so the
+    All four live in `sec_reference` precisely so the
     DROP SCHEMA sec_silver CASCADE at the top of the silver build does
     not take them out.
     """
@@ -422,6 +470,15 @@ def load_calendar_only(conn: psycopg.Connection) -> int:
         print(f"  share_class      → {m:>6,} class mappings")
     else:
         print("  share_class_map.csv absent — no per-class share data")
+
+    # Optional: without it Berkshire's pre-2018 counts read in Class A
+    # equivalent units, 1/1,500 of the company priced at BRK-B.
+    su = config.REFERENCE_DIR / "share_unit.csv"
+    if su.exists():
+        u = load_share_units(conn, su)
+        print(f"  share_unit       → {u:>6,} whole-company units")
+    else:
+        print("  share_unit.csv absent — Berkshire's equivalent-Class-A counts unconverted")
 
     # Optional: without it the S&P 500 has no dated membership and the
     # index_membership derivation falls back to today's snapshot for it,

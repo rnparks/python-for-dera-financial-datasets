@@ -51,6 +51,11 @@ Prices (a vendor, not SEC data; schema ``sec_market``)::
     uv run dera build-factor-panel   # the factor sheet at every month end, stored
                                      # for the backtest (sec_market.factor_panel)
 
+Cover-page share counts (SEC's XBRL frames API; sec_reference)::
+
+    uv run dera load-cover-shares    # every 10-K/10-Q cover's shares outstanding for
+                                     # index companies, timed by its filing; --offline
+
 Macro predictors (Amit Goyal's data page, not SEC data; schema ``macro``)::
 
     uv run dera load-macro           # the Goyal-Welch workbooks, as published, with
@@ -58,7 +63,7 @@ Macro predictors (Amit Goyal's data page, not SEC data; schema ``macro``)::
 
 Verification::
 
-    uv run dera verify        # 82 data-correctness checks
+    uv run dera verify        # 85 data-correctness checks
     uv run dera verify-docs   # documentation against code and database
 """
 
@@ -71,7 +76,7 @@ import subprocess
 import sys
 import time
 
-from . import config, db, downloader, filings, loader, macro, prices, reference
+from . import config, cover_shares, db, downloader, filings, loader, macro, prices, reference
 
 
 def _add_range_args(p: argparse.ArgumentParser) -> None:
@@ -616,6 +621,27 @@ def cmd_load_macro(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_load_cover_shares(args: argparse.Namespace) -> int:
+    """Load cover-page share counts from SEC's XBRL frames API.
+
+    Runs the table's DDL (idempotent), fetches one frame per calendar
+    quarter since 2009 (or, with --offline, reads the cached frames in
+    data/external/sec_frames), keeps companies that were ever index members
+    and whose filing is in DERA, and replaces
+    sec_reference.cover_share_count. shares_outstanding_at uses the counts
+    as a referee and a last resort.
+    """
+    with db.get_conn() as conn:
+        db.run_sql_file(conn, cover_shares.ddl_path())
+        if args.offline:
+            payloads = cover_shares.read_cache()
+        else:
+            payloads = cover_shares.fetch_frames(cover_shares.frame_names(dt.date.today()))
+        summary = cover_shares.load(conn, payloads)
+        conn.commit()
+    return 0 if summary["loaded"] else 1
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     r"""Run the point-in-time verification suite.
 
@@ -839,6 +865,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--offline", action="store_true", default=False,
         help="reuse the workbooks already in data/external/goyal_welch instead of downloading")
     p_macro.set_defaults(func=cmd_load_macro)
+
+    p_cover = sub.add_parser(
+        "load-cover-shares",
+        help="cover-page share counts from SEC's XBRL frames API (sec_reference.cover_share_count)")
+    p_cover.add_argument(
+        "--offline", action="store_true", default=False,
+        help="reload from the frames cached in data/external/sec_frames instead of fetching")
+    p_cover.set_defaults(func=cmd_load_cover_shares)
 
     p_verify = sub.add_parser(
         "verify", help="run the point-in-time verification suite")
